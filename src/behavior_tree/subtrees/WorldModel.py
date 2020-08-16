@@ -1,16 +1,15 @@
 import copy, sys
 import numpy as np
 import json
+
 import rospy
 import py_trees
-
 import PyKDL
 import tf
 
-
 from geometry_msgs.msg import Pose
-from ur5_srvs.srv import String_None, String_String, String_Pose, String_PoseResponse
 from complex_action_client import misc
+from riro_srvs.srv import String_None, String_String, String_Pose, String_PoseResponse
 
 
 class REMOVE(py_trees.behaviour.Behaviour):
@@ -177,6 +176,7 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                                           self.grasp_offset_z)
             grasp_top_pose = copy.deepcopy(grasp_pose)
             grasp_top_pose.position.z += self.top_offset_z
+            ## from IPython import embed; embed(); sys.exit()
 
             self.blackboard.set(self.name +'/grasp_pose', grasp_pose)
             self.blackboard.set(self.name +'/grasp_top_pose', grasp_top_pose)
@@ -252,9 +252,12 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                 
         arm_baselink2obj = base2arm_baselink.Inverse() * base2obj
 
-        obj2grasp      = PyKDL.Frame(PyKDL.Rotation.RotX(-np.pi/2.) \
-                                     * PyKDL.Rotation.RotY(-np.pi/2.))
-        baselink2grasp = arm_baselink2obj * obj2grasp
+        #TODO: robot specific grasping orientation
+        ## obj2grasp      = PyKDL.Frame(PyKDL.Rotation.RotX(-np.pi/2.) \
+        ##                              * PyKDL.Rotation.RotY(-np.pi/2.))
+        #obj2grasp      = PyKDL.Frame(PyKDL.Rotation.RotX(-np.pi/2.))
+        #obj2grasp      = PyKDL.Frame(PyKDL.Rotation.RotY(np.pi/2.))
+        baselink2grasp = arm_baselink2obj #* obj2grasp
 
         # Grasping pose
         grasp_pose     = misc.KDLframe2Pose(baselink2grasp)

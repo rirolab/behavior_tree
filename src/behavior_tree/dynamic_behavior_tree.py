@@ -82,17 +82,17 @@ def load_topic_list(filename):
 
 class SplinteredReality(object):
 
-    def __init__(self, jobs, rec_topic_list=None, controller_ns='', n_loop=1,
+    def __init__(self, jobs, rec_topic_list=None, n_loop=1,
                  enable_inf_loop=False, loop_timeout=-1):
         """
         Initialise a core tree (minus a job) and preload job classes ready to
-        be used in spinning up and running the job later when requested.
+         be used in spinning up and running the job later when requested.
 
         Args:
             jobs ([:obj:`str`]): list of module names as strings (e.g. 'py_trees_ros.tutorials.jobs.Scan')
         """
-        self.controller_ns  = controller_ns
-        self.rec_topic_list = rec_topic_list
+        self.controller_ns   = rospy.get_param("controller_ns", "")
+        self.rec_topic_list  = rec_topic_list
         
         self.n_loop          = n_loop
         self.enable_inf_loop = enable_inf_loop
@@ -101,7 +101,7 @@ class SplinteredReality(object):
         self.blackboard            = py_trees.blackboard.Blackboard()
         self.blackboard.is_running = False
         
-        self.tree = py_trees_ros.trees.BehaviourTree(create_root(controller_ns))
+        self.tree = py_trees_ros.trees.BehaviourTree(create_root(self.controller_ns))
         self.tree.add_pre_tick_handler(self.pre_tick_handler)
         self.tree.add_post_tick_handler(self.post_tick_handler)
         self.report_publisher = rospy.Publisher("~report", std_msgs.String, queue_size=5)
@@ -201,7 +201,7 @@ class SplinteredReality(object):
             ##     rospy.loginfo("Start to record rosbag")
 
         # Dynamic Reconfiguration
-        elif self.busy() and goal is not None:
+        elif self.busy() and goal is not None and False:
             # Todo find the node by name
             is_task_node = False
             for task_node in self.priorities.iterate():
@@ -218,6 +218,10 @@ class SplinteredReality(object):
             
             # Check from the last goal
             for idx in range(1,len(goal)+1):
+                if "action" not in goal[str(len(goal)-idx+1)].keys() and \
+                  "primitive_action" in goal[str(len(goal)-idx+1)].keys():
+                    goal[str(len(goal)-idx+1)]["action"] = goal[str(len(goal)-idx+1)]["primitive_action"]
+                
                 print "Check: {}th plan".format(str(len(goal)-idx)), \
                   goal[str(len(goal)-idx+1)]["action"]
                 
@@ -339,9 +343,6 @@ if __name__ == '__main__':
     """
     import optparse
     p = optparse.OptionParser()
-    p.add_option('--sim', '-s', action='store', dest='sim',
-                 default=False,
-                 help='use this option if you use simulated ur5')
     p.add_option('--viz', '-v', action='store_true', dest='viz',
                  default=False,
                  help='use visualization code for rviz')
@@ -349,17 +350,13 @@ if __name__ == '__main__':
                  default=None, help='a list of topic to record')
     opt, args = p.parse_args()
 
-    if opt.sim == 'true':
-        controller_ns = "arm_controller"
-    else:
-        controller_ns = ""
-
     # load the list of topics for recording
-    if opt.topic_json.find('None')>=0:
+    if opt.topic_json is None or opt.topic_json.find('None')>=0:
         topic_list = None
     else:
         topic_list = load_topic_list(opt.topic_json)
 
+    #py_trees.logging.level = py_trees.logging.Level.DEBUG
 
     # TODO: import a list of jobs from a json file or ROS parameter server.
     # Keep the default job on the top
@@ -371,8 +368,7 @@ if __name__ == '__main__':
                                                  'jobs.gripper_job.Move',
                                                  'jobs.slide_job.Move',
                                                  'jobs.touch_job.Move'],
-                                                 rec_topic_list=topic_list,
-                                                 controller_ns=controller_ns)
+                                                 rec_topic_list=topic_list)
     rospy.on_shutdown(splintered_reality.shutdown)
     if not splintered_reality.setup():
         console.logerror("failed to setup the tree, aborting.")

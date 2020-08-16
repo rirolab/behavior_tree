@@ -17,8 +17,8 @@ class GOTO(py_trees.behaviour.Behaviour):
     priority behaviour.
     """
 
-    def __init__(self, name, action_goal=None,
-                 topic_name="", controller_ns="", check_contact=False):
+    def __init__(self, name, action_goal=None, controller_ns="",
+                 topic_name="", check_contact=False):
         super(GOTO, self).__init__(name=name)
 
         self.topic_name    = topic_name
@@ -55,14 +55,12 @@ class GOTO(py_trees.behaviour.Behaviour):
             cmd_str = json.dumps({'action_type': 'gripperGotoPos',
                                   'goal': self.action_goal,
                                   'check_contact': self.check_contact,
-                                  'timeout': 180})
+                                  'timeout': 5})
             self.cmd_req(cmd_str)
             rospy.sleep(1)
             self.sent_goal = True
             self.feedback_message = "Sending a gripper goal"
             return py_trees.common.Status.RUNNING
-
-        ## return py_trees.common.Status.SUCCESS
 
         msg = self.status_req()
         d   = json.loads(msg.data)
@@ -75,7 +73,7 @@ class GOTO(py_trees.behaviour.Behaviour):
         ##     self.feedback_message = "FAILURE"
         ##     return py_trees.common.Status.FAILURE
 
-        if ret == FollowJointTrajectoryResult.SUCCESSFUL:
+        if ret == GoalStatus.SUCCEEDED or ret == GoalStatus.PREEMPTED :
             self.feedback_message = "SUCCESSFUL"
             return py_trees.common.Status.SUCCESS
         else:

@@ -10,7 +10,6 @@ import PyKDL
 import tf
 
 import std_msgs.msg as std_msgs
-from ur5_srvs.srv import String_Pose, String_PoseResponse
 from complex_action_client import misc
 
 sys.path.insert(0,'..')

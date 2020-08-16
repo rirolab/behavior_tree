@@ -91,7 +91,7 @@ class MOVEP(py_trees.behaviour.Behaviour):
         d = json.loads(msg.data)
         state = d['state']
         ret   = d['result']
-        
+
         if  state in [GoalStatus.ABORTED,
                       GoalStatus.PREEMPTED,
                       GoalStatus.REJECTED] and \

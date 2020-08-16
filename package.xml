@@ -38,6 +38,7 @@
   <exec_depend>py_trees</exec_depend>
   <exec_depend>py_trees_ros</exec_depend>
   <exec_depend>rqt_py_trees</exec_depend>
+  <exec_depend>riro_srvs</exec_depend>
 
 
   <!-- The export tag contains other, unspecified, tags -->

@@ -10,7 +10,6 @@ import PyKDL
 
 import std_msgs.msg as std_msgs
 from geometry_msgs.msg import Pose, Quaternion #PointStamped,
-from ur5_srvs.srv import String_Pose, String_PoseResponse
 from complex_action_client import misc
 
 sys.path.insert(0,'..')
@@ -38,7 +37,11 @@ class Move(object):
         self._subscriber = rospy.Subscriber(self._grounding_channel, std_msgs.String, self.incoming)
         self._goal = None
         self._lock = threading.Lock()
-        ## self.blackboard = py_trees.blackboard.Blackboard()
+
+        self.blackboard = py_trees.blackboard.Blackboard()
+        self.blackboard.gripper_open_pos = rospy.get_param("gripper_open_pos")
+        self.blackboard.gripper_close_pos = rospy.get_param("gripper_close_pos")
+        
 
     @property
     def goal(self):
@@ -71,9 +74,8 @@ class Move(object):
         else:
             grounding = json.loads(msg.data)['params']
             for i in range( len(grounding.keys()) ):
-                if grounding[str(i+1)]['object'].find('l_palm')>=0 and (
-                    grounding[str(i+1)]['primitive_action'].find('open')>=0 or
-                    grounding[str(i+1)]['primitive_action'].find('close')>=0):
+                if grounding[str(i+1)]['primitive_action'].find('gripper_open')>=0 or\
+                    grounding[str(i+1)]['primitive_action'].find('gripper_close')>=0:
                     self.goal = grounding #[str(i+1)]
                     break
 
@@ -106,9 +108,9 @@ class Move(object):
         Returns:
            :class:`~py_trees.behaviour.Behaviour`: subtree root
         """
-        if not ( goal[idx]["primitive_action"] in ['close', 'open'] ):
+        if not ( goal[idx]["primitive_action"] in ['gripper_close', 'gripper_open'] ):
             return None
-
+        
         # beahviors
         ## root = py_trees.composites.Sequence(name="Gripper")
         root = py_trees.composites.Parallel(name="Gripper",\
@@ -116,12 +118,11 @@ class Move(object):
 
         action = goal[idx]['primitive_action'].encode('ascii','ignore')
 
-        if action.find('close')>=0:        
-            s_move = Gripper.GOTO(name="Close", controller_ns=controller_ns,
-                                  action_goal=200)        
+        blackboard = py_trees.blackboard.Blackboard()
+        if action.find('gripper_close')>=0:        
+            s_move = Gripper.GOTO(name="Close", action_goal=blackboard.gripper_close_pos)        
         else:
-            s_move = Gripper.GOTO(name="Open", controller_ns=controller_ns,
-                                  action_goal=70)        
+            s_move = Gripper.GOTO(name="Open", action_goal=blackboard.gripper_open_pos)        
             
         if rec_topic_list is None:
             root.add_child(s_move)

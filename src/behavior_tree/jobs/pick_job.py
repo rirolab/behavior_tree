@@ -10,7 +10,6 @@ import PyKDL
 import tf
 
 import std_msgs.msg as std_msgs
-from ur5_srvs.srv import String_Pose, String_PoseResponse
 from complex_action_client import misc
 
 sys.path.insert(0,'..')
@@ -39,6 +38,10 @@ class Move(object):
         self._subscriber = rospy.Subscriber(self._grounding_channel, std_msgs.String, self.incoming)
         self._goal = None
         self._lock = threading.Lock()
+
+        self.blackboard = py_trees.blackboard.Blackboard()
+        self.blackboard.gripper_open_pos = rospy.get_param("gripper_open_pos")
+        self.blackboard.gripper_close_pos = rospy.get_param("gripper_close_pos")
         
     @property
     def goal(self):
@@ -105,8 +108,7 @@ class Move(object):
         """
         # beahviors
         root = py_trees.composites.Sequence(name="Pick")
-        grasp_offset_z = 0.02
-        gripper_range     = rospy.get_param('gripper_range', [50, 200])
+        blackboard = py_trees.blackboard.Blackboard()
 
         if goal[idx]["primitive_action"] in ['pick']:
             if 'object' in goal[idx].keys():
@@ -133,11 +135,11 @@ class Move(object):
         s_move11 = MovePose.MOVEP(name="Top", controller_ns=controller_ns,
                                  action_goal={'pose': "Plan"+idx+"/grasp_top_pose"})
         s_move12 = Gripper.GOTO(name="Open", controller_ns=controller_ns,
-                               action_goal=gripper_range[0])        
+                               action_goal=blackboard.gripper_open_pos)        
         s_move13 = MovePose.MOVEP(name="Approach", controller_ns=controller_ns,
                                  action_goal={'pose': "Plan"+idx+"/grasp_pose"})
         s_move14 = Gripper.GOTO(name="Close", controller_ns=controller_ns,
-                               action_goal=gripper_range[1])        
+                               action_goal=blackboard.gripper_close_pos)        
         s_move15 = MovePose.MOVEP(name="Top", controller_ns=controller_ns,
                                  action_goal={'pose': "Plan"+idx+"/grasp_top_pose"})
 
