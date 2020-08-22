@@ -10,7 +10,7 @@ import PyKDL
 import tf
 
 import std_msgs.msg as std_msgs
-from complex_action_client import misc
+## from complex_action_client import misc
 
 sys.path.insert(0,'..')
 from subtrees import MoveJoint, MovePose, Gripper, Stop, WorldModel

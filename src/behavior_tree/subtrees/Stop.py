@@ -21,23 +21,29 @@ class STOP(py_trees.behaviour.Behaviour):
     """
 
     def __init__(self, name, action_goal=None,
-                 topic_name="", controller_ns=""):
+                 topic_name=""):
         super(STOP, self).__init__(name=name)
 
-        self.topic_name = topic_name
-        self.controller_ns = controller_ns
-        self.arm = None
+        self.topic_name  = topic_name
         self.action_goal = action_goal
-        self.sent_goal = False
-        self.cmd_req   = None
+        self.sent_goal   = False
+        self.cmd_req     = []
 
 
     def setup(self, timeout):
         self.feedback_message = "{}: setup".format(self.name)
-        ## self.arm = ArmClient(timeout_scale=1., controller_ns=self.controller_ns,
-        ##                      use_gripper=False)
+        rospy.loginfo("Waiting arm clients...")
+
+        ## namespaces = rospy.get_param("~namespaces", [""])
+        ## rospy.logerr( namespaces )
+        ## for ns in namespaces:        
+        ##     rospy.wait_for_service(ns+"/arm_client/command")
+        ##     self.cmd_req.append(rospy.ServiceProxy(ns+"/arm_client/command", String_Int))
+
         rospy.wait_for_service("arm_client/command")
         self.cmd_req = rospy.ServiceProxy("arm_client/command", String_Int)
+        ## rospy.wait_for_service("arm_client/status")
+            
         return True
 
 
@@ -49,20 +55,18 @@ class STOP(py_trees.behaviour.Behaviour):
     def update(self):
         self.logger.debug("%s.update()" % self.__class__.__name__)
 
-        if self.cmd_req is None:
+        if self.cmd_req is None or len(self.cmd_req)==0:
             self.feedback_message = \
               "no action client, did you call setup() on your tree?"
             return py_trees.Status.FAILURE
 
         if not self.sent_goal:
-            ## self.arm._client.cancel_goal()
+            ## for req in self.cmd_req:
+            ##     req( json.dumps({'action_type': 'cancel_goal'}) )
             self.cmd_req( json.dumps({'action_type': 'cancel_goal'}) )
             self.sent_goal = True
             self.feedback_message = "Cancelling a goal"
         return py_trees.common.Status.SUCCESS
-
-        ## state = self.arm.get_state()
-        ## ret   = self.arm.get_result()
         
         ## if  state in [GoalStatus.ABORTED,
         ##               GoalStatus.PREEMPTED] and \
@@ -79,5 +83,4 @@ class STOP(py_trees.behaviour.Behaviour):
 
         
     def terminate(self, new_status):
-        ## self.arm._client.cancel_goal()
         return

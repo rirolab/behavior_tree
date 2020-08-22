@@ -159,7 +159,7 @@ class SplinteredReality(object):
                                                    rec_topic_list=self.rec_topic_list)
                         if job_root is None:
                             continue
-                        rospy.loginfo("{0}: running to set up".format(idx+1))
+                        rospy.loginfo("{0}: running to set up all subtree modules".format(idx+1))
                         if not job_root.setup(timeout=15):
                             rospy.logerr("{0}: failed to setup".format(idx+1))
                             continue

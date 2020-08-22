@@ -32,7 +32,7 @@ class Move(object):
         Tune into a channel for incoming goal requests. This is a simple
         subscriber here but more typically would be a service or action interface.
         """
-        self._grounding_channel = "symbol_grounding" #rospy.get_param('grounding_channel')
+        self._grounding_channel = "/symbol_grounding" #rospy.get_param('grounding_channel')
         
         self._subscriber = rospy.Subscriber(self._grounding_channel, std_msgs.String, self.incoming)
         self._goal = None

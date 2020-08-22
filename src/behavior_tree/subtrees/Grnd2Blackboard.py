@@ -29,7 +29,7 @@ class ToBlackboard(subscribers.ToBlackboard):
             if self.blackboard.grnd_msg.data is None:
                 rospy.logwarn_throttle(60, "%s: No grounding on the blackboard!" % self.name)
             grounding = json.loads(self.blackboard.grnd_msg.data)
-
+            
             # container for commands
             ## self.blackboard.groundings        = []
             

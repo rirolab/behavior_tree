@@ -32,8 +32,8 @@ class REMOVE(py_trees.behaviour.Behaviour):
 
     def setup(self, timeout):
         self.feedback_message = "{}: setup".format(self.name)
-        rospy.wait_for_service("remove_wm_object")
-        self.cmd_req = rospy.ServiceProxy("remove_wm_object", String_None)
+        rospy.wait_for_service("/remove_wm_object")
+        self.cmd_req = rospy.ServiceProxy("/remove_wm_object", String_None)
         return True
 
 
@@ -83,11 +83,11 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         self.en_random   = en_random
         self.en_close_pose = en_close_pose
 
-        self._pose_srv_channel = 'get_object_pose'
-        self._grasp_pose_srv_channel = 'get_object_grasp_pose'
-        self._height_srv_channel = 'get_object_height'
-        self._rnd_pose_srv_channel = 'get_object_rnd_pose'
-        self._close_pose_srv_channel = 'get_object_close_pose'
+        self._pose_srv_channel = '/get_object_pose'
+        self._grasp_pose_srv_channel = '/get_object_grasp_pose'
+        self._height_srv_channel = '/get_object_height'
+        self._rnd_pose_srv_channel = '/get_object_rnd_pose'
+        self._close_pose_srv_channel = '/get_object_close_pose'
         self._world_frame    = rospy.get_param("world_frame", '/base_footprint')
         self._arm_base_frame = rospy.get_param("arm_base_frame", '/ur_arm_base_link') 
 
