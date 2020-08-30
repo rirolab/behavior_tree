@@ -214,6 +214,9 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                                                            grasp_pose, \
                                                            obj_height, \
                                                            self.grasp_offset_z)
+
+                ## from IPython import embed; embed(); sys.exit()
+                
                 # the sliding motion 
                 if self.en_close_pose:
                     place_pose.position.z = grasp_pose.position.z

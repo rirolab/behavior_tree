@@ -108,7 +108,7 @@ class Move(object):
         """
         # beahviors
         root = py_trees.composites.Sequence(name="Move")
-        grasp_offset_z = 0.02
+        blackboard = py_trees.blackboard.Blackboard()
         
         if goal[idx]["primitive_action"] in ['move']:
             obj         = goal[idx]['object'].encode('ascii','ignore')
@@ -122,15 +122,10 @@ class Move(object):
             print "destination is not assigned, so selected place-tray as a destination"
         
         # ----------------- Move Task ----------------        
-        ## s_init1 = MoveJoint.MOVEJ(name="Init", controller_ns=controller_ns,
-        ##                           action_goal=[0, -np.pi/2., np.pi/2., -np.pi/2., -np.pi/2., np.pi/4.])
-        ## s_init2 = MoveJoint.MOVEJ(name="Init", controller_ns=controller_ns,
-        ##                           action_goal=[0, -np.pi/2., np.pi/2., -np.pi/2., -np.pi/2., np.pi/4.])
         s_init3 = MoveJoint.MOVEJ(name="Init", controller_ns=controller_ns,
                                   action_goal=[0, -np.pi/2., np.pi/2., -np.pi/2., -np.pi/2., np.pi/4.])
 
         # ----------------- Pick ---------------------
-        pick = py_trees.composites.Sequence(name="MovePick")
         pose_est1 = WorldModel.POSE_ESTIMATOR(name="Plan"+idx,
                                               object_dict = {'target': obj})
         s_move10 = MovePose.MOVEPROOT(name="Top1",
@@ -139,15 +134,15 @@ class Move(object):
         s_move11 = MovePose.MOVEP(name="Top2", controller_ns=controller_ns,
                                  action_goal={'pose': "Plan"+idx+"/grasp_top_pose"})
         s_move12 = Gripper.GOTO(name="Open", controller_ns=controller_ns,
-                               action_goal=50)        
+                               action_goal=blackboard.gripper_open_pos)        
         s_move13 = MovePose.MOVEP(name="Approach", controller_ns=controller_ns,
                                  action_goal={'pose': "Plan"+idx+"/grasp_pose"})
         s_move14 = Gripper.GOTO(name="Close", controller_ns=controller_ns,
-                               action_goal=200)        
+                               action_goal=blackboard.gripper_close_pos)        
         s_move15 = MovePose.MOVEP(name="Top", controller_ns=controller_ns,
                                  action_goal={'pose': "Plan"+idx+"/grasp_top_pose"})
 
-        #pick.add_children([pose_est1, s_init1, s_move10, s_move11, s_move12, s_move13, s_move14, s_move15])
+        pick = py_trees.composites.Sequence(name="MovePick")
         pick.add_children([pose_est1, s_move10, s_move11, s_move12, s_move13, s_move14, s_move15])
 
 

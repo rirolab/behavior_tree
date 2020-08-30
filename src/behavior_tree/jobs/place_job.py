@@ -108,7 +108,8 @@ class Move(object):
         """       
         # beahviors
         root = py_trees.composites.Sequence(name="Move")
-        grasp_offset_z = 0.02
+        blackboard = py_trees.blackboard.Blackboard()
+        ## grasp_offset_z = 0.02
         
         if goal[idx]["primitive_action"] in ['place']:
             if 'object' in goal[idx].keys():
@@ -120,61 +121,14 @@ class Move(object):
                 sys.exit()
                 
             destination = goal[idx]['destination'].encode('ascii','ignore')
-            destination_offset = goal[idx]['destination_offset'] #.encode('ascii','ignore')
-            
-            ## target_frame = goal[idx]['base'].encode('ascii','ignore')
-            ## target_pose  = goal[idx]['target']
-            ## tgt2obj = PyKDL.Frame(PyKDL.Rotation.RotZ(target_pose[3]),
-            ##                       PyKDL.Vector(target_pose[0],
-            ##                                    target_pose[1],
-            ##                                    target_pose[2]))
+
+            if 'destination_offset' in goal[idx].keys():
+                destination_offset = goal[idx]['destination_offset'] #.encode('ascii','ignore')
+            else:
+                destination_offset = [0,0,0,0,0,0]
         else:
             return None
 
-        ## # Request the top surface pose of an object to WM
-        ## height_srv_channel = 'get_object_height'
-        ## rospy.wait_for_service(height_srv_channel)
-        ## try:
-        ##     srv_req = rospy.ServiceProxy(height_srv_channel, String_Pose)
-        ##     obj_height = srv_req(obj).pose
-        ## except rospy.ServiceException, e:
-        ##     print "Height Service is not available: %s"%e
-        ##     sys.exit()
-        ## obj_height = obj_height.position.z
-
-        ## # get odom 2 base
-        ## arm_base_frame_id = rospy.get_param("arm_base_frame", '/ur_arm_base_link')
-        ## listener = tf.TransformListener()
-        ## pos = None
-        ## while not rospy.is_shutdown():
-        ##     try:
-        ##         (pos,quat) = listener.lookupTransform(target_frame, arm_base_frame_id, rospy.Time(0))
-        ##     except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
-        ##         ## rospy.loginfo("{} frame name is not available.".format(target_frame))
-        ##         continue
-        ##     if pos is not None: break
-
-        ## tgt2arm_baselink = PyKDL.Frame(
-        ##     PyKDL.Rotation.Quaternion(quat[0], quat[1], quat[2], quat[3]),
-        ##     PyKDL.Vector(pos[0], pos[1], pos[2]))                
-        
-        # ------------ Compute -------------------------
-        ## arm_baselink2obj  = tgt2arm_baselink.Inverse() * tgt2obj
-        
-        ## obj2grasp      = PyKDL.Frame(PyKDL.Rotation.RotX(-np.pi/2.) * PyKDL.Rotation.RotY(-np.pi/2.))
-        ## baselink2grasp = arm_baselink2obj * obj2grasp
-        
-        ## arm_baselink2obj = tgt2arm_baselink.Inverse() * tgt2obj
-        ## arm_baselink2obj.M = baselink2grasp.M
-        
-        ## place_pose     = misc.KDLframe2Pose(arm_baselink2obj)
-        ## place_pose.position.z += obj_height
-        ## place_pose.position.z -= grasp_offset_z
-        ## place_top_pose = copy.deepcopy(place_pose)
-        ## place_top_pose.position.z += 0.15
-            
-        
-        
         s_init3 = MoveJoint.MOVEJ(name="Init", controller_ns=controller_ns,
                                   action_goal=[0, -np.pi/2., np.pi/2., -np.pi/2., -np.pi/2., np.pi/4.])
 
@@ -190,7 +144,7 @@ class Move(object):
         s_move22 = MovePose.MOVEP(name="Approach", controller_ns=controller_ns,
                                  action_goal={'pose': "Plan"+idx+"/place_pose"})
         s_move23 = Gripper.GOTO(name="Open", controller_ns=controller_ns,
-                               action_goal=50)        
+                               action_goal=blackboard.gripper_open_pos)        
         s_move24 = MovePose.MOVEP(name="Top", controller_ns=controller_ns,
                                  action_goal={'pose': "Plan"+idx+"/place_top_pose"})
         
