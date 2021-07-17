@@ -38,7 +38,9 @@ class Move(object):
         self._subscriber = rospy.Subscriber(self._grounding_channel, std_msgs.String, self.incoming)
         self._goal = None
         self._lock = threading.Lock()
-        ## self.blackboard = py_trees.blackboard.Blackboard()
+        
+        self.blackboard = py_trees.blackboard.Blackboard()
+        self.blackboard.init_config = eval(rospy.get_param("init_config", [0, -np.pi/2., np.pi/2., -np.pi/2., -np.pi/2., np.pi/4.]))
 
         ## self.object      = None
         ## self.destination = None
@@ -123,7 +125,7 @@ class Move(object):
         
         # ----------------- Move Task ----------------        
         s_init3 = MoveJoint.MOVEJ(name="Init", controller_ns=controller_ns,
-                                  action_goal=[0, -np.pi/2., np.pi/2., -np.pi/2., -np.pi/2., np.pi/4.])
+                                  action_goal=blackboard.init_config)
 
         # ----------------- Pick ---------------------
         pose_est1 = WorldModel.POSE_ESTIMATOR(name="Plan"+idx,

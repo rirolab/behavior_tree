@@ -8,7 +8,7 @@ import sys
 
 
 def stop_cmd():
-    pub = rospy.Publisher('/symbol_grounding', String, queue_size=10)
+    pub = rospy.Publisher('symbol_grounding', String, queue_size=10)
     rospy.loginfo("send a stop command to BT")
     
     d = {"timestamp": str(datetime.datetime.now()),

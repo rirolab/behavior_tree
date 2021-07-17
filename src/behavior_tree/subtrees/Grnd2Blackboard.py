@@ -7,7 +7,7 @@ from py_trees_ros import subscribers
 
 class ToBlackboard(subscribers.ToBlackboard):
 
-    def __init__(self, name, topic_name="/symbol_grounding"):
+    def __init__(self, name, topic_name="symbol_grounding"):
         super(ToBlackboard, self).__init__(name=name,
                                            topic_name=topic_name,
                                            topic_type=std_msgs.String,

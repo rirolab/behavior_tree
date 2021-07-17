@@ -28,7 +28,7 @@ def create_root(controller_ns=""):
     # ---------------- Root->Blackboard ------------------------
     ## topics2bb = py_trees.composites.Sequence("Topics2BB")
     grnd2bb = Grnd2Blackboard.ToBlackboard(name="Grnd2BB",
-                                           topic_name="/symbol_grounding")
+                                           topic_name="symbol_grounding")
     ## wm2bb   = WM2Blackboard.ToBlackboard(name="WM2BB",
     ##                                      topic_name="/world_model" )
     ## reccmd2bb = py_trees_ros.subscribers.EventToBlackboard(

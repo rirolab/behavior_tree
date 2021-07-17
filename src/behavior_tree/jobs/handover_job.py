@@ -39,7 +39,9 @@ class Move(object):
         self._subscriber = rospy.Subscriber(self._grounding_channel, std_msgs.String, self.incoming)
         self._goal = None
         self._lock = threading.Lock()
-        ## self.blackboard = py_trees.blackboard.Blackboard()
+        
+        self.blackboard = py_trees.blackboard.Blackboard()
+        self.blackboard.init_config = eval(rospy.get_param("init_config", [0, -np.pi/2., np.pi/2., -np.pi/2., -np.pi/2., np.pi/4.]))
 
     @property
     def goal(self):
@@ -110,6 +112,7 @@ class Move(object):
         """
         # beahviors
         gripper_range = rospy.get_param('gripper_range', [50, 200])
+        blackboard = py_trees.blackboard.Blackboard()
 
         if goal[idx]["primitive_action"] in ['handover']:
             obj = goal[idx]['object'].encode('ascii','ignore')
@@ -118,9 +121,9 @@ class Move(object):
 
         # ------------ Compute -------------------------
         s_init1 = MoveJoint.MOVEJ(name="Init1", controller_ns=controller_ns,
-                                  action_goal=[0, -np.pi/2., np.pi/2., -np.pi/2., -np.pi/2., np.pi/4.])
+                                  action_goal=blackboard.init_config)
         s_init2 = MoveJoint.MOVEJ(name="Init2", controller_ns=controller_ns,
-                                  action_goal=[0, -np.pi/2., np.pi/2., -np.pi/2., -np.pi/2., np.pi/4.])
+                                  action_goal=blackboard.init_config)
 
 
         # ----------------- Handover ---------------------

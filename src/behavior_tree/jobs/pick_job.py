@@ -42,6 +42,7 @@ class Move(object):
         self.blackboard = py_trees.blackboard.Blackboard()
         self.blackboard.gripper_open_pos = rospy.get_param("gripper_open_pos")
         self.blackboard.gripper_close_pos = rospy.get_param("gripper_close_pos")
+        self.blackboard.init_config = eval(rospy.get_param("init_config", [0, -np.pi/2., np.pi/2., -np.pi/2., -np.pi/2., np.pi/4.]))
         
     @property
     def goal(self):
@@ -117,17 +118,16 @@ class Move(object):
                 obj = goal[idx]['obj'].encode('ascii','ignore')
             else:
                 rospy.logerr("Pick: No pick object")
-                sys.exit()
-                
+                sys.exit()                
             ## destination = goal['2']['destination'].encode('ascii','ignore')
         else:
             return None
-
+        
         # ------------ Compute -------------------------
         s_init1 = MoveJoint.MOVEJ(name="Init", controller_ns=controller_ns,
-                                  action_goal=[0, -np.pi/2., np.pi/2., -np.pi/2., -np.pi/2., np.pi/4.])
+                                  action_goal=blackboard.init_config)
         s_init2 = MoveJoint.MOVEJ(name="Init2", controller_ns=controller_ns,
-                                  action_goal=[0, -np.pi/2., np.pi/2., -np.pi/2., -np.pi/2., np.pi/4.])
+                                  action_goal=blackboard.init_config)
 
         # ----------------- Pick ---------------------
         pose_est1 = WorldModel.POSE_ESTIMATOR(name="Plan"+idx,

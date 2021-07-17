@@ -35,6 +35,9 @@ class Move(object):
         self._goal = None
         self._lock = threading.Lock()
 
+        self.blackboard = py_trees.blackboard.Blackboard()
+        self.blackboard.init_config = eval(rospy.get_param("init_config", [0, -np.pi/2., np.pi/2., -np.pi/2., -np.pi/2., np.pi/4.]))
+        
     @property
     def goal(self):
         """
@@ -98,9 +101,10 @@ class Move(object):
         # beahviors
         root  = py_trees.composites.Sequence(name="TestMove")
         frame = rospy.get_param("arm_base_frame", '/ur_arm_base')
+        blackboard = py_trees.blackboard.Blackboard()
         
         s_move1 = MoveJoint.MOVEJ(name="Move1", controller_ns=controller_ns,
-                                  action_goal=[0, -np.pi/2.0, np.pi/2., -np.pi/2., -np.pi/2., -np.pi/4.])
+                                  action_goal=blackboard.init_config)
 
 
         pose = Pose()

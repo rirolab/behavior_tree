@@ -38,6 +38,9 @@ class Move(object):
         self._goal = None
         self._lock = threading.Lock()
 
+        self.blackboard = py_trees.blackboard.Blackboard()
+        self.blackboard.init_config = eval(rospy.get_param("init_config", [0, -np.pi/2., np.pi/2., -np.pi/2., -np.pi/2., np.pi/4.]))
+        
     @property
     def goal(self):
         """
@@ -86,6 +89,7 @@ class Move(object):
         """
         # beahviors
         root = py_trees.composites.Sequence(name="Move")
+        blackboard = py_trees.blackboard.Blackboard()
         grasp_offset_z = 0.02
         
         if goal[idx]["primitive_action"] in ['slide']:
@@ -104,7 +108,7 @@ class Move(object):
         ## s_init1 = MoveJoint.MOVEJ(name="Init", controller_ns=controller_ns,
         ##                           action_goal=[0, -np.pi/2., np.pi/2., -np.pi/2., -np.pi/2., np.pi/4.])
         s_init3 = MoveJoint.MOVEJ(name="Init", controller_ns=controller_ns,
-                                  action_goal=[0, -np.pi/2., np.pi/2., -np.pi/2., -np.pi/2., np.pi/4.])
+                                  action_goal=blackboard.init_config)
 
         # ----------------- Pick ---------------------
         slide = py_trees.composites.Sequence(name="Slide")

@@ -153,6 +153,7 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                 print "Height Service is not available: %s"%e
                 return py_trees.common.Status.FAILURE
 
+            ## from IPython import embed; embed(); sys.exit()
             pos = None
             while not rospy.is_shutdown():
                 try:
