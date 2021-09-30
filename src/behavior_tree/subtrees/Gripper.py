@@ -17,13 +17,14 @@ class GOTO(py_trees.behaviour.Behaviour):
     priority behaviour.
     """
 
-    def __init__(self, name, action_goal=None, controller_ns="",
+    def __init__(self, name, action_goal=None, force=1., controller_ns="",
                  topic_name="", check_contact=False):
         super(GOTO, self).__init__(name=name)
 
         self.topic_name    = topic_name
         self.controller_ns = controller_ns
         self.action_goal   = action_goal
+        self.force         = force
         self.sent_goal     = False
         self.cmd_req       = None
         self.check_contact = check_contact
@@ -54,6 +55,7 @@ class GOTO(py_trees.behaviour.Behaviour):
         if not self.sent_goal:
             cmd_str = json.dumps({'action_type': 'gripperGotoPos',
                                   'goal': self.action_goal,
+                                  'force': self.force,
                                   'check_contact': self.check_contact,
                                   'timeout': 5})
             self.cmd_req(cmd_str)
