@@ -72,8 +72,6 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
     command to the robot if it is cancelled or interrupted by a higher
     priority behaviour.
     """
-    grasp_offset_z = 0.02
-    top_offset_z   = 0.15
 
     def __init__(self, name, object_dict=None, en_random=False, en_close_pose=False):
         super(POSE_ESTIMATOR, self).__init__(name=name)
@@ -88,8 +86,14 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         self._height_srv_channel = '/get_object_height'
         self._rnd_pose_srv_channel = '/get_object_rnd_pose'
         self._close_pose_srv_channel = '/get_object_close_pose'
-        self._world_frame    = rospy.get_param("world_frame", '/base_footprint')
-        self._arm_base_frame = rospy.get_param("arm_base_frame", '/ur_arm_base_link') 
+        self._world_frame    = rospy.get_param("/world_frame", None)
+        if self._world_frame is None:
+            self._world_frame    = rospy.get_param("world_frame", '/base_footprint')
+        self._arm_base_frame = rospy.get_param("arm_base_frame", '/ur_arm_base_link')
+
+        self.grasp_offset_z = rospy.get_param("grasp_offset_z", 0.02)
+        self.top_offset_z   = rospy.get_param("top_offset_z", 0.15)
+
 
 
     def setup(self, timeout):
