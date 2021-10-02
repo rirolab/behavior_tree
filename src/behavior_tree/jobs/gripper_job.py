@@ -41,6 +41,8 @@ class Move(object):
         self.blackboard = py_trees.blackboard.Blackboard()
         self.blackboard.gripper_open_pos = rospy.get_param("gripper_open_pos")
         self.blackboard.gripper_close_pos = rospy.get_param("gripper_close_pos")
+        self.blackboard.gripper_open_force = rospy.get_param("gripper_open_force")
+        self.blackboard.gripper_close_force = rospy.get_param("gripper_close_force")
         
 
     @property
@@ -120,9 +122,13 @@ class Move(object):
 
         blackboard = py_trees.blackboard.Blackboard()
         if action.find('gripper_close')>=0:        
-            s_move = Gripper.GOTO(name="Close", action_goal=blackboard.gripper_close_pos)        
+            s_move = Gripper.GOTO(name="Close", controller_ns=controller_ns,
+                                action_goal=blackboard.gripper_close_pos,
+                                force=blackboard.gripper_close_force)        
         else:
-            s_move = Gripper.GOTO(name="Open", action_goal=blackboard.gripper_open_pos)        
+            s_move = Gripper.GOTO(name="Open", controller_ns=controller_ns,
+                                action_goal=blackboard.gripper_open_pos,
+                                force=blackboard.gripper_open_force)        
             
         if rec_topic_list is None:
             root.add_child(s_move)

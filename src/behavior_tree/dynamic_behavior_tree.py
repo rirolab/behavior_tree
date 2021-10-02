@@ -153,7 +153,6 @@ class SplinteredReality(object):
                 for job in self.jobs:
                     # job.goal contains current goal json message.
                     if job.goal is not None:
-                        ## from IPython import embed; embed(); sys.exit()
                         job_root = job.create_root(str(idx+1), job.goal,
                                                    self.controller_ns,
                                                    rec_topic_list=self.rec_topic_list)
