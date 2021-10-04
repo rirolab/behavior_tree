@@ -157,7 +157,7 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                 print "Height Service is not available: %s"%e
                 return py_trees.common.Status.FAILURE
 
-            ## from IPython import embed; embed(); sys.exit()
+            # from IPython import embed; embed(); sys.exit()
             pos = None
             while not rospy.is_shutdown():
                 try:
@@ -166,7 +166,7 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                                                                rospy.Time(0))
                 except (tf.LookupException, tf.ConnectivityException,
                         tf.ExtrapolationException):
-                    self.feedback_message = "Exception from TF"
+                    self.feedback_message = "WorldModel: Exception from TF"
                     continue
                 if pos is not None: break
 
@@ -232,10 +232,12 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                 self.blackboard.set(self.name +'/place_pose', place_pose)    
                 self.blackboard.set(self.name +'/place_top_pose', place_top_pose)
             self.sent_goal        = True
+            self.feedback_message = "WorldModel: successful grasp pose estimation "
             return py_trees.common.Status.SUCCESS
             ## return py_trees.common.Status.RUNNING
 
         
+        self.feedback_message = "WorldModel: successful grasp pose estimation "
         ## if not self.sent_goal:
         ##     self.sent_goal = True
         ##     self.feedback_message = "Sending a world_model command"

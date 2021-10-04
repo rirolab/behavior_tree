@@ -295,6 +295,7 @@ class SplinteredReality(object):
         # delete the job subtree if it is finished
         if self.busy():
             job = self.priorities.children[-2]
+                        
             if job.status == py_trees.common.Status.SUCCESS or job.status == py_trees.common.Status.FAILURE or job.status == py_trees.common.Status.INVALID:
                 rospy.loginfo("{0}: finished [{1}]".format(job.name, job.status))
                 tree.prune_subtree(job.id)
