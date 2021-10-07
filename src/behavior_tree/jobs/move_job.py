@@ -163,7 +163,7 @@ class Move(object):
         s_move22 = MovePose.MOVEP(name="Approach", controller_ns=controller_ns,
                                  action_goal={'pose': "Plan"+idx+"/place_pose"})
         s_move23 = Gripper.GOTO(name="Open", controller_ns=controller_ns,
-                               action_goal=50)        
+                               action_goal=blackboard.gripper_open_pos)        
         s_move24 = MovePose.MOVEP(name="Top", controller_ns=controller_ns,
                                  action_goal={'pose': "Plan"+idx+"/place_top_pose"})
         
