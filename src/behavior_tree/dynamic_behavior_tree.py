@@ -364,6 +364,7 @@ if __name__ == '__main__':
     splintered_reality = SplinteredReality(jobs=['jobs.pick_job.Move',
                                                  'jobs.place_job.Move',
                                                  'jobs.move_job.Move',
+                                                 'jobs.handover_job.Move',
                                                  'jobs.jog_job.Move',
                                                  'jobs.gripper_job.Move',
                                                  'jobs.slide_job.Move',

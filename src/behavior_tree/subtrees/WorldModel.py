@@ -181,7 +181,7 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                                           self.grasp_offset_z)
             grasp_top_pose = copy.deepcopy(grasp_pose)
             grasp_top_pose.position.z += self.top_offset_z
-            ## from IPython import embed; embed(); sys.exit()
+            #from IPython import embed; embed(); sys.exit()
 
             self.blackboard.set(self.name +'/grasp_pose', grasp_pose)
             self.blackboard.set(self.name +'/grasp_top_pose', grasp_top_pose)
@@ -251,14 +251,15 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
 
     @staticmethod
     def get_grasp_pose(obj_pose, base2arm_baselink, grasp_offset_z):
-        """ return the grasp pose """
+        """ Return the grasp pose."""
         base2obj = misc.pose2KDLframe(obj_pose)
-        # TODO: this is a fail safe code. It may need to be removed. 
-        if abs(base2obj.M.UnitZ()[2]) < 0.3:
-            if abs(base2obj.M.UnitX()[2]) < 0.3:
-                base2obj.M.DoRotX(-np.pi/2.)
-            else:
-                base2obj.M.DoRotY(np.pi/2.)
+
+        # TODO: this is a fail safe code. It may need to be removed.
+        # if abs(base2obj.M.UnitZ()[2]) < 0.3:
+        #     if abs(base2obj.M.UnitX()[2]) < 0.3:
+        #         base2obj.M.DoRotX(-np.pi/2.)
+        #     else:
+        #         base2obj.M.DoRotY(np.pi/2.)
                 
         arm_baselink2obj = base2arm_baselink.Inverse() * base2obj
 

@@ -14,7 +14,7 @@ from complex_action_client import misc
 from geometry_msgs.msg import PoseStamped, Point, Quaternion, Pose
 
 sys.path.insert(0,'..')
-from subtrees import MoveJoint, MovePose, Gripper, Stop
+from subtrees import MoveJoint, MovePose, Gripper, Stop, WorldModel
 
 
 ##############################################################################
@@ -41,6 +41,10 @@ class Move(object):
         self._lock = threading.Lock()
         
         self.blackboard = py_trees.blackboard.Blackboard()
+        self.blackboard.gripper_open_pos = rospy.get_param("gripper_open_pos")
+        self.blackboard.gripper_close_pos = rospy.get_param("gripper_close_pos")
+        self.blackboard.gripper_open_force = rospy.get_param("gripper_open_force")
+        self.blackboard.gripper_close_force = rospy.get_param("gripper_close_force")
         self.blackboard.init_config = eval(rospy.get_param("init_config", [0, -np.pi/2., np.pi/2., -np.pi/2., -np.pi/2., np.pi/4.]))
 
     @property
@@ -111,52 +115,37 @@ class Move(object):
            :class:`~py_trees.behaviour.Behaviour`: subtree root
         """
         # beahviors
-        gripper_range = rospy.get_param('gripper_range', [50, 200])
+        root = py_trees.composites.Sequence(name="Handover")
         blackboard = py_trees.blackboard.Blackboard()
 
         if goal[idx]["primitive_action"] in ['handover']:
             obj = goal[idx]['object'].encode('ascii','ignore')
+            destination = goal[idx]['destination'].encode('ascii','ignore')
         else:
             return None
 
-        # ------------ Compute -------------------------
-        s_init1 = MoveJoint.MOVEJ(name="Init1", controller_ns=controller_ns,
+        # TODO
+        if destination=='na':
+            destination = None
+        
+        # ----------------- Init Task ----------------        
+        s_init = MoveJoint.MOVEJ(name="Init", controller_ns=controller_ns,
                                   action_goal=blackboard.init_config)
-        s_init2 = MoveJoint.MOVEJ(name="Init2", controller_ns=controller_ns,
-                                  action_goal=blackboard.init_config)
-
 
         # ----------------- Handover ---------------------
-        task = py_trees.composites.Sequence(name="Handover")
-
-        ## s_move21 = MoveJoint.MOVEJ(name="Front", controller_ns=controller_ns,
-        ##                           action_goal=[0, -np.pi/2., np.pi/2.-0.05, -np.pi+0.05, -np.pi/2., np.pi/4.])
-        s_move21 = MoveJoint.MOVEJ(name="Front", controller_ns=controller_ns,
-                                  action_goal=[0, -np.pi/2., -np.pi/4.+10.*np.pi/180.0, -207./180.*np.pi, -np.pi/2., np.pi/4.])
-
-        ## pose            = Pose()
-        ## pose.position.y = 0.1
-        ## goal_dict = {'pose': pose,
-        ##              'frame': "l_palm"}        
-        ## s_move22 = MovePose.MOVEPR(name="Approach", controller_ns=controller_ns,
-        ##                            action_goal=goal_dict)
-        
-        s_move23 = Gripper.GOTO(name="Open", controller_ns=controller_ns,
-                                action_goal=gripper_range[0], check_contact=True)        
-
-        ## pose            = Pose()
-        ## pose.position.y = -0.1
-        ## goal_dict = {'pose': pose,
-        ##              'frame': "l_palm"}
-        ## s_move24 = MovePose.MOVEPR(name="Retract", controller_ns=controller_ns,
-        ##                            action_goal=goal_dict)
+        s_move1 = MoveJoint.MOVEJ(name="Front", controller_ns=controller_ns,
+                                  action_goal=[np.pi/2, -np.pi/2., np.pi/2., np.pi/2., -np.pi/2., 0])
+        s_move2 = Gripper.GOTO(name="Open", controller_ns=controller_ns,
+                                   action_goal=blackboard.gripper_open_pos, check_contact=True)        
 
         wm_remove = WorldModel.REMOVE(name="Delete", action_goal={'obj_name': obj})
 
 
-        ## task.add_children([s_init1, s_move21, s_move22, s_move23, s_move24, s_init2])
-        task.add_children([s_move21, s_move23, s_init2, wm_remove])
+        task = py_trees.composites.Sequence(name="Handover")
+        task.add_children([s_move1, s_move2, s_init, wm_remove])
         return task
+
+
     
         ## run_or_cancel = py_trees.composites.Selector(name="Run or Cancel?")
 

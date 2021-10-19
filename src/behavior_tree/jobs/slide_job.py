@@ -39,6 +39,10 @@ class Move(object):
         self._lock = threading.Lock()
 
         self.blackboard = py_trees.blackboard.Blackboard()
+        self.blackboard.gripper_open_pos = rospy.get_param("gripper_open_pos")
+        self.blackboard.gripper_close_pos = rospy.get_param("gripper_close_pos")
+        self.blackboard.gripper_open_force = rospy.get_param("gripper_open_force")
+        self.blackboard.gripper_close_force = rospy.get_param("gripper_close_force")
         self.blackboard.init_config = eval(rospy.get_param("init_config", [0, -np.pi/2., np.pi/2., -np.pi/2., -np.pi/2., np.pi/4.]))
         
     @property
@@ -105,8 +109,6 @@ class Move(object):
 
         
         # ----------------- Move Task ----------------        
-        ## s_init1 = MoveJoint.MOVEJ(name="Init", controller_ns=controller_ns,
-        ##                           action_goal=[0, -np.pi/2., np.pi/2., -np.pi/2., -np.pi/2., np.pi/4.])
         s_init3 = MoveJoint.MOVEJ(name="Init", controller_ns=controller_ns,
                                   action_goal=blackboard.init_config)
 
@@ -120,27 +122,59 @@ class Move(object):
         s_move11 = MovePose.MOVEP(name="Top2", controller_ns=controller_ns,
                                  action_goal={'pose': "Plan"+idx+"/grasp_top_pose"})
         s_move12 = Gripper.GOTO(name="Open", controller_ns=controller_ns,
-                               action_goal=50)        
+                                    action_goal=blackboard.gripper_open_pos,
+                                    force=blackboard.gripper_open_force)        
         s_move13 = MovePose.MOVEP(name="Approach", controller_ns=controller_ns,
                                  action_goal={'pose': "Plan"+idx+"/grasp_pose"})
-        s_move14 = Gripper.GOTO(name="Close", controller_ns=controller_ns,
-                               action_goal=200)        
+        # s_move14 = Gripper.GOTO(name="Close", controller_ns=controller_ns,
+        #                        action_goal=200)        
 
         pose_est2 = WorldModel.POSE_ESTIMATOR(name="Plan"+idx,
                                               object_dict = {'target': obj,
-                                                             'destination': destination},
-                                                en_close_pose=True)
+                                                             'destination': destination})
+                                                # en_close_pose=True)
         s_move22 = MovePose.MOVES(name="Approach", controller_ns=controller_ns,
                                  action_goal={'pose': "Plan"+idx+"/place_pose"})
-        s_move23 = Gripper.GOTO(name="Open", controller_ns=controller_ns,
-                               action_goal=50)        
+        # s_move23 = Gripper.GOTO(name="Open", controller_ns=controller_ns,
+        #                        action_goal=50)        
         s_move24 = MovePose.MOVEP(name="Top", controller_ns=controller_ns,
                                  action_goal={'pose': "Plan"+idx+"/place_top_pose"})
         
-        slide.add_children([pose_est1, s_move10, s_move11, s_move12, s_move13, s_move14, \
-                           pose_est2, s_move22, s_move23, s_move24, s_init3])
+        slide.add_children([pose_est1, s_move10, s_move11, s_move13, \
+                           pose_est2, s_move22, s_move24, s_init3])
         task = py_trees.composites.Sequence(name="Move")
         task.add_child(slide)
         return task
 
 
+
+
+        # slide = py_trees.composites.Sequence(name="Slide")
+        # pose_est1 = WorldModel.POSE_ESTIMATOR(name="Plan"+idx,
+        #                                       object_dict = {'target': obj})
+        # s_move10 = MovePose.MOVEPROOT(name="Top1",
+        #                               controller_ns=controller_ns,
+        #                               action_goal={'pose': "Plan"+idx+"/grasp_top_pose"})
+        # s_move11 = MovePose.MOVEP(name="Top2", controller_ns=controller_ns,
+        #                          action_goal={'pose': "Plan"+idx+"/grasp_top_pose"})
+        # s_move12 = Gripper.GOTO(name="Open", controller_ns=controller_ns,
+        #                        action_goal=50)        
+        # s_move13 = MovePose.MOVEP(name="Approach", controller_ns=controller_ns,
+        #                          action_goal={'pose': "Plan"+idx+"/grasp_pose"})
+        # s_move14 = Gripper.GOTO(name="Close", controller_ns=controller_ns,
+        #                        action_goal=200)        
+
+        # pose_est2 = WorldModel.POSE_ESTIMATOR(name="Plan"+idx,
+        #                                       object_dict = {'target': obj,
+        #                                                      'destination': destination},
+        #                                         en_close_pose=True)
+        # s_move22 = MovePose.MOVES(name="Approach", controller_ns=controller_ns,
+        #                          action_goal={'pose': "Plan"+idx+"/place_pose"})
+        # s_move23 = Gripper.GOTO(name="Open", controller_ns=controller_ns,
+        #                        action_goal=50)        
+        # s_move24 = MovePose.MOVEP(name="Top", controller_ns=controller_ns,
+        #                          action_goal={'pose': "Plan"+idx+"/place_top_pose"})
+        
+        # slide.add_children([pose_est1, s_move10, s_move11, s_move12, s_move13, s_move14, \
+        #                    pose_est2, s_move22, s_move23, s_move24, s_init3])
+    

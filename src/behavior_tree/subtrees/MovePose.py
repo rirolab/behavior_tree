@@ -77,6 +77,7 @@ class MOVEP(py_trees.behaviour.Behaviour):
                                   'goal': json.dumps(goal),
                                   'timeout': 3.,
                                   'no_wait': True})
+
             ret = self.cmd_req(cmd_str)
             if ret.data==GoalStatus.REJECTED or ret.data==GoalStatus.ABORTED:
                 self.feedback_message = "failed to execute"

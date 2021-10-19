@@ -39,6 +39,10 @@ class Move(object):
         self._lock = threading.Lock()
         
         self.blackboard = py_trees.blackboard.Blackboard()
+        self.blackboard.gripper_open_pos = rospy.get_param("gripper_open_pos")
+        self.blackboard.gripper_close_pos = rospy.get_param("gripper_close_pos")
+        self.blackboard.gripper_open_force = rospy.get_param("gripper_open_force")
+        self.blackboard.gripper_close_force = rospy.get_param("gripper_close_force")
         self.blackboard.init_config = eval(rospy.get_param("init_config", [0, -np.pi/2., np.pi/2., -np.pi/2., -np.pi/2., np.pi/4.]))
 
         ## self.object      = None
@@ -146,7 +150,8 @@ class Move(object):
         s_move22 = MovePose.MOVEP(name="Approach", controller_ns=controller_ns,
                                  action_goal={'pose': "Plan"+idx+"/place_pose"})
         s_move23 = Gripper.GOTO(name="Open", controller_ns=controller_ns,
-                               action_goal=blackboard.gripper_open_pos)        
+                               action_goal=blackboard.gripper_open_pos,
+                               force=blackboard.gripper_open_force)        
         s_move24 = MovePose.MOVEP(name="Top", controller_ns=controller_ns,
                                  action_goal={'pose': "Plan"+idx+"/place_top_pose"})
         
