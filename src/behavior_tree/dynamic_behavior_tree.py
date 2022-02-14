@@ -368,6 +368,7 @@ if __name__ == '__main__':
                                                  'jobs.jog_job.Move',
                                                  'jobs.gripper_job.Move',
                                                  'jobs.slide_job.Move',
+                                                 'jobs.attach_job.Move',
                                                  'jobs.touch_job.Move'],
                                                  rec_topic_list=topic_list)
     rospy.on_shutdown(splintered_reality.shutdown)
