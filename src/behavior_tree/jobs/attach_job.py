@@ -46,7 +46,7 @@ class Move(object):
         else:
             grounding = json.loads(msg.data)['params']
             for i in range (len(grounding.keys())):
-                if grounding[str(i+1)]['primitive_action']
+                if grounding[str(i+1)]['primitive_action']:
                     self.goal = grounding
                 break
 
