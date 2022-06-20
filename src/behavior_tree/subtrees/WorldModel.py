@@ -144,17 +144,17 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
             obj = self.object_dict['target']
             try:
                 obj_pose = self.grasp_pose_srv_req(obj).pose
-            except rospy.ServiceException, e:
+            except rospy.ServiceException as e:
                 self.feedback_message = "Pose Srv Error"
-                print "Pose Service is not available: %s"%e
+                print("Pose Service is not available: %s"%e)
                 return py_trees.common.Status.FAILURE
 
             try:
                 obj_height = self.height_srv_req(obj).pose
                 obj_height = obj_height.position.z
-            except rospy.ServiceException, e:
+            except rospy.ServiceException as e:
                 self.feedback_message = "Pose Srv Error"
-                print "Height Service is not available: %s"%e
+                print("Height Service is not available: %s"%e)
                 return py_trees.common.Status.FAILURE
 
             # from IPython import embed; embed(); sys.exit()
@@ -187,7 +187,7 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
             self.blackboard.set(self.name +'/grasp_top_pose', grasp_top_pose)
 
             # Place pose
-            if 'destination' in self.object_dict.keys():
+            if 'destination' in list(self.object_dict.keys()):
                 self.feedback_message = "getting the destination pose"
                 self.logger.debug("%s.update()[%s]" % (self.__class__.__name__, self.feedback_message))
                 destination = self.object_dict['destination']
@@ -199,12 +199,12 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                         dst_pose = self.close_pose_srv_req(json.dumps(self.object_dict)).pose
                     else:
                         dst_pose = self.pose_srv_req(destination).pose
-                except rospy.ServiceException, e:
-                    print "Pose Service is not available: %s"%e
+                except rospy.ServiceException as e:
+                    print("Pose Service is not available: %s"%e)
                     self.logger.debug("%s.update()[%s]" % (self.__class__.__name__, self.feedback_message))
                     return py_trees.common.Status.FAILURE
 
-                if 'destination_offset' in self.object_dict.keys():
+                if 'destination_offset' in list(self.object_dict.keys()):
                     offset = self.object_dict['destination_offset']
                     offset_frame = PyKDL.Frame(PyKDL.Rotation.RotZ(offset[3]),
                                                PyKDL.Vector(offset[0],

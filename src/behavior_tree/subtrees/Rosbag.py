@@ -106,7 +106,7 @@ class ROSBAG(py_trees.behaviour.Behaviour):
     
 
     def terminate(self, new_status):
-        print self.collector
+        print(self.collector)
         if self.collector is not None:
             terminate_process_and_children(self.collector)
         return

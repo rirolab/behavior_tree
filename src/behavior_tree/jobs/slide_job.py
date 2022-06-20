@@ -75,7 +75,7 @@ class Move(object):
             rospy.logerr("MOVE: rejecting new goal, previous still in the pipeline")
         else:
             grounding = json.loads(msg.data)['params']
-            for i in range( len(grounding.keys()) ):
+            for i in range(len(list(grounding.keys()))):
                 if grounding[str(i+1)]['primitive_action'] in ['slide']:
                     self.goal = grounding 
                     break
@@ -105,7 +105,7 @@ class Move(object):
         # TODO
         if destination=='na':
             destination='place_tray'
-            print "destination is not assigned, so selected place-tray as a destination"
+            print("destination is not assigned, so selected place-tray as a destination")
 
         
         # ----------------- Move Task ----------------        

@@ -12,8 +12,8 @@ import numpy as np
 import json
 
 ## import subtrees.WM2Blackboard
-from subtrees import Grnd2Blackboard
-import decorators
+from .subtrees import Grnd2Blackboard
+from . import decorators
 
 def create_root(controller_ns=""):
     """
@@ -217,12 +217,12 @@ class SplinteredReality(object):
             
             # Check from the last goal
             for idx in range(1,len(goal)+1):
-                if "action" not in goal[str(len(goal)-idx+1)].keys() and \
-                  "primitive_action" in goal[str(len(goal)-idx+1)].keys():
+                if "action" not in list(goal[str(len(goal)-idx+1)].keys()) and \
+                  "primitive_action" in list(goal[str(len(goal)-idx+1)].keys()):
                     goal[str(len(goal)-idx+1)]["action"] = goal[str(len(goal)-idx+1)]["primitive_action"]
                 
-                print "Check: {}th plan".format(str(len(goal)-idx)), \
-                  goal[str(len(goal)-idx+1)]["action"]
+                print("Check: {}th plan".format(str(len(goal)-idx)), \
+                  goal[str(len(goal)-idx+1)]["action"])
                 
                 if len(task_node.children) >= idx and \
                   task_node.children[-idx].name == goal[str(len(goal)-idx+1)]["action"]:
