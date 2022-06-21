@@ -117,8 +117,8 @@ class Move(object):
         blackboard = py_trees.blackboard.Blackboard()
         
         if goal[idx]["primitive_action"] in ['move']:
-            obj         = goal[idx]['object'].encode('ascii','ignore')
-            destination = goal[idx]['destination'].encode('ascii','ignore')
+            obj         = goal[idx]['object']
+            destination = goal[idx]['destination']
         else:
             return None
 

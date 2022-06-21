@@ -8,7 +8,7 @@ from actionlib_msgs.msg import GoalStatus
 from control_msgs.msg import FollowJointTrajectoryResult
 import geometry_msgs
 
-from complex_action_client.srv import String_Int, None_String
+from complex_action_client.srv import String_Int, None_String, String_IntRequest
 
 class MOVEJ(py_trees.behaviour.Behaviour):
     """

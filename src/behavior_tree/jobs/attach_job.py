@@ -13,7 +13,7 @@ class Move(object):
 
     def __init__(self):
 
-        self._grounding_channel = "symbol grounding"
+        self._grounding_channel = "symbol_grounding"
 
         self.subscriber = rospy.Subscriber(self._grounding_channel, std_msgs.String, self.incoming)
         self._goal = None
@@ -57,8 +57,8 @@ class Move(object):
         blackboard = py_trees.blackboard.Blackboard()
 
         if goal[idx]["primitive_action"] in ['move']:
-            obj         = goal[idx]['object'].encode('ascii','ignore')
-            destination = goal[idx]['destination'].encode('ascii','ignore')
+            obj         = goal[idx]['object']
+            destination = goal[idx]['destination']
         else:
             return None
 

@@ -119,17 +119,17 @@ class Move(object):
         
         if goal[idx]["primitive_action"] in ['place']:
             if 'object' in goal[idx].keys():
-                obj = goal[idx]['object'].encode('ascii','ignore')
+                obj = goal[idx]['object']
             elif 'obj' in goal[idx].keys():
-                obj = goal[idx]['obj'].encode('ascii','ignore')
+                obj = goal[idx]['obj']
             else:
                 rospy.logerr("MOVE: No place object")
                 sys.exit()
                 
-            destination = goal[idx]['destination'].encode('ascii','ignore')
+            destination = goal[idx]['destination']
 
             if 'destination_offset' in goal[idx].keys():
-                destination_offset = goal[idx]['destination_offset'] #.encode('ascii','ignore')
+                destination_offset = goal[idx]['destination_offset'] 
             else:
                 destination_offset = [0,0,0,0,0,0]
         else:

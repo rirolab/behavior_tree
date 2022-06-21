@@ -115,13 +115,12 @@ class Move(object):
 
         if goal[idx]["primitive_action"] in ['pick']:
             if 'object' in goal[idx].keys():
-                obj = goal[idx]['object'].encode('ascii','ignore')
+                obj = goal[idx]['object']
             elif 'obj' in goal[idx].keys():
-                obj = goal[idx]['obj'].encode('ascii','ignore')
+                obj = goal[idx]['obj']
             else:
                 rospy.logerr("Pick: No pick object")
                 sys.exit()                
-            ## destination = goal['2']['destination'].encode('ascii','ignore')
         else:
             return None
         

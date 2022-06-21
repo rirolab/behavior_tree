@@ -111,8 +111,8 @@ class Move(object):
                                             policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ONE)
 
         # ----------------------------- Custom ----------------------------
-        frame     = "l_palm" #goal['frame'].encode('ascii','ignore')
-        direction = goal['direction'].encode('ascii','ignore')
+        frame     = "l_palm" 
+        direction = goal['direction']
         dist      = goal['distance']
 
         # Enable a continous jog motion

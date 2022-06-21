@@ -51,8 +51,8 @@ class REMOVE(py_trees.behaviour.Behaviour):
             return py_trees.Status.FAILURE
 
         if not self.sent_goal:
-            cmd_str = json.dumps({'': 'gripperGotoPos',
-                                  'goal': self.action_goal})
+            # cmd_str = json.dumps({'': 'gripperGotoPos',
+            #                       'goal': self.action_goal})
             self.cmd_req(self.action_goal['obj_name'])
             self.sent_goal = True
             self.feedback_message = "Sending a world_model command"

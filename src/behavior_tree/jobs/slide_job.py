@@ -97,8 +97,8 @@ class Move(object):
         grasp_offset_z = 0.02
         
         if goal[idx]["primitive_action"] in ['slide']:
-            obj         = goal[idx]['object'].encode('ascii','ignore')
-            destination = goal[idx]['destination'].encode('ascii','ignore')
+            obj         = goal[idx]['object']
+            destination = goal[idx]['destination']
         else:
             return None
 

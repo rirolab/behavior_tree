@@ -118,7 +118,7 @@ class Move(object):
         root = py_trees.composites.Parallel(name="Gripper",\
                                             policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ONE)
 
-        action = goal[idx]['primitive_action'].encode('ascii','ignore')
+        action = goal[idx]['primitive_action']
 
         blackboard = py_trees.blackboard.Blackboard()
         if action.find('gripper_close')>=0:        

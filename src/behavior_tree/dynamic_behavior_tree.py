@@ -12,8 +12,8 @@ import numpy as np
 import json
 
 ## import subtrees.WM2Blackboard
-from .subtrees import Grnd2Blackboard
-from . import decorators
+from subtrees import Grnd2Blackboard
+import decorators
 
 def create_root(controller_ns=""):
     """

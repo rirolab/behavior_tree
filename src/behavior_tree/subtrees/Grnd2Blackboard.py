@@ -34,11 +34,7 @@ class ToBlackboard(subscribers.ToBlackboard):
             ## self.blackboard.groundings        = []
             
             for param_id in range(grounding['param_num']):
-                primitive_action = grounding['params'][str(param_id+1)]['primitive_action'].encode('ascii','ignore')
-                ## ## obj              = grounding['params'][str(param_id+1)]['object'].encode('ascii','ignore')
-                ## ## source           = grounding['params'][str(param_id+1)]['source'].encode('ascii','ignore')
-                ## ## destination      = grounding['params'][str(param_id+1)]['destination'].encode('ascii','ignore')
-                ## self.blackboard.groundings.append( grounding['params'][str(param_id+1)] )
+                primitive_action = grounding['params'][str(param_id+1)]['primitive_action']
                 
                 if primitive_action == "stop":
                     self.blackboard.stop_cmd = True
