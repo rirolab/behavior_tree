@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # Copyright YYYY Massachusetts Institute of Technology 
 
 import functools
