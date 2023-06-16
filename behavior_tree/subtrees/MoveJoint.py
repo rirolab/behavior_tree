@@ -1,10 +1,10 @@
 import numpy as np
 import json
-import rospy
+import rclpy
 
 import py_trees
 import std_msgs.msg as std_msgs
-from actionlib_msgs.msg import GoalStatus
+from action_msgs.msg import GoalStatus
 from control_msgs.msg import FollowJointTrajectoryResult
 import geometry_msgs
 
@@ -30,7 +30,6 @@ class MOVEJ(py_trees.behaviour.Behaviour):
         self.cmd_req   = None
 
     def setup(self, timeout):
-        ## self.publisher = rospy.Publisher(self.topic_name, std_msgs.String, queue_size=10, latch=True)
         self.feedback_message = "{}: setup".format(self.name)
         rospy.wait_for_service("arm_client/command")
         self.cmd_req = rospy.ServiceProxy("arm_client/command", String_Int)

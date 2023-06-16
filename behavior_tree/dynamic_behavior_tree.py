@@ -1,15 +1,16 @@
-#!/usr/bin/env python
-# Copyright YYYY Massachusetts Institute of Technology 
-
-import importlib
-import py_trees
-import py_trees_ros
-import py_trees.console as console
-import rospy
-import std_msgs.msg as std_msgs
+#!/usr/bin/env python3
 import sys
 import numpy as np
 import json
+import importlib
+
+import rclpy
+from rclpy.node import Node
+
+import py_trees
+import py_trees_ros
+import py_trees.console as console
+from std_msgs.msg import String
 
 ## import subtrees.WM2Blackboard
 from subtrees import Grnd2Blackboard
@@ -80,7 +81,7 @@ def load_topic_list(filename):
     return topic_list_str
             
 
-class SplinteredReality(object):
+class SplinteredReality(Node):
 
     def __init__(self, jobs, rec_topic_list=None, n_loop=1,
                  enable_inf_loop=False, loop_timeout=-1):
@@ -91,7 +92,14 @@ class SplinteredReality(object):
         Args:
             jobs ([:obj:`str`]): list of module names as strings (e.g. 'py_trees_ros.tutorials.jobs.Scan')
         """
-        self.controller_ns   = rospy.get_param("controller_ns", "")
+        self.declare_parameters(
+            namespace='',
+            parameters=[
+                ("controller_ns", Parameter.Type.STRING),
+                ]
+        )
+
+        self.controller_ns   = self.get_parameter_or("controller_ns").get_parameter_value().string_value
         self.rec_topic_list  = rec_topic_list
         
         self.n_loop          = n_loop
@@ -104,14 +112,16 @@ class SplinteredReality(object):
         self.tree = py_trees_ros.trees.BehaviourTree(create_root(self.controller_ns))
         self.tree.add_pre_tick_handler(self.pre_tick_handler)
         self.tree.add_post_tick_handler(self.post_tick_handler)
-        self.report_publisher = rospy.Publisher("~report", std_msgs.String, queue_size=5)
+
+        
+        self.report_publisher = self.create_publisher(String, "~report", 5)
         self.jobs = []
         for job in jobs:
             module_name = '.'.join(job.split('.')[:-1])
             class_name = job.split('.')[-1]
             self.jobs.append(getattr(importlib.import_module(module_name), class_name)())
         self.current_job = None
-        rospy.loginfo("dynamic_behavior_tree: initialized")
+        self.get_logger().info("dynamic_behavior_tree: initialized")
 
 
     def setup(self):
@@ -158,11 +168,11 @@ class SplinteredReality(object):
                                                    rec_topic_list=self.rec_topic_list)
                         if job_root is None:
                             continue
-                        rospy.loginfo("{0}: running to set up all subtree modules".format(idx+1))
+                        self.get_logger().info("{0}: running to set up all subtree modules".format(idx+1))
                         if not job_root.setup(timeout=15):
                             rospy.logerr("{0}: failed to setup".format(idx+1))
                             continue
-                        rospy.loginfo("{0}: finished setting up".format(idx+1))
+                        self.get_logger().info("{0}: finished setting up".format(idx+1))
                         task_list.append(job_root)
                         #continue
                         break
@@ -185,7 +195,7 @@ class SplinteredReality(object):
             ## root.add_child(run_or_cancel)
             root = run_or_cancel
             tree.insert_subtree(root, self.priorities.id, 0)
-            rospy.loginfo("{0}: inserted job subtree".format(root.name))
+            self.get_logger().info("{0}: inserted job subtree".format(root.name))
 
             # Reset goals
             for job in self.jobs:
@@ -197,7 +207,7 @@ class SplinteredReality(object):
 
             ## if rec_job is not None:
             ##     # launch rosbag?
-            ##     rospy.loginfo("Start to record rosbag")
+            ##     self.get_logger().info("Start to record rosbag")
 
         # Dynamic Reconfiguration
         elif self.busy() and goal is not None and False:
@@ -226,7 +236,7 @@ class SplinteredReality(object):
                 
                 if len(task_node.children) >= idx and \
                   task_node.children[-idx].name == goal[str(len(goal)-idx+1)]["action"]:
-                    rospy.loginfo("{0}: passing to set up".format(len(goal)-idx+1))
+                    self.get_logger().info("{0}: passing to set up".format(len(goal)-idx+1))
                     continue
 
                 # check if there are removable plans
@@ -256,7 +266,7 @@ class SplinteredReality(object):
                                                        self.controller_ns)
                             if job_root is None:
                                 continue
-                            rospy.loginfo("{0}: running to set up".format(len(goal)-idx+1))
+                            self.get_logger().info("{0}: running to set up".format(len(goal)-idx+1))
                             if not job_root.setup(timeout=15):
                                 rospy.logerr("{0}: failed to setup".format(len(goal)-idx+1))
                                 continue
@@ -297,7 +307,7 @@ class SplinteredReality(object):
             job = self.priorities.children[-2]
                         
             if job.status == py_trees.common.Status.SUCCESS or job.status == py_trees.common.Status.FAILURE or job.status == py_trees.common.Status.INVALID:
-                rospy.loginfo("{0}: finished [{1}]".format(job.name, job.status))
+                self.get_logger().info("{0}: finished [{1}]".format(job.name, job.status))
                 tree.prune_subtree(job.id)
                 self.current_job = None
                 
@@ -336,31 +346,20 @@ class SplinteredReality(object):
 ##############################################################################
 # Main
 ##############################################################################
+def main(argv=sys.argv):
 
-if __name__ == '__main__':
-    """
-    Entry point for the demo script.
-    """
-    import optparse
-    p = optparse.OptionParser()
-    p.add_option('--viz', '-v', action='store_true', dest='viz',
-                 default=False,
-                 help='use visualization code for rviz')
-    p.add_option('--rec_topics', '-t', action='store', dest='topic_json',
-                 default=None, help='a list of topic to record')
-    opt, args = p.parse_args()
+    args = get_args(sysargv=argv)
 
+    rclpy.init()        
     # load the list of topics for recording
-    if opt.topic_json is None or opt.topic_json.find('None')>=0:
+    if args.topic_json is None or args.topic_json.find('None')>=0:
         topic_list = None
     else:
-        topic_list = load_topic_list(opt.topic_json)
-
+        topic_list = load_topic_list(args.topic_json)
     #py_trees.logging.level = py_trees.logging.Level.DEBUG
 
     # TODO: import a list of jobs from a json file or ROS parameter server.
     # Keep the default job on the top
-    rospy.init_node("tree")   
     splintered_reality = SplinteredReality(jobs=['jobs.pick_job.Move',
                                                  'jobs.place_job.Move',
                                                  'jobs.move_job.Move',
@@ -371,10 +370,27 @@ if __name__ == '__main__':
                                                  'jobs.attach_job.Move',
                                                  'jobs.touch_job.Move'],
                                                  rec_topic_list=topic_list)
-    rospy.on_shutdown(splintered_reality.shutdown)
+    rclpy.get_default_context().on_shutdown(splintered_reality.shutdown)
     if not splintered_reality.setup():
         console.logerror("failed to setup the tree, aborting.")
         sys.exit(1)
     splintered_reality.tick_tock()
 
+    rclpy.shutdown()
     
+    
+def get_args(sysargv=None):
+    p = argparse.ArgumentParser(
+        description="Run a behavior tree")
+    p.add_argument('--viz', action='store_true', dest='viz',
+                 default=False,
+                 help='use visualization code for rviz')
+    p.add_argument('--rec_topics', action='store', dest='topic_json',
+                 default=None, help='a list of topic to record')
+    argv = sysargv[1:] if sysargv is not None else sys.argv[1:]
+    args = p.parse_args(argv)
+    return args
+
+    
+if __name__ == '__main__':
+    main()

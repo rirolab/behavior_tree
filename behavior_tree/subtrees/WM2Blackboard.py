@@ -1,5 +1,5 @@
 import py_trees
-import rospy
+import rclpy
 import std_msgs.msg as std_msgs
 
 from py_trees_ros import subscribers
@@ -24,7 +24,7 @@ class ToBlackboard(subscribers.ToBlackboard):
             # we got something
             if self.blackboard.wm_msg.data is None:
                 self.blackboard.no_wm_warning=True
-                rospy.logwarn_throttle(60, "%s: No world model on the blackboard!" % self.name)
+                self.node.get_logger().warning("%s: No world model on the blackboard!" % self.name)
             else:
                 self.blackboard.no_wm_warning=False
                 

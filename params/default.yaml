@@ -1,0 +1,4 @@
+bt:
+  ros__parameters:
+    sim: True
+    controller_ns: "ur5_controller"
