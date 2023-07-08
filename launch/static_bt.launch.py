@@ -15,28 +15,32 @@ def generate_launch_description():
 
     # Get the launch directory
     bt_dir = get_package_share_directory('behavior_tree')
+
+    params_file=os.path.join(
+        bt_dir, 'params', 'default.yaml')
     
-    namespace   = LaunchConfiguration('namespace')
-    params_file = LaunchConfiguration('params_file')
+    ## namespace   = LaunchConfiguration('namespace')
+    ## params_file = LaunchConfiguration('params_file')
 
     # Command-line arguments
-    namespace_arg = DeclareLaunchArgument(
-        'namespace',
-        default_value='',
-        description='Top-level namespace')
+    ## namespace_arg = DeclareLaunchArgument(
+    ##     'namespace',
+    ##     default_value='',
+    ##     description='Top-level namespace')
     
-    params_file_arg = DeclareLaunchArgument(
-        'params_file',
-        default_value=os.path.join(bt_dir,
-                                   'params',
-                                   'default.yaml'),
-        description='Full path to the ROS2 parameters file to use for all launched nodes')
+    ## params_file_arg = DeclareLaunchArgument(
+    ##     'params_file',
+    ##     default_value=os.path.join(bt_dir,
+    ##                                'params',
+    ##                                'default.yaml'),
+    ##     description='Full path to the ROS2 parameters file to use for all launched nodes')
 
     bt_node = Node(
-        name="behavior_tree",
+        name="tree",
         package='behavior_tree',
         executable='static_bt',
         output='screen',
+        emulate_tty=True,
         arguments=[],
         parameters=[params_file]
         )
@@ -44,8 +48,8 @@ def generate_launch_description():
 
     # ***** RETURN LAUNCH DESCRIPTION ***** #
     return LaunchDescription([
-        namespace_arg,
-        params_file_arg,
+        ## namespace_arg,
+        ## params_file_arg,
         bt_node, 
     ])
 

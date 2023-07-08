@@ -15,7 +15,6 @@ A customized bahavior tree package for mobile manipulators from Prof. Daehyung P
 * get_object_rnd_pose (String_Pose)
 * get_object_close_pose (String_Pose)
 * arm_client/command (complex_action_client.srv.String_Int)
-* arm_client/status (complex_action_client.srv.None_String)
 * remove_wm_object
 
 ## Parameters
@@ -47,6 +46,17 @@ or using GUI:
 rqt_py_trees
 ```
 
+
+You can test a static behavior tree:
+```bash
+ros2 launch ur5_demo ur5_robotiq_grasping_demo.launch.py
+```
+```bash
+ros2 launch behavior_tree static_bt.launch.py
+```
+```bash
+ros2 topic pub /move_cmd std_msgs/msg/Empty
+```
 
 
 ## Note
