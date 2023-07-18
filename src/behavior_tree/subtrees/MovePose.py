@@ -408,6 +408,9 @@ class MOVEPROOT(py_trees.behaviour.Behaviour):
         d = json.loads(msg.data)
         state = d['state']
         ret   = d['result']
+        # print("#######\n", d, "\n#####")
+        # print("#######\n", state, "\n#####")
+        # print("#######\n", ret, "\n#####")
         
         if  state in [GoalStatus.ABORTED,
                       GoalStatus.PREEMPTED,

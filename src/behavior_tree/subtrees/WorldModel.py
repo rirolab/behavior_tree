@@ -73,26 +73,30 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
     priority behaviour.
     """
 
-    def __init__(self, name, object_dict=None, en_random=False, en_close_pose=False):
+    def __init__(self, name, object_dict=None, place_aside=False, en_random=False, en_close_pose=False):
         super(POSE_ESTIMATOR, self).__init__(name=name)
 
         self.object_dict = object_dict
         self.sent_goal   = False
+        self.place_aside = place_aside
         self.en_random   = en_random
         self.en_close_pose = en_close_pose
 
         self._pose_srv_channel = '/get_object_pose'
         self._grasp_pose_srv_channel = '/get_object_grasp_pose'
+        self._base_pose_srv_channel = '/get_object_base_pose'
         self._height_srv_channel = '/get_object_height'
         self._rnd_pose_srv_channel = '/get_object_rnd_pose'
         self._close_pose_srv_channel = '/get_object_close_pose'
+        self._aside_pose_srv_channel = '/get_object_aside_pose'
+        
         self._world_frame    = rospy.get_param("/world_frame", None)
         if self._world_frame is None:
             self._world_frame    = rospy.get_param("world_frame", '/base_footprint')
         self._arm_base_frame = rospy.get_param("arm_base_frame", '/ur_arm_base_link')
 
         self.grasp_offset_z = rospy.get_param("grasp_offset_z", 0.02)
-        self.top_offset_z   = rospy.get_param("top_offset_z", 0.15)
+        self.top_offset_z   = rospy.get_param("top_offset_z", 0.10)
 
 
 
@@ -107,6 +111,12 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         rospy.wait_for_service(self._grasp_pose_srv_channel)
         self.grasp_pose_srv_req = rospy.ServiceProxy(self._grasp_pose_srv_channel, String_Pose)
 
+        rospy.wait_for_service(self._base_pose_srv_channel)
+        self.base_pose_srv_req = rospy.ServiceProxy(self._base_pose_srv_channel, String_Pose)
+        
+        rospy.wait_for_service(self._aside_pose_srv_channel)
+        self.aside_pose_srv_req = rospy.ServiceProxy(self._aside_pose_srv_channel, String_Pose)
+        
         rospy.wait_for_service(self._height_srv_channel)
         self.height_srv_req = rospy.ServiceProxy(self._height_srv_channel, String_Pose)
 
@@ -139,7 +149,7 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         self.logger.debug("%s.update()" % self.__class__.__name__)
 
         if not self.sent_goal:
-            
+
             # Request the top surface pose of an object to WM
             obj = self.object_dict['target']
             try:
@@ -148,7 +158,14 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                 self.feedback_message = "Pose Srv Error"
                 print("Pose Service is not available: %s"%e)
                 return py_trees.common.Status.FAILURE
-
+            
+            try:
+                obj_base_pose = self.base_pose_srv_req(obj).pose
+            except rospy.ServiceException as e:
+                self.feedback_message = "Pose Srv Error"
+                print("Base Pose Service is not available: %s"%e)
+                return py_trees.common.Status.FAILURE
+            
             try:
                 obj_height = self.height_srv_req(obj).pose
                 obj_height = obj_height.position.z
@@ -179,13 +196,23 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
             POSE_ESTIMATOR.get_grasp_pose(obj_pose, \
                                           self.base2arm_baselink, \
                                           self.grasp_offset_z)
-            grasp_top_pose = copy.deepcopy(grasp_pose)
-            grasp_top_pose.position.z += self.top_offset_z
+            grasp_top_pose  = copy.deepcopy(grasp_pose)
+        
+            offset          = PyKDL.Frame(PyKDL.Rotation.Identity(),
+                                          PyKDL.Vector(0, 0, self.top_offset_z))
+            grasp_top_pose  = misc.pose2KDLframe(grasp_top_pose) * offset
+            grasp_top_pose  = misc.KDLframe2Pose(grasp_top_pose)
+        
+            # grasp_top_pose.position.z += self.top_offset_z
             #from IPython import embed; embed(); sys.exit()
-
             self.blackboard.set(self.name +'/grasp_pose', grasp_pose)
             self.blackboard.set(self.name +'/grasp_top_pose', grasp_top_pose)
-
+            rospy.set_param('grasp_pose', json.dumps(misc.pose2list(grasp_pose)))
+            rospy.set_param('grasp_top_pose', json.dumps(misc.pose2list(grasp_top_pose)))
+            rospy.set_param('obj_base_pose', json.dumps(misc.pose2list(obj_base_pose)))
+            rospy.set_param('obj_grasp_pose', json.dumps(misc.pose2list(obj_pose)))
+            
+            
             # Place pose
             if 'destination' in list(self.object_dict.keys()):
                 self.feedback_message = "getting the destination pose"
@@ -193,10 +220,19 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                 destination = self.object_dict['destination']
                 try:
                     # Find a location on the destination top surface
-                    if self.en_random:
+                    if isinstance(destination, list):
+                        dst_pose1 = misc.pose2array(self.pose_srv_req(destination[0]).pose)
+                        dst_pose2 = misc.pose2array(self.pose_srv_req(destination[1]).pose)
+                        dst_quat = (dst_pose1 + dst_pose2) / 2
+                        rotation_angle = np.arctan2(dst_pose1[1]-dst_pose2[1], dst_pose1[0]-dst_pose2[0]) + np.pi/2
+                        dst_pose = misc.list2Pose([dst_quat[0], dst_quat[1], dst_quat[2], 0., 0., rotation_angle])
+                        print("[mid pose] ", dst_pose)
+                    elif self.en_random:
                         dst_pose = self.rnd_pose_srv_req(json.dumps(self.object_dict)).pose
                     elif self.en_close_pose:
                         dst_pose = self.close_pose_srv_req(json.dumps(self.object_dict)).pose
+                    elif self.place_aside:
+                        dst_pose = self.aside_pose_srv_req(destination).pose
                     else:
                         dst_pose = self.pose_srv_req(destination).pose
                 except rospy.ServiceException as e:
@@ -204,6 +240,7 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                     self.logger.debug("%s.update()[%s]" % (self.__class__.__name__, self.feedback_message))
                     return py_trees.common.Status.FAILURE
 
+                print("(in WorldModel 1) ", dst_pose)
                 if 'destination_offset' in list(self.object_dict.keys()):
                     offset = self.object_dict['destination_offset']
                     offset_frame = PyKDL.Frame(PyKDL.Rotation.RotZ(offset[3]),
@@ -213,12 +250,13 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
 
                     dst_frame = misc.pose2KDLframe(dst_pose)*offset_frame
                     dst_pose = misc.KDLframe2Pose(dst_frame)
-
                 place_pose = POSE_ESTIMATOR.get_place_pose(dst_pose, \
                                                            self.base2arm_baselink, \
                                                            grasp_pose, \
                                                            obj_height, \
+                                                           obj_pose, obj_base_pose, \
                                                            self.grasp_offset_z)
+                print("(in WorldModel) ", place_pose)
 
                 ## from IPython import embed; embed(); sys.exit()
                 
@@ -227,10 +265,17 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                     place_pose.position.z = grasp_pose.position.z
 
                 place_top_pose = copy.deepcopy(place_pose)
-                place_top_pose.position.z += self.top_offset_z
+                offset          = PyKDL.Frame(PyKDL.Rotation.Identity(),
+                                PyKDL.Vector(0, 0, self.top_offset_z))
+                place_top_pose  = misc.pose2KDLframe(place_top_pose) * offset
+                place_top_pose  = misc.KDLframe2Pose(place_top_pose)
+                # place_top_pose.position.z += self.top_offset_z
 
                 self.blackboard.set(self.name +'/place_pose', place_pose)    
                 self.blackboard.set(self.name +'/place_top_pose', place_top_pose)
+                rospy.set_param('place_pose', json.dumps(misc.pose2list(place_pose)))
+                rospy.set_param('place_top_pose', json.dumps(misc.pose2list(place_top_pose)))
+            
             self.sent_goal        = True
             self.feedback_message = "WorldModel: successful grasp pose estimation "
             return py_trees.common.Status.SUCCESS
@@ -271,21 +316,33 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         baselink2grasp = arm_baselink2obj #* obj2grasp
 
         # Grasping pose
-        grasp_pose     = misc.KDLframe2Pose(baselink2grasp)
-        grasp_pose.position.z -= grasp_offset_z        
+        # grasp_pose      = misc.KDLframe2Pose(baselink2grasp)
+        # grasp_pose.position.z -= grasp_offset_z        
+        offset = PyKDL.Frame(PyKDL.Rotation.Identity(),
+                             PyKDL.Vector(0, 0, -grasp_offset_z))
+        grasp_pose      = baselink2grasp * offset
+        grasp_pose      = misc.KDLframe2Pose(grasp_pose)
         return grasp_pose
 
     @staticmethod
-    def get_place_pose(obj_pose, base2arm_baselink, grasp_pose, \
-                       obj_height, grasp_offset_z):
+    def get_place_pose(destination_pose, base2arm_baselink, grasp_pose, \
+                       obj_height, obj_grip_pose, obj_base_pose, grasp_offset_z):
         """ return the place pose """
-        base2obj         = misc.pose2KDLframe(obj_pose)
+        base2obj         = misc.pose2KDLframe(destination_pose)
         arm_baselink2obj = base2arm_baselink.Inverse() * base2obj
-        arm_baselink2obj.M = misc.pose2KDLframe(grasp_pose).M
-
-        place_pose     = misc.KDLframe2Pose(arm_baselink2obj)
-
+        # arm_baselink2obj.M = misc.pose2KDLframe(grasp_pose).M
+        
+        base2obj_grip     = misc.pose2KDLframe(obj_grip_pose)
+        base2obj_base     = misc.pose2KDLframe(obj_base_pose)
+        obj_base2obj_grip = base2obj_base.Inverse() * base2obj_grip
+        
+        baselink2obj = arm_baselink2obj * obj_base2obj_grip
+        # place_pose     = misc.KDLframe2Pose(arm_baselink2obj)
+        offset = PyKDL.Frame(PyKDL.Rotation.Identity(),
+                             PyKDL.Vector(0, 0, -grasp_offset_z))
+        place_pose      = baselink2obj * offset
+        place_pose      = misc.KDLframe2Pose(place_pose)
         # for the object hold by the hand
-        place_pose.position.z += obj_height
-        place_pose.position.z -= grasp_offset_z
+        # place_pose.position.z += obj_height
+        # place_pose.position.z -= grasp_offset_z
         return place_pose 
