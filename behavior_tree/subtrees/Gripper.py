@@ -1,47 +1,30 @@
 import numpy as np
 import json
-import rospy
+import rclpy
 
 import py_trees
-import std_msgs.msg as std_msgs
-from actionlib_msgs.msg import GoalStatus
-from control_msgs.msg import FollowJointTrajectoryResult
+from action_msgs.msg import GoalStatus
+from . import Move
 
-from complex_action_client.srv import String_Int, None_String
+from riro_srvs.srv import StringGoalStatus
 
-class GOTO(py_trees.behaviour.Behaviour):
+class GOTO(Move.MOVE):
     """
+    Move a gripper to the desired configuration
+
     Note that this behaviour will return with
     :attr:`~py_trees.common.Status.SUCCESS`. It will also send a clearing
     command to the robot if it is cancelled or interrupted by a higher
     priority behaviour.
     """
+    def __init__(self, name, action_client, action_goal=None,
+                     force=1., check_contact=False):
+        super(GOTO, self).__init__(name=name,
+                                   action_client=action_client,
+                                   action_goal=action_goal)
 
-    def __init__(self, name, action_goal=None, force=1., controller_ns="",
-                 topic_name="", check_contact=False):
-        super(GOTO, self).__init__(name=name)
-
-        self.topic_name    = topic_name
-        self.controller_ns = controller_ns
-        self.action_goal   = action_goal
         self.force         = force
-        self.sent_goal     = False
-        self.cmd_req       = None
         self.check_contact = check_contact
-
-
-    def setup(self, timeout):
-        self.feedback_message = "{}: setup".format(self.name)
-        rospy.wait_for_service("arm_client/command")
-        self.cmd_req = rospy.ServiceProxy("arm_client/command", String_Int)
-        rospy.wait_for_service("arm_client/status")
-        self.status_req = rospy.ServiceProxy("arm_client/status", None_String)        
-        return True
-
-
-    def initialise(self):
-        self.logger.debug("{0}.initialise()".format(self.__class__.__name__))
-        self.sent_goal = False
 
 
     def update(self):
@@ -53,38 +36,46 @@ class GOTO(py_trees.behaviour.Behaviour):
             return py_trees.Status.FAILURE
 
         if not self.sent_goal:
+            self.goal_uuid_des = np.random.randint(0, 255, size=16,
+                                            dtype=np.uint8)            
             cmd_str = json.dumps({'action_type': 'gripperGotoPos',
                                   'goal': self.action_goal,
+                                  'uuid': self.goal_uuid_des.tolist(),
                                   'force': self.force,
                                   'check_contact': self.check_contact,
-                                  'timeout': 5})
-            self.cmd_req(cmd_str)
-            rospy.sleep(1)
+                                  'timeout': 5,
+                                  'enable_wait': True })
+            req = StringGoalStatus.Request(data=cmd_str)
+            self.future = self.cmd_req.call_async(req)
+            
             self.sent_goal = True
             self.feedback_message = "Sending a gripper goal"
             return py_trees.common.Status.RUNNING
 
-        msg = self.status_req()
-        d   = json.loads(msg.data)
-        ret = d['gripper_state']
+        if self.blackboard.goal_id is None:
+            return py_trees.common.Status.RUNNING
+            
+        if (self.goal_uuid_des == self.blackboard.goal_id).all() and \
+           self.blackboard.goal_status in [GoalStatus.STATUS_ABORTED,
+                                GoalStatus.STATUS_UNKNOWN,
+                                GoalStatus.STATUS_CANCELING,
+                                GoalStatus.STATUS_CANCELED]:
+            self.feedback_message = "FAILURE"
+            self.logger.debug("%s.update()[%s->%s][%s]" % \
+                                  (self.__class__.__name__, \
+                                   self.status, \
+                                   py_trees.common.Status.FAILURE, \
+                                  self.feedback_message))
+            return py_trees.common.Status.FAILURE
 
-        ## state = self.arm.getGripperState()
-        ## if  state in [GoalStatus.ABORTED,
-        ##               GoalStatus.PREEMPTED] and \
-        ##               ret != FollowJointTrajectoryResult.SUCCESSFUL: 
-        ##     self.feedback_message = "FAILURE"
-        ##     return py_trees.common.Status.FAILURE
-
-        if ret == GoalStatus.SUCCEEDED or ret == GoalStatus.PREEMPTED :
+        if (self.goal_uuid_des == self.blackboard.goal_id).all() and \
+           self.blackboard.goal_status is GoalStatus.STATUS_SUCCEEDED:
             self.feedback_message = "SUCCESSFUL"
+            self.logger.debug("%s.update()[%s->%s][%s]" % \
+                                  (self.__class__.__name__, \
+                                       self.status, \
+                                  py_trees.common.Status.SUCCESS, \
+                                  self.feedback_message))
             return py_trees.common.Status.SUCCESS
         else:
             return py_trees.common.Status.RUNNING
-            
-    
-    def terminate(self, new_status):
-        msg = self.status_req()
-        d = json.loads(msg.data)
-        if d['gripper_state'] == GoalStatus.ACTIVE:
-            self.cmd_req( json.dumps({'action_type': 'cancel_goal'}) )        
-        return

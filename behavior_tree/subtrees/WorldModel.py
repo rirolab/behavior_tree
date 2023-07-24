@@ -1,39 +1,52 @@
 import copy, sys
 import numpy as np
 import json
+import typing
+import time
 
-import rospy
 import py_trees
+import py_trees_ros
 import PyKDL
-import tf
+import rclpy
+#import py_trees.console as console
+from rclpy.callback_groups import ReentrantCallbackGroup, MutuallyExclusiveCallbackGroup
+from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
+
+from tf2_ros import TransformException
+
+
 
 from geometry_msgs.msg import Pose
 from complex_action_client import misc
-from riro_srvs.srv import String_None, String_String, String_Pose, String_PoseResponse
+from riro_srvs.srv import StringInt, StringPose
 
 
 class REMOVE(py_trees.behaviour.Behaviour):
     """
+    Remove an object from the world model.
+
     Note that this behaviour will return with
     :attr:`~py_trees.common.Status.SUCCESS`. It will also send a clearing
     command to the robot if it is cancelled or interrupted by a higher
     priority behaviour.
     """
 
-    def __init__(self, name, action_goal=None,
-                 topic_name="", controller_ns=""):
+    def __init__(self, name, action_goal=None):
         super(REMOVE, self).__init__(name=name)
 
-        self.topic_name    = topic_name
         self.action_goal   = action_goal
         self.sent_goal     = False
         self.cmd_req       = None
 
 
-    def setup(self, timeout):
+    def setup(self,
+              node: typing.Optional[rclpy.node.Node]=None,
+              timeout: float=py_trees.common.Duration.INFINITE):
+        self.node = node
         self.feedback_message = "{}: setup".format(self.name)
-        rospy.wait_for_service("/remove_wm_object")
-        self.cmd_req = rospy.ServiceProxy("/remove_wm_object", String_None)
+        self.cmd_req = self.node.create_client(String_None, "/remove_wm_object", qos_profile=rclpy.qos.qos_profile_services_default)
+        if not self.cmd_req.wait_for_service(timeout_sec=3.0):
+            raise exceptions.TimedOutError('remove wm service not available, waiting again...')
         return True
 
 
@@ -51,9 +64,16 @@ class REMOVE(py_trees.behaviour.Behaviour):
             return py_trees.Status.FAILURE
 
         if not self.sent_goal:
-            cmd_str = json.dumps({'': 'gripperGotoPos',
-                                  'goal': self.action_goal})
-            self.cmd_req(self.action_goal['obj_name'])
+            req = StringNone.Request(data=self.action_goal['obj_name'])
+            future = self.cmd_req.call_async(req)
+
+            while rclpy.ok():
+                if future.done():
+                    break
+                rclpy.spin_once(self.node, timeout_sec=0)
+                time.sleep(0.05)
+            
+            
             self.sent_goal = True
             self.feedback_message = "Sending a world_model command"
             return py_trees.common.Status.RUNNING
@@ -67,57 +87,93 @@ class REMOVE(py_trees.behaviour.Behaviour):
 
 class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
     """
+    Obtain the target object
+
     Note that this behaviour will return with
     :attr:`~py_trees.common.Status.SUCCESS`. It will also send a clearing
     command to the robot if it is cancelled or interrupted by a higher
     priority behaviour.
     """
 
-    def __init__(self, name, object_dict=None, en_random=False, en_close_pose=False):
+    def __init__(self, name, object_dict=None, en_random=False, en_close_pose=False,
+                    **kwargs):
         super(POSE_ESTIMATOR, self).__init__(name=name)
 
-        self.object_dict = object_dict
-        self.sent_goal   = False
-        self.en_random   = en_random
+        self.object_dict   = object_dict
+        self.sent_goal     = False
+        self.en_random     = en_random
         self.en_close_pose = en_close_pose
-
-        self._pose_srv_channel = '/get_object_pose'
-        self._grasp_pose_srv_channel = '/get_object_grasp_pose'
-        self._height_srv_channel = '/get_object_height'
-        self._rnd_pose_srv_channel = '/get_object_rnd_pose'
-        self._close_pose_srv_channel = '/get_object_close_pose'
-        self._world_frame    = rospy.get_param("/world_frame", None)
-        if self._world_frame is None:
-            self._world_frame    = rospy.get_param("world_frame", '/base_footprint')
-        self._arm_base_frame = rospy.get_param("arm_base_frame", '/ur_arm_base_link')
-
-        self.grasp_offset_z = rospy.get_param("grasp_offset_z", 0.02)
-        self.top_offset_z   = rospy.get_param("top_offset_z", 0.15)
+        self.setup_flag    = False
+        self.callback_group = ReentrantCallbackGroup()
+        self.tf_buffer     = kwargs['tf_buffer']
 
 
-
-    def setup(self, timeout):
+    def setup(self,
+              node: typing.Optional[rclpy.node.Node]=None,
+              timeout: float=py_trees.common.Duration.INFINITE):
+        """ """
         self.feedback_message = "{}: setup".format(self.name)
-        ## rospy.wait_for_service("remove_wm_object")
-        ## self.cmd_req = rospy.ServiceProxy("remove_wm_object", String_None)
+        self.node = node
 
-        rospy.wait_for_service(self._pose_srv_channel)
-        self.pose_srv_req = rospy.ServiceProxy(self._pose_srv_channel, String_Pose)
+        self._pose_srv_channel       = self.node.get_parameter("pose_srv_channel").get_parameter_value().string_value
+        self._grasp_pose_srv_channel = self.node.get_parameter("grasp_pose_srv_channel").get_parameter_value().string_value
+        self._height_srv_channel     = self.node.get_parameter("height_srv_channel").get_parameter_value().string_value
+        self._rnd_pose_srv_channel   = self.node.get_parameter("rnd_pose_srv_channel").get_parameter_value().string_value
+        self._close_pose_srv_channel = self.node.get_parameter("close_pose_srv_channel").get_parameter_value().string_value
+        
+        self._world_frame    = self.node.get_parameter("world_frame").get_parameter_value().string_value
+        self._arm_base_frame = self.node.get_parameter("arm_base_frame").get_parameter_value().string_value
 
-        rospy.wait_for_service(self._grasp_pose_srv_channel)
-        self.grasp_pose_srv_req = rospy.ServiceProxy(self._grasp_pose_srv_channel, String_Pose)
+        self.grasp_offset_z = self.node.get_parameter_or("grasp_offset_z", 0.02).get_parameter_value().double_value
+        self.top_offset_z   = self.node.get_parameter_or("top_offset_z", 0.15).get_parameter_value().double_value
 
-        rospy.wait_for_service(self._height_srv_channel)
-        self.height_srv_req = rospy.ServiceProxy(self._height_srv_channel, String_Pose)
+        self.pose_srv_req = self.node.create_client(StringPose, \
+                                self._pose_srv_channel,
+                                callback_group=self.callback_group,
+                                qos_profile=rclpy.qos.qos_profile_services_default)
+        if not self.pose_srv_req.wait_for_service(timeout_sec=3.0):
+            raise exceptions.TimedOutError('[{}] service not available, waiting again...'.format(self._pose_srv_channel))
+        
+        self.grasp_pose_srv_req = self.node.create_client(StringPose, \
+                                    self._grasp_pose_srv_channel,
+                                    callback_group=self.callback_group,
+                                    qos_profile=rclpy.qos.qos_profile_services_default)
+        if not self.grasp_pose_srv_req.wait_for_service(timeout_sec=3.0):
+            raise exceptions.TimedOutError('[{}] service not available, waiting again...'.format(self._grasp_pose_srv_channel))
+        
+        self.height_srv_req = self.node.create_client(StringPose, \
+                                        self._height_srv_channel,
+                                        callback_group=self.callback_group,
+                                        qos_profile=rclpy.qos.qos_profile_services_default)
+        if not self.height_srv_req.wait_for_service(timeout_sec=3.0):
+            raise exceptions.TimedOutError('[{}] service not available, waiting again...'.format(self._height_srv_channel))
 
-        rospy.wait_for_service(self._rnd_pose_srv_channel)
-        self.rnd_pose_srv_req = rospy.ServiceProxy(self._rnd_pose_srv_channel, String_Pose)
+        self.rnd_pose_srv_req = self.node.create_client(StringPose, \
+                                            self._rnd_pose_srv_channel,
+                                            callback_group=self.callback_group,
+                                            qos_profile=rclpy.qos.qos_profile_services_default)
+        if not self.rnd_pose_srv_req.wait_for_service(timeout_sec=3.0):
+            raise exceptions.TimedOutError('[{}] service not available, waiting again...'.format(self._rnd_pose_srv_channel))
+        
+        self.close_pose_srv_req = self.node.create_client(StringPose, \
+                                            self._close_pose_srv_channel,
+                                            callback_group=self.callback_group,
+                                            qos_profile=rclpy.qos.qos_profile_services_default)
+        if not self.close_pose_srv_req.wait_for_service(timeout_sec=3.0):
+            raise exceptions.TimedOutError('[{}] service not available, waiting again...'.format(self._close_pose_srv_channel))
 
-        rospy.wait_for_service(self._close_pose_srv_channel)
-        self.close_pose_srv_req = rospy.ServiceProxy(self._close_pose_srv_channel, String_Pose)
-
-        # get odom 2 base
-        self.listener = tf.TransformListener()
+        ## # get odom 2 base
+        ## qos_profile = QoSProfile(
+        ##     reliability=QoSReliabilityPolicy.RMW_QOS_POLICY_RELIABILITY_RELIABLE,           
+        ##     history=QoSHistoryPolicy.RMW_QOS_POLICY_HISTORY_KEEP_LAST,
+        ##     depth=10
+        ## )
+        
+        ## self.tf_buffer   = Buffer()
+        ## self.tf_listener = TransformListener(buffer=self.tf_buffer,
+        ##                                      node=self.node,
+        ##                                      qos=qos_profile,
+        ##                                          )
         
         self.feedback_message = "{}: finished setting up".format(self.name)
         return True
@@ -126,9 +182,16 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
     def initialise(self):
         self.feedback_message = "Initialise"
         self.logger.debug("{0}.initialise()".format(self.__class__.__name__))
+        ## if self.setup_flag is False: self.setup()
+        
         self.sent_goal = False
 
-        self.blackboard = py_trees.Blackboard()
+        self.blackboard = py_trees.blackboard.Client()
+        self.blackboard.register_key(key=self.name +'/grasp_pose', access=py_trees.common.Access.WRITE)
+        self.blackboard.register_key(key=self.name +'/grasp_top_pose', access=py_trees.common.Access.WRITE)
+        self.blackboard.register_key(key=self.name +'/place_pose', access=py_trees.common.Access.WRITE)
+        self.blackboard.register_key(key=self.name +'/place_top_pose', access=py_trees.common.Access.WRITE)
+        
         self.blackboard.set(self.name +'/grasp_pose', Pose())
         self.blackboard.set(self.name +'/grasp_top_pose', Pose())
         self.blackboard.set(self.name +'/place_pose', Pose())    
@@ -142,37 +205,62 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
             
             # Request the top surface pose of an object to WM
             obj = self.object_dict['target']
+            req = StringPose.Request(data=obj)
+            
             try:
-                obj_pose = self.grasp_pose_srv_req(obj).pose
-            except rospy.ServiceException, e:
-                self.feedback_message = "Pose Srv Error"
-                print "Pose Service is not available: %s"%e
+                future = self.grasp_pose_srv_req.call_async(req)
+
+                while rclpy.ok():
+                    if future.done():
+                        break
+                    rclpy.spin_once(self.node, timeout_sec=0.05)
+                    ## time.sleep(0.05)
+                
+                obj_pose = future.result().pose
+            except Exception as e:
+                self.feedback_message = "Pose Service is not available: %s"%e
                 return py_trees.common.Status.FAILURE
 
             try:
-                obj_height = self.height_srv_req(obj).pose
+                future = self.height_srv_req.call_async(req)
+
+                while rclpy.ok():
+                    if future.done():
+                        break
+                    rclpy.spin_once(self.node, timeout_sec=0.05)
+                    ## time.sleep(0.05)
+
+                obj_height = future.result().pose                
                 obj_height = obj_height.position.z
-            except rospy.ServiceException, e:
-                self.feedback_message = "Pose Srv Error"
-                print "Height Service is not available: %s"%e
+            except Exception as e:
+                self.feedback_message = "Height Service is not available: %s"%e
                 return py_trees.common.Status.FAILURE
 
-            # from IPython import embed; embed(); sys.exit()
+            future = self.tf_buffer.wait_for_transform_async(self._world_frame,
+                                                        self._arm_base_frame,
+                                                        rclpy.time.Time())
+            #rclpy.spin_until_future_complete(self.tf_buffer, r)
+            while rclpy.ok():
+                if future.done(): break
+                rclpy.spin_once(self.node, timeout_sec=0.5)
+            
             pos = None
-            while not rospy.is_shutdown():
+            while rclpy.ok():
                 try:
-                    (pos,quat) = self.listener.lookupTransform(self._world_frame,
+                    t = self.tf_buffer.lookup_transform(self._world_frame,
                                                                self._arm_base_frame,
-                                                               rospy.Time(0))
-                except (tf.LookupException, tf.ConnectivityException,
-                        tf.ExtrapolationException):
+                                                               rclpy.time.Time())
+                except TransformException as ex:
                     self.feedback_message = "WorldModel: Exception from TF"
                     continue
-                if pos is not None: break
-
+                if t is not None: break
+                rclpy.spin_once(self.node, timeout_sec=0.5)
+            pos = t.transform.translation
+            quat = t.transform.rotation
+                    
             self.base2arm_baselink = PyKDL.Frame(
-                PyKDL.Rotation.Quaternion(quat[0], quat[1], quat[2], quat[3]),
-                PyKDL.Vector(pos[0], pos[1], pos[2]))
+                PyKDL.Rotation.Quaternion(quat.x, quat.y, quat.z, quat.w),
+                PyKDL.Vector(pos.x, pos.y, pos.z))
 
             # ------------ Compute -------------------------
             grasp_pose =\
@@ -181,7 +269,6 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                                           self.grasp_offset_z)
             grasp_top_pose = copy.deepcopy(grasp_pose)
             grasp_top_pose.position.z += self.top_offset_z
-            #from IPython import embed; embed(); sys.exit()
 
             self.blackboard.set(self.name +'/grasp_pose', grasp_pose)
             self.blackboard.set(self.name +'/grasp_top_pose', grasp_top_pose)
@@ -191,18 +278,27 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                 self.feedback_message = "getting the destination pose"
                 self.logger.debug("%s.update()[%s]" % (self.__class__.__name__, self.feedback_message))
                 destination = self.object_dict['destination']
-                try:
-                    # Find a location on the destination top surface
-                    if self.en_random:
-                        dst_pose = self.rnd_pose_srv_req(json.dumps(self.object_dict)).pose
-                    elif self.en_close_pose:
-                        dst_pose = self.close_pose_srv_req(json.dumps(self.object_dict)).pose
-                    else:
-                        dst_pose = self.pose_srv_req(destination).pose
-                except rospy.ServiceException, e:
-                    print "Pose Service is not available: %s"%e
-                    self.logger.debug("%s.update()[%s]" % (self.__class__.__name__, self.feedback_message))
-                    return py_trees.common.Status.FAILURE
+                # Find a location on the destination top surface
+                if self.en_random:
+                    req      = StringPose.Request(data=json.dumps(self.object_dict))
+                    future = self.rnd_pose_srv_req.call_async(req)
+                elif self.en_close_pose:
+                    req      = StringPose.Request(data=json.dumps(self.object_dict))
+                    future = self.close_pose_srv_req.call_async(req)
+                else:
+                    req      = StringPose.Request(data=destination)
+                    future = self.pose_srv_req.call_async(req)
+
+                while rclpy.ok():
+                    if future.done():
+                        break
+                    rclpy.spin_once(self.node, timeout_sec=0.05)
+                    #TODO add timeout
+                    ## self.node.get_logger().error( "Pose Service is not available: %s"%e )
+                    ## self.logger.debug("%s.update()[%s]" % (self.__class__.__name__, self.feedback_message))
+                    ## return py_trees.common.Status.FAILURE
+                    
+                dst_pose = future.result().pose
 
                 if 'destination_offset' in self.object_dict.keys():
                     offset = self.object_dict['destination_offset']
@@ -220,8 +316,6 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                                                            obj_height, \
                                                            self.grasp_offset_z)
 
-                ## from IPython import embed; embed(); sys.exit()
-                
                 # the sliding motion 
                 if self.en_close_pose:
                     place_pose.position.z = grasp_pose.position.z
@@ -234,18 +328,18 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
             self.sent_goal        = True
             self.feedback_message = "WorldModel: successful grasp pose estimation "
             return py_trees.common.Status.SUCCESS
-            ## return py_trees.common.Status.RUNNING
 
         
         self.feedback_message = "WorldModel: successful grasp pose estimation "
-        ## if not self.sent_goal:
-        ##     self.sent_goal = True
-        ##     self.feedback_message = "Sending a world_model command"
-        ##     return py_trees.common.Status.RUNNING
         return py_trees.common.Status.SUCCESS
             
     
     def terminate(self, new_status):
+        ## self.destroy_service(self.pose_srv_req)
+        ## self.destroy_service(self.grasp_pose_srv_req)
+        ## self.destroy_service(self.height_srv_req)
+        ## self.destroy_service(self.rnd_pose_srv_req)
+        ## self.destroy_service(self.close_pose_srv_req)
         return
 
 

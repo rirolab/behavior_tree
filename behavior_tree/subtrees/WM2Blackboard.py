@@ -19,8 +19,8 @@ class ToBlackboard(subscribers.ToBlackboard):
                                            qos_profile=py_trees_ros.utilities.qos_profile_unlatched()
                                            )
 
-        #self.blackboard = py_trees.blackboard.Blackboard()
         self.blackboard.register_key(key="no_wm_warning", access=py_trees.common.Access.WRITE)
+        self.blackboard.register_key(key="wm_msg", access=py_trees.common.Access.READ)
 
     def update(self) -> py_trees.common.Status:
         """

@@ -1,18 +1,24 @@
 import numpy as np
 import json
-import rospy
+import rclpy
 
 import py_trees
-import std_msgs.msg as std_msgs
-from actionlib_msgs.msg import GoalStatus
-from control_msgs.msg import FollowJointTrajectoryResult
+from action_msgs.msg import GoalStatus
+from . import Move
+
+from riro_srvs.srv import StringGoalStatus
 import geometry_msgs
+import py_trees.console as console
 
-from complex_action_client.srv import String_Int, None_String
+## import std_msgs.msg as std_msgs
+## from actionlib_msgs.msg import GoalStatus
+## from control_msgs.msg import FollowJointTrajectoryResult
 
-class MOVEP(py_trees.behaviour.Behaviour):
+## from complex_action_client.srv import String_Int, None_String
+
+class MOVEP(Move.MOVE):
     """
-    Move Pose
+    Move to a Cartesian pose
     
     Note that this behaviour will return with
     :attr:`~py_trees.common.Status.SUCCESS`. It will also send a clearing
@@ -20,29 +26,13 @@ class MOVEP(py_trees.behaviour.Behaviour):
     priority behaviour.
     """
 
-    def __init__(self, name, action_goal=None,
-                 topic_name="", controller_ns=""):
-        super(MOVEP, self).__init__(name=name)
+    def __init__(self, name, action_client, action_goal=None):
+        super(MOVEP, self).__init__(name=name,
+                                   action_client=action_client,
+                                   action_goal=action_goal)
 
-        self.topic_name = topic_name
-        self.controller_ns = controller_ns
-        self.action_goal = action_goal
-        self.sent_goal   = False
-        self.cmd_req     = None
-
-
-    def setup(self, timeout):
-        self.feedback_message = "{}: setup".format(self.name)
-        rospy.wait_for_service("arm_client/command")
-        self.cmd_req = rospy.ServiceProxy("arm_client/command", String_Int)
-        rospy.wait_for_service("arm_client/status")
-        self.status_req = rospy.ServiceProxy("arm_client/status", None_String)    
-        return True
-
-
-    def initialise(self):
-        self.logger.debug("{0}.initialise()".format(self.__class__.__name__))
-        self.sent_goal = False
+        self.blackboard.register_key(key=self.action_goal['pose'], \
+                                     access=py_trees.common.Access.READ)
 
 
     def update(self):
@@ -54,7 +44,7 @@ class MOVEP(py_trees.behaviour.Behaviour):
             return py_trees.Status.FAILURE
 
         if not self.sent_goal:
-            if type(self.action_goal['pose']) is geometry_msgs.msg._Pose.Pose:
+            if type(self.action_goal['pose']) is geometry_msgs.msg.Pose:
                 goal = {'x': self.action_goal['pose'].position.x,
                         'y': self.action_goal['pose'].position.y,
                         'z': self.action_goal['pose'].position.z,
@@ -63,8 +53,7 @@ class MOVEP(py_trees.behaviour.Behaviour):
                         'qz': self.action_goal['pose'].orientation.z,
                         'qw': self.action_goal['pose'].orientation.w,}
             else:
-                blackboard = py_trees.Blackboard()
-                ps = blackboard.get(self.action_goal['pose'])
+                ps = self.blackboard.get(self.action_goal['pose'])
                 goal = {'x': ps.position.x,
                         'y': ps.position.y,
                         'z': ps.position.z,
@@ -72,52 +61,55 @@ class MOVEP(py_trees.behaviour.Behaviour):
                         'qy': ps.orientation.y,
                         'qz': ps.orientation.z,
                         'qw': ps.orientation.w,}
-            
+
+            self.goal_uuid_des = np.random.randint(0, 255, size=16,
+                                            dtype=np.uint8)
+                    
             cmd_str = json.dumps({'action_type': 'movePose',
                                   'goal': json.dumps(goal),
+                                  'uuid': self.goal_uuid_des.tolist(),
                                   'timeout': 3.,
-                                  'no_wait': True})
-
-            ret = self.cmd_req(cmd_str)
-            if ret.data==GoalStatus.REJECTED or ret.data==GoalStatus.ABORTED:
-                self.feedback_message = "failed to execute"
-                self.logger.debug("%s.update()[%s]" % (self.__class__.__name__, self.feedback_message))
-                return py_trees.common.Status.FAILURE
+                                  'enable_wait': False})
+            req = StringGoalStatus.Request(data=cmd_str)
+            self.future = self.cmd_req.call_async(req)
             
-            self.sent_goal        = True
-            self.feedback_message = "Sending a joint goal"
+            self.sent_goal = True
+            self.feedback_message = "Sending a pose goal"
             return py_trees.common.Status.RUNNING
-
-        msg = self.status_req()
-        d = json.loads(msg.data)
-        state = d['state']
-        ret   = d['result']
-
-        if  state in [GoalStatus.ABORTED,
-                      GoalStatus.PREEMPTED,
-                      GoalStatus.REJECTED] and \
-                      ret != FollowJointTrajectoryResult.SUCCESSFUL: 
+            
+        if self.blackboard.goal_id is None:
+            return py_trees.common.Status.RUNNING
+            
+        if (self.goal_uuid_des == self.blackboard.goal_id).all() and \
+           self.blackboard.goal_status in [GoalStatus.STATUS_ABORTED,
+                                GoalStatus.STATUS_UNKNOWN,
+                                GoalStatus.STATUS_CANCELING,
+                                GoalStatus.STATUS_CANCELED]:
             self.feedback_message = "FAILURE"
+            self.logger.debug("%s.update()[%s->%s][%s]" % \
+                                  (self.__class__.__name__, \
+                                   self.status, \
+                                   py_trees.common.Status.FAILURE, \
+                                  self.feedback_message))
             return py_trees.common.Status.FAILURE
 
-        if ret == FollowJointTrajectoryResult.SUCCESSFUL:
+        if (self.goal_uuid_des == self.blackboard.goal_id).all() and \
+           self.blackboard.goal_status is GoalStatus.STATUS_SUCCEEDED:
             self.feedback_message = "SUCCESSFUL"
+            self.logger.debug("%s.update()[%s->%s][%s]" % \
+                                  (self.__class__.__name__, \
+                                       self.status, \
+                                  py_trees.common.Status.SUCCESS, \
+                                  self.feedback_message))
             return py_trees.common.Status.SUCCESS
         else:
             return py_trees.common.Status.RUNNING
 
+
         
-    def terminate(self, new_status):
-        msg = self.status_req()
-        d = json.loads(msg.data)
-        if d['state'] == GoalStatus.ACTIVE:
-            self.cmd_req( json.dumps({'action_type': 'cancel_goal'}) )
-        return
-
-
-class MOVES(py_trees.behaviour.Behaviour):
+class MOVES(Move.MOVE):
     """
-    Move Pose following a straight pose trajectory
+    Move to a Cartesian pose following a straight pose trajectory
     
     Note that this behaviour will return with
     :attr:`~py_trees.common.Status.SUCCESS`. It will also send a clearing
@@ -125,30 +117,13 @@ class MOVES(py_trees.behaviour.Behaviour):
     priority behaviour.
     """
 
-    def __init__(self, name, action_goal=None,
-                 topic_name="", controller_ns=""):
-        super(MOVES, self).__init__(name=name)
+    def __init__(self, name, action_client, action_goal=None):
+        super(MOVES, self).__init__(name=name,
+                                   action_client=action_client,
+                                   action_goal=action_goal)
 
-        self.topic_name = topic_name
-        self.controller_ns = controller_ns
-        self.action_goal = action_goal
-        self.sent_goal   = False
-        self.cmd_req     = None
-
-
-    def setup(self, timeout):
-        self.feedback_message = "{}: setup".format(self.name)
-        rospy.wait_for_service("arm_client/command")
-        self.cmd_req = rospy.ServiceProxy("arm_client/command", String_Int)
-        rospy.wait_for_service("arm_client/status")
-        self.status_req = rospy.ServiceProxy("arm_client/status", None_String)    
-        return True
-
-
-    def initialise(self):
-        self.logger.debug("{0}.initialise()".format(self.__class__.__name__))
-        self.sent_goal = False
-
+        self.blackboard.register_key(key=self.action_goal['pose'], \
+                                     access=py_trees.common.Access.READ)
 
     def update(self):
         self.logger.debug("%s.update()" % self.__class__.__name__)
@@ -160,7 +135,7 @@ class MOVES(py_trees.behaviour.Behaviour):
 
         if not self.sent_goal:
             # reference frame: arm_baselink
-            if type(self.action_goal['pose']) is geometry_msgs.msg._Pose.Pose:
+            if type(self.action_goal['pose']) is geometry_msgs.msg.Pose:
                 goal = {'x': self.action_goal['pose'].position.x,
                         'y': self.action_goal['pose'].position.y,
                         'z': self.action_goal['pose'].position.z,
@@ -169,8 +144,7 @@ class MOVES(py_trees.behaviour.Behaviour):
                         'qz': self.action_goal['pose'].orientation.z,
                         'qw': self.action_goal['pose'].orientation.w,}
             else:
-                blackboard = py_trees.Blackboard()
-                ps = blackboard.get(self.action_goal['pose'])                
+                ps = self.blackboard.get(self.action_goal['pose'])                
                 goal = {'x': ps.position.x,
                         'y': ps.position.y,
                         'z': ps.position.z,
@@ -179,49 +153,51 @@ class MOVES(py_trees.behaviour.Behaviour):
                         'qz': ps.orientation.z,
                         'qw': ps.orientation.w,}
             
+            self.goal_uuid_des = np.random.randint(0, 255, size=16,
+                                            dtype=np.uint8)
             cmd_str = json.dumps({'action_type': 'movePoseStraight',
                                   'goal': json.dumps(goal),
+                                  'uuid': self.goal_uuid_des.tolist(),
                                   'timeout': 3.,
-                                  'no_wait': True})
-            ret = self.cmd_req(cmd_str)
-            if ret.data==GoalStatus.REJECTED or ret.data==GoalStatus.ABORTED:
-                self.feedback_message = "failed to execute"
-                self.logger.debug("%s.update()[%s]" % (self.__class__.__name__, self.feedback_message))
-                return py_trees.common.Status.FAILURE
+                                  'enable_wait': False})
+            req = StringGoalStatus.Request(data=cmd_str)
+            self.future = self.cmd_req.call_async(req)
             
-            self.sent_goal        = True
+            self.sent_goal = True
             self.feedback_message = "Sending a joint goal"
             return py_trees.common.Status.RUNNING
 
-        msg = self.status_req()
-        d = json.loads(msg.data)
-        state = d['state']
-        ret   = d['result']
-        
-        if  state in [GoalStatus.ABORTED,
-                      GoalStatus.PREEMPTED,
-                      GoalStatus.REJECTED] and \
-                      ret != FollowJointTrajectoryResult.SUCCESSFUL: 
+        if self.blackboard.goal_id is None:
+            return py_trees.common.Status.RUNNING
+            
+        if (self.goal_uuid_des == self.blackboard.goal_id).all() and \
+           self.blackboard.goal_status in [GoalStatus.STATUS_ABORTED,
+                                GoalStatus.STATUS_UNKNOWN,
+                                GoalStatus.STATUS_CANCELING,
+                                GoalStatus.STATUS_CANCELED]:
             self.feedback_message = "FAILURE"
+            self.logger.debug("%s.update()[%s->%s][%s]" % \
+                                  (self.__class__.__name__, \
+                                   self.status, \
+                                   py_trees.common.Status.FAILURE, \
+                                  self.feedback_message))
             return py_trees.common.Status.FAILURE
 
-        if ret == FollowJointTrajectoryResult.SUCCESSFUL:
+        if (self.goal_uuid_des == self.blackboard.goal_id).all() and \
+           self.blackboard.goal_status is GoalStatus.STATUS_SUCCEEDED:
             self.feedback_message = "SUCCESSFUL"
+            self.logger.debug("%s.update()[%s->%s][%s]" % \
+                                  (self.__class__.__name__, \
+                                       self.status, \
+                                  py_trees.common.Status.SUCCESS, \
+                                  self.feedback_message))
             return py_trees.common.Status.SUCCESS
         else:
             return py_trees.common.Status.RUNNING
 
-        
-    def terminate(self, new_status):
-        msg = self.status_req()
-        d = json.loads(msg.data)
-        if d['state'] == GoalStatus.ACTIVE:
-            self.cmd_req( json.dumps({'action_type': 'cancel_goal'}) )
-        return
 
 
-
-class MOVEPR(py_trees.behaviour.Behaviour):
+class MOVEPR(Move.MOVE):
     """
     Move Pose Relative with a certain frame
     
@@ -230,31 +206,19 @@ class MOVEPR(py_trees.behaviour.Behaviour):
     command to the robot if it is cancelled or interrupted by a higher
     priority behaviour.
     """
+    def __init__(self, name, action_client, action_goal=None,\
+                     cont=False):
+        super(MOVEPR, self).__init__(name=name,
+                                   action_client=action_client,
+                                   action_goal=action_goal)
 
-    def __init__(self, name, action_goal=None,
-                 topic_name="", controller_ns="", cont=False):
-        super(MOVEPR, self).__init__(name=name)
-
-        self.topic_name = topic_name
-        self.controller_ns = controller_ns
-        
-        # Set the goal pose
-        self.action_goal = action_goal
         # Enable continuous motion
         self.action_cont = cont
-        # Set the goal flag
-        self.sent_goal = False
-        self.cmd_req   = None
 
 
     def setup(self, timeout):
-        ## self.publisher = rospy.Publisher(self.topic_name, std_msgs.String, queue_size=10, latch=True)
-        self.feedback_message = "{}: setup".format(self.name)
-        
-        rospy.wait_for_service("arm_client/command")
-        self.cmd_req = rospy.ServiceProxy("arm_client/command", String_Int)
-        rospy.wait_for_service("arm_client/status")
-        self.status_req = rospy.ServiceProxy("arm_client/status", None_String)
+
+        super.setup(timeout)
 
         if self.action_cont:
             timeout_scale = 0.5
@@ -262,11 +226,6 @@ class MOVEPR(py_trees.behaviour.Behaviour):
             timeout_scale = 1.
         self.cmd_req(json.dumps({'action_type': 'setSpeed', 'goal': timeout_scale}))        
         return True
-
-
-    def initialise(self):
-        self.logger.debug("{0}.initialise()".format(self.__class__.__name__))
-        self.sent_goal = False
 
 
     def update(self):
@@ -289,78 +248,65 @@ class MOVEPR(py_trees.behaviour.Behaviour):
             cmd_str = json.dumps({'action_type': 'movePoseRelative',
                                   'goal': json.dumps(goal),
                                   'frame': self.action_goal['frame'],
+                                  'uuid': self.goal_uuid_des.tolist(),
                                   'timeout': 3.,
-                                  'no_wait': True})
-            ret = self.cmd_req(cmd_str)
-            if ret.data==GoalStatus.REJECTED or ret.data==GoalStatus.ABORTED:
-                self.feedback_message = \
-                  "failed to execute"
-                self.logger.debug("%s.update()[%s]" % (self.__class__.__name__, self.feedback_message))
-                return py_trees.common.Status.FAILURE
-                        
-            self.sent_goal = True
-            self.feedback_message = "Sending a pose goal"
-            return py_trees.common.Status.RUNNING
+                                  'enable_wait': True})
 
-        msg = self.status_req()
-        d = json.loads(msg.data)
-        state = d['state']
-        ret   = d['result']
-        
-        if  state in [GoalStatus.ABORTED,
-                      GoalStatus.PREEMPTED,
-                      GoalStatus.REJECTED] and \
-                      ret != FollowJointTrajectoryResult.SUCCESSFUL: 
+            req = StringGoalStatus.Request(data=cmd_str)
+            
+            self.future = self.cmd_req.call_async(req)
+            
+            self.sent_goal = True
+            self.feedback_message = "Sending a joint goal"
+            return py_trees.common.Status.RUNNING
+            
+        if self.blackboard.goal_id is None:
+            return py_trees.common.Status.RUNNING
+            
+        if (self.goal_uuid_des == self.blackboard.goal_id).all() and \
+           self.blackboard.goal_status in [GoalStatus.STATUS_ABORTED,
+                                GoalStatus.STATUS_UNKNOWN,
+                                GoalStatus.STATUS_CANCELING,
+                                GoalStatus.STATUS_CANCELED]:
             self.feedback_message = "FAILURE"
+            self.logger.debug("%s.update()[%s->%s][%s]" % \
+                                  (self.__class__.__name__, \
+                                   self.status, \
+                                   py_trees.common.Status.FAILURE, \
+                                  self.feedback_message))
             return py_trees.common.Status.FAILURE
 
-        if ret == FollowJointTrajectoryResult.SUCCESSFUL:
+        if (self.goal_uuid_des == self.blackboard.goal_id).all() and \
+           self.blackboard.goal_status is GoalStatus.STATUS_SUCCEEDED:
             self.feedback_message = "SUCCESSFUL"
+            self.logger.debug("%s.update()[%s->%s][%s]" % \
+                                  (self.__class__.__name__, \
+                                       self.status, \
+                                  py_trees.common.Status.SUCCESS, \
+                                  self.feedback_message))
             return py_trees.common.Status.SUCCESS
         else:
             return py_trees.common.Status.RUNNING
 
-        
-    def terminate(self, new_status):
-        msg = self.status_req()
-        d = json.loads(msg.data)
-        if d['state'] == GoalStatus.ACTIVE:
-            self.cmd_req( json.dumps({'action_type': 'cancel_goal'}) )
-        return
 
-
-class MOVEPROOT(py_trees.behaviour.Behaviour):
+class MOVEPROOT(Move.MOVE):
     """
+    Move the root joint of the manipulator toward pick-and-place of a target object (pose).
+
     Note that this behaviour will return with
     :attr:`~py_trees.common.Status.SUCCESS`. It will also send a clearing
     command to the robot if it is cancelled or interrupted by a higher
     priority behaviour.
     """
 
-    def __init__(self, name, action_goal=None,
-                 topic_name="", controller_ns=""):
-        super(MOVEPROOT, self).__init__(name=name)
-
-        self.topic_name = topic_name
-        self.controller_ns = controller_ns
-        self.action_goal = action_goal
-        self.sent_goal = False
-        self.cmd_req   = None
-
-    def setup(self, timeout):
-        self.feedback_message = "{}: setup".format(self.name)
-        rospy.wait_for_service("arm_client/command")
-        self.cmd_req = rospy.ServiceProxy("arm_client/command", String_Int)
-        rospy.wait_for_service("arm_client/status")
-        self.status_req = rospy.ServiceProxy("arm_client/status", None_String)
-        return True
-
-
-    def initialise(self):
-        self.logger.debug("{0}.initialise()".format(self.__class__.__name__))
-        self.sent_goal = False
-
-
+    def __init__(self, name, action_client, action_goal=None):
+        super(MOVEPROOT, self).__init__(name=name,
+                                   action_client=action_client,
+                                   action_goal=action_goal)
+    
+        self.blackboard.register_key(key=self.action_goal['pose'], \
+                                     access=py_trees.common.Access.READ)
+                                     
     def update(self):
         self.logger.debug("%s.update()" % self.__class__.__name__)
 
@@ -371,7 +317,7 @@ class MOVEPROOT(py_trees.behaviour.Behaviour):
 
         if not self.sent_goal:
             # reference frame: arm_baselink
-            if type(self.action_goal['pose']) is geometry_msgs.msg._Pose.Pose:
+            if type(self.action_goal['pose']) is geometry_msgs.msg.Pose:
                 goal = {'x': self.action_goal['pose'].position.x,
                         'y': self.action_goal['pose'].position.y,
                         'z': self.action_goal['pose'].position.z,
@@ -380,8 +326,7 @@ class MOVEPROOT(py_trees.behaviour.Behaviour):
                         'qz': self.action_goal['pose'].orientation.z,
                         'qw': self.action_goal['pose'].orientation.w,}
             else:
-                blackboard = py_trees.Blackboard()
-                ps = blackboard.get(self.action_goal['pose'])                
+                ps = self.blackboard.get(self.action_goal['pose'])                
                 goal = {'x': ps.position.x,
                         'y': ps.position.y,
                         'z': ps.position.z,
@@ -392,42 +337,42 @@ class MOVEPROOT(py_trees.behaviour.Behaviour):
             
             cmd_str = json.dumps({'action_type': 'movePoseRoot',
                                   'goal': json.dumps(goal),
+                                  'uuid': self.goal_uuid_des.tolist(),
                                   'timeout': 3.,
-                                  'no_wait': True})
-            ret = self.cmd_req(cmd_str)
-            if ret.data==GoalStatus.REJECTED or ret.data==GoalStatus.ABORTED:
-                self.feedback_message = "failed to execute"
-                self.logger.debug("%s.update()[%s]" % (self.__class__.__name__, self.feedback_message))
-                return py_trees.common.Status.FAILURE
+                                  'enable_wait': True})
+            req = StringGoalStatus.Request(data=cmd_str)
             
-            self.sent_goal        = True
+            self.future = self.cmd_req.call_async(req)
+            
+            self.sent_goal = True
             self.feedback_message = "Sending a joint goal"
             return py_trees.common.Status.RUNNING
 
-        msg = self.status_req()
-        d = json.loads(msg.data)
-        state = d['state']
-        ret   = d['result']
-        
-        if  state in [GoalStatus.ABORTED,
-                      GoalStatus.PREEMPTED,
-                      GoalStatus.REJECTED] and \
-                      ret != FollowJointTrajectoryResult.SUCCESSFUL: 
+        if self.blackboard.goal_id is None:
+            return py_trees.common.Status.RUNNING
+            
+        if (self.goal_uuid_des == self.blackboard.goal_id).all() and \
+           self.blackboard.goal_status in [GoalStatus.STATUS_ABORTED,
+                                GoalStatus.STATUS_UNKNOWN,
+                                GoalStatus.STATUS_CANCELING,
+                                GoalStatus.STATUS_CANCELED]:
             self.feedback_message = "FAILURE"
+            self.logger.debug("%s.update()[%s->%s][%s]" % \
+                                  (self.__class__.__name__, \
+                                   self.status, \
+                                   py_trees.common.Status.FAILURE, \
+                                  self.feedback_message))
             return py_trees.common.Status.FAILURE
 
-        if ret == FollowJointTrajectoryResult.SUCCESSFUL:
+        if (self.goal_uuid_des == self.blackboard.goal_id).all() and \
+           self.blackboard.goal_status is GoalStatus.STATUS_SUCCEEDED:
             self.feedback_message = "SUCCESSFUL"
+            self.logger.debug("%s.update()[%s->%s][%s]" % \
+                                  (self.__class__.__name__, \
+                                       self.status, \
+                                  py_trees.common.Status.SUCCESS, \
+                                  self.feedback_message))
             return py_trees.common.Status.SUCCESS
         else:
             return py_trees.common.Status.RUNNING
             
-    
-
-    def terminate(self, new_status):
-        msg = self.status_req()
-        d = json.loads(msg.data)
-        if d['state'] == GoalStatus.ACTIVE:
-            self.cmd_req( json.dumps({'action_type': 'cancel_goal'}) )
-        self.logger.debug("%s.terminate()[%s->%s]" % (self.__class__.__name__, self.status, new_status))            
-        return 

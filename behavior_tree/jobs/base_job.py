@@ -1,43 +1,38 @@
-
 import copy, sys
-import move_base_msgs.msg as move_base_msgs
 import py_trees, py_trees_ros
-import rospy
+import rclpy
 import threading
-import numpy as np
 import json
-import PyKDL
-import tf
 
 import std_msgs.msg as std_msgs
-from complex_action_client import misc
-from geometry_msgs.msg import PoseStamped, Point, Quaternion, Pose
-
-sys.path.insert(0,'..')
-from subtrees import MoveJoint, MovePose, Gripper, Stop
-
 
 ##############################################################################
 # Behaviours
 ##############################################################################
 
 
-class Move(object):
+class BaseJob(object):
     """
     A job handler that instantiates a subtree for scanning to be executed by
     a behaviour tree.
     """
 
-    def __init__(self):
+    def __init__(self, node):
         """
         Tune into a channel for incoming goal requests. This is a simple
         subscriber here but more typically would be a service or action interface.
         """
-        self._grounding_channel = "symbol_grounding" #rospy.get_param('grounding_channel')
-        self._subscriber = rospy.Subscriber(self._grounding_channel, std_msgs.String, self.incoming)
+        self._node = node
+        self._grounding_channel = "symbol_grounding"
+
+        self._subscriber = self._node.create_subscription(std_msgs.String, \
+                                                          self._grounding_channel,
+                                                          self.incoming, 10)
         self._goal = None
         self._lock = threading.Lock()
 
+        self.blackboard = py_trees.blackboard.Client()
+        
     @property
     def goal(self):
         """
@@ -65,7 +60,7 @@ class Move(object):
             msg (:class:`~std_msgs.Empty`): incoming goal message
         """
         if self.goal:
-            rospy.logerr("MOVE: rejecting new goal, previous still in the pipeline")
+            self._node.get_logger().error("JOB: rejecting new goal, previous still in the pipeline")
         else:
             grounding = json.loads(msg.data)['params']
             for i in range( len(grounding.keys()) ):
@@ -73,7 +68,7 @@ class Move(object):
                 break
 
     @staticmethod
-    def create_root(idx="1", goal=std_msgs.Empty(), controller_ns="", **kwargs):
+    def create_root(node, action_client, idx="1", goal=std_msgs.Empty(), **kwargs):
         """
         Create the job subtree based on the incoming goal specification.
 

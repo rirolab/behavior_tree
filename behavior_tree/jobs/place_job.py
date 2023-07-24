@@ -1,19 +1,13 @@
-
 import copy, sys
-import move_base_msgs.msg as move_base_msgs
 import py_trees, py_trees_ros
-import rospy
+import rclpy
 import threading
-import numpy as np
 import json
-import PyKDL
-import tf
 
 import std_msgs.msg as std_msgs
-from complex_action_client import misc
 
-sys.path.insert(0,'..')
-from subtrees import MoveJoint, MovePose, Gripper, Stop, WorldModel
+from . import base_job
+from behavior_tree.subtrees import MoveJoint, MovePose, Gripper, WorldModel
 
 
 ##############################################################################
@@ -21,51 +15,32 @@ from subtrees import MoveJoint, MovePose, Gripper, Stop, WorldModel
 ##############################################################################
 
 
-class Move(object):
+class Move(base_job.BaseJob):
     """
     A job handler that instantiates a subtree for scanning to be executed by
     a behaviour tree.
     """
 
-    def __init__(self):
+    def __init__(self, node):
         """
         Tune into a channel for incoming goal requests. This is a simple
         subscriber here but more typically would be a service or action interface.
         """
-        self._grounding_channel = "symbol_grounding" #rospy.get_param('grounding_channel')
+        super(Move, self).__init__(node)
         
-        self._subscriber = rospy.Subscriber(self._grounding_channel, std_msgs.String, self.incoming)
-        self._goal = None
-        self._lock = threading.Lock()
+        self.blackboard.register_key(key="gripper_open_pos", access=py_trees.common.Access.WRITE)
+        self.blackboard.register_key(key="gripper_close_pos", access=py_trees.common.Access.WRITE)
+        self.blackboard.register_key(key="gripper_open_force", access=py_trees.common.Access.WRITE)
+        self.blackboard.register_key(key="gripper_close_force", access=py_trees.common.Access.WRITE)
+        self.blackboard.register_key(key="init_config", access=py_trees.common.Access.WRITE)
+        self.blackboard.gripper_open_pos    = self._node.get_parameter("gripper_open_pos").get_parameter_value().double_value
+        self.blackboard.gripper_close_pos   = self._node.get_parameter("gripper_close_pos").get_parameter_value().double_value
+        self.blackboard.gripper_open_force  = self._node.get_parameter("gripper_open_force").get_parameter_value().double_value
+        self.blackboard.gripper_close_force = self._node.get_parameter("gripper_close_force").get_parameter_value().double_value
+        self.blackboard.init_config = self._node.get_parameter("init_config").value
+        if type(self.blackboard.init_config) is str:
+            self.blackboard.init_config = eval(self.blackboard.init_config)
         
-        self.blackboard = py_trees.blackboard.Blackboard()
-        self.blackboard.gripper_open_pos = rospy.get_param("gripper_open_pos")
-        self.blackboard.gripper_close_pos = rospy.get_param("gripper_close_pos")
-        self.blackboard.gripper_open_force = rospy.get_param("gripper_open_force")
-        self.blackboard.gripper_close_force = rospy.get_param("gripper_close_force")
-        self.blackboard.init_config = eval(rospy.get_param("init_config", [0, -np.pi/2., np.pi/2., -np.pi/2., -np.pi/2., np.pi/4.]))
-
-        ## self.object      = None
-        ## self.destination = None
-
-    @property
-    def goal(self):
-        """
-        Getter for the variable indicating whether or not a goal has recently been received
-        but not yet handled. It simply makes sure it is wrapped with the appropriate locking.
-        """
-        with self._lock:
-            g = copy.copy(self._goal) or self._goal
-        return g
-
-    @goal.setter
-    def goal(self, value):
-        """
-        Setter for the variable indicating whether or not a goal has recently been received
-        but not yet handled. It simply makes sure it is wrapped with the appropriate locking.
-        """
-        with self._lock:
-            self._goal = value
 
     def incoming(self, msg):
         """
@@ -75,7 +50,7 @@ class Move(object):
             msg (:class:`~std_msgs.Empty`): incoming goal message
         """
         if self.goal:
-            rospy.logerr("MOVE: rejecting new goal, previous still in the pipeline")
+            self._node.get_logger().error("place_job: rejecting new goal, previous still in the pipeline")
         else:
             grounding = json.loads(msg.data)['params']
             for i in range( len(grounding.keys()) ):
@@ -84,25 +59,8 @@ class Move(object):
                     break
                 
 
-            
-    ## def create_report_string(self, subtree_root):
-    ##     """
-    ##     Introspect the subtree root to determine an appropriate human readable status report string.
-
-    ##     Args:
-    ##         subtree_root (:class:`~py_trees.behaviour.Behaviour`): introspect the subtree
-
-    ##     Returns:
-    ##         :obj:`str`: human readable substring
-    ##     """
-    ##     if subtree_root.tip().has_parent_with_name("Cancelling?"):
-    ##         return "cancelling"
-    ##     else:
-    ##         return "scanning"
-
-
     @staticmethod
-    def create_root(idx="1", goal=std_msgs.Empty(), controller_ns="", **kwargs):
+    def create_root(node, action_client, idx="1", goal=std_msgs.Empty(), **kwargs):
         """
         Create the job subtree based on the incoming goal specification.
 
@@ -113,29 +71,34 @@ class Move(object):
            :class:`~py_trees.behaviour.Behaviour`: subtree root
         """       
         # beahviors
-        root = py_trees.composites.Sequence(name="Move")
-        blackboard = py_trees.blackboard.Blackboard()
-        ## grasp_offset_z = 0.02
+        root = py_trees.composites.Sequence(name="Place")
+        blackboard = py_trees.blackboard.Client()
+        blackboard.register_key(key="gripper_open_pos", access=py_trees.common.Access.READ)
+        blackboard.register_key(key="gripper_close_pos", access=py_trees.common.Access.READ)
+        blackboard.register_key(key="gripper_open_force", access=py_trees.common.Access.READ)
+        blackboard.register_key(key="gripper_close_force", access=py_trees.common.Access.READ)
+        blackboard.register_key(key="init_config", access=py_trees.common.Access.READ)
         
         if goal[idx]["primitive_action"] in ['place']:
             if 'object' in goal[idx].keys():
-                obj = goal[idx]['object'].encode('ascii','ignore')
+                obj = goal[idx]['object']
             elif 'obj' in goal[idx].keys():
-                obj = goal[idx]['obj'].encode('ascii','ignore')
+                obj = goal[idx]['obj']
             else:
-                rospy.logerr("MOVE: No place object")
+                node.get_logger().error("MOVE: No place object")
                 sys.exit()
                 
-            destination = goal[idx]['destination'].encode('ascii','ignore')
+            destination = goal[idx]['destination']
 
             if 'destination_offset' in goal[idx].keys():
-                destination_offset = goal[idx]['destination_offset'] #.encode('ascii','ignore')
+                destination_offset = goal[idx]['destination_offset'] 
             else:
                 destination_offset = [0,0,0,0,0,0]
         else:
             return None
 
-        s_init3 = MoveJoint.MOVEJ(name="Init", controller_ns=controller_ns,
+        s_init3 = MoveJoint.MOVEJ(name="Init",\
+                                  action_client=action_client,\
                                   action_goal=blackboard.init_config)
 
         # ----------------- Place ---------------------
@@ -144,16 +107,20 @@ class Move(object):
                                               object_dict = {'target': obj,
                                                              'destination': destination,
                                                              'destination_offset': destination_offset})
-        #from IPython import embed; embed(); sys.exit()
-        s_move21 = MovePose.MOVEP(name="Top", controller_ns=controller_ns,
-                                 action_goal={'pose': "Plan"+idx+"/place_top_pose"})
-        s_move22 = MovePose.MOVEP(name="Approach", controller_ns=controller_ns,
-                                 action_goal={'pose': "Plan"+idx+"/place_pose"})
-        s_move23 = Gripper.GOTO(name="Open", controller_ns=controller_ns,
-                               action_goal=blackboard.gripper_open_pos,
-                               force=blackboard.gripper_open_force)        
-        s_move24 = MovePose.MOVEP(name="Top", controller_ns=controller_ns,
-                                 action_goal={'pose': "Plan"+idx+"/place_top_pose"})
+
+        s_move21 = MovePose.MOVEP(name="Top",\
+                                  action_client=action_client,\
+                                  action_goal={'pose': "Plan"+idx+"/place_top_pose"})
+        s_move22 = MovePose.MOVEP(name="Approach",\
+                                  action_client=action_client,\
+                                  action_goal={'pose': "Plan"+idx+"/place_pose"})
+        s_move23 = Gripper.GOTO(name="Open",\
+                                action_client=action_client,\
+                                action_goal=blackboard.gripper_open_pos,
+                                force=blackboard.gripper_open_force)        
+        s_move24 = MovePose.MOVEP(name="Top",\
+                                  action_client=action_client,\
+                                  action_goal={'pose': "Plan"+idx+"/place_top_pose"})
         
         place.add_children([pose_est2, s_move21, s_move22, s_move23, s_move24, s_init3])
         return place

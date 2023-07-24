@@ -1,68 +1,42 @@
-
 import copy, sys
-import move_base_msgs.msg as move_base_msgs
 import py_trees, py_trees_ros
-import rospy
+import rclpy
 import threading
-import numpy as np
 import json
-import PyKDL
 
 import std_msgs.msg as std_msgs
-from geometry_msgs.msg import Pose, Quaternion #PointStamped,
-from complex_action_client import misc
 
-sys.path.insert(0,'..')
-from subtrees import Gripper, Rosbag
+from . import base_job
+from behavior_tree.subtrees import Gripper #, Rosbag
 
 
 ##############################################################################
 # Behaviours
 ##############################################################################
 
-
-class Move(object):
+class Move(base_job.BaseJob):
     """
     A job handler that instantiates a subtree for scanning to be executed by
     a behaviour tree.
     """
 
-    def __init__(self):
+    def __init__(self, node):
         """
         Tune into a channel for incoming goal requests. This is a simple
         subscriber here but more typically would be a service or action interface.
         """
-        self._grounding_channel = "symbol_grounding" #rospy.get_param('grounding_channel')
+        super(Move, self).__init__(node)
         
-        self._subscriber = rospy.Subscriber(self._grounding_channel, std_msgs.String, self.incoming)
-        self._goal = None
-        self._lock = threading.Lock()
-
-        self.blackboard = py_trees.blackboard.Blackboard()
-        self.blackboard.gripper_open_pos = rospy.get_param("gripper_open_pos")
-        self.blackboard.gripper_close_pos = rospy.get_param("gripper_close_pos")
-        self.blackboard.gripper_open_force = rospy.get_param("gripper_open_force")
-        self.blackboard.gripper_close_force = rospy.get_param("gripper_close_force")
+        self.blackboard.register_key(key="gripper_open_pos", access=py_trees.common.Access.WRITE)
+        self.blackboard.register_key(key="gripper_close_pos", access=py_trees.common.Access.WRITE)
+        self.blackboard.register_key(key="gripper_open_force", access=py_trees.common.Access.WRITE)
+        self.blackboard.register_key(key="gripper_close_force", access=py_trees.common.Access.WRITE)
+        self.blackboard.register_key(key="init_config", access=py_trees.common.Access.WRITE)
+        self.blackboard.gripper_open_pos    = self._node.get_parameter("gripper_open_pos").get_parameter_value().double_value
+        self.blackboard.gripper_close_pos   = self._node.get_parameter("gripper_close_pos").get_parameter_value().double_value
+        self.blackboard.gripper_open_force  = self._node.get_parameter("gripper_open_force").get_parameter_value().double_value
+        self.blackboard.gripper_close_force = self._node.get_parameter("gripper_close_force").get_parameter_value().double_value
         
-
-    @property
-    def goal(self):
-        """
-        Getter for the variable indicating whether or not a goal has recently been received
-        but not yet handled. It simply makes sure it is wrapped with the appropriate locking.
-        """
-        with self._lock:
-            g = copy.copy(self._goal) or self._goal
-        return g
-
-    @goal.setter
-    def goal(self, value):
-        """
-        Setter for the variable indicating whether or not a goal has recently been received
-        but not yet handled. It simply makes sure it is wrapped with the appropriate locking.
-        """
-        with self._lock:
-            self._goal = value
 
     def incoming(self, msg):
         """
@@ -72,7 +46,7 @@ class Move(object):
             msg (:class:`~std_msgs.Empty`): incoming goal message
         """
         if self.goal:
-            rospy.logerr("Gripper: rejecting new goal, previous still in the pipeline")
+            self._node.get_logger().error("gripper_job: rejecting new goal, previous still in the pipeline")
         else:
             grounding = json.loads(msg.data)['params']
             for i in range( len(grounding.keys()) ):
@@ -82,25 +56,8 @@ class Move(object):
                     break
 
 
-            
-    ## def create_report_string(self, subtree_root):
-    ##     """
-    ##     Introspect the subtree root to determine an appropriate human readable status report string.
-
-    ##     Args:
-    ##         subtree_root (:class:`~py_trees.behaviour.Behaviour`): introspect the subtree
-
-    ##     Returns:
-    ##         :obj:`str`: human readable substring
-    ##     """
-    ##     if subtree_root.tip().has_parent_with_name("Cancelling?"):
-    ##         return "cancelling"
-    ##     else:
-    ##         return "scanning"
-
-
     @staticmethod
-    def create_root(idx="1", goal=std_msgs.Empty(), controller_ns="", rec_topic_list=None):
+    def create_root(action_client, idx="1", goal=std_msgs.Empty(), rec_topic_list=None, **kwargs):
         """
         Create the job subtree based on the incoming goal specification.
 
@@ -114,26 +71,33 @@ class Move(object):
             return None
         
         # beahviors
-        ## root = py_trees.composites.Sequence(name="Gripper")
-        root = py_trees.composites.Parallel(name="Gripper",\
-                                            policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ONE)
+        ## root = py_trees.composites.Parallel(name="Gripper",\
+        ##                                     policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ONE)
 
-        action = goal[idx]['primitive_action'].encode('ascii','ignore')
+        root = py_trees.composites.Sequence(name="Gripper", memory=True)
+        action = goal[idx]['primitive_action']
 
-        blackboard = py_trees.blackboard.Blackboard()
+        blackboard = py_trees.blackboard.Client()
+        blackboard.register_key(key="gripper_open_pos", access=py_trees.common.Access.READ)
+        blackboard.register_key(key="gripper_close_pos", access=py_trees.common.Access.READ)
+        blackboard.register_key(key="gripper_open_force", access=py_trees.common.Access.READ)
+        blackboard.register_key(key="gripper_close_force", access=py_trees.common.Access.READ)
+
         if action.find('gripper_close')>=0:        
-            s_move = Gripper.GOTO(name="Close", controller_ns=controller_ns,
+            s_move = Gripper.GOTO(name="Close", action_client=action_client,
                                 action_goal=blackboard.gripper_close_pos,
                                 force=blackboard.gripper_close_force)        
         else:
-            s_move = Gripper.GOTO(name="Open", controller_ns=controller_ns,
+            s_move = Gripper.GOTO(name="Open", action_client=action_client,
                                 action_goal=blackboard.gripper_open_pos,
                                 force=blackboard.gripper_open_force)        
             
         if rec_topic_list is None:
             root.add_child(s_move)
-        else:
-            logger = Rosbag.ROSBAG(name="logger", topic_list=rec_topic_list)
-            root.add_children([s_move, logger])
+        ## else:
+        ##     logger = Rosbag.ROSBAG(name="logger", topic_list=rec_topic_list)
+        ##     root.add_children([s_move, logger])
 
         return root
+
+    

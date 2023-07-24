@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import time
 import sys
 import numpy as np
 import argparse
@@ -7,21 +8,21 @@ import operator
 import rclpy
 import rclpy.node
 from rclpy.parameter import Parameter
+from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 
-import functools
+from riro_srvs.srv import StringInt
+
 import py_trees
 import py_trees_ros
 import py_trees.console as console
+from py_trees_ros import exceptions, utilities
 
 from .subtrees import WM2Blackboard
 from .subtrees import MoveJoint
 
-import time
-from riro_srvs.srv import StringInt
-from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
-from py_trees_ros import exceptions, utilities
 
-def create_root(node, controller_ns=""):
+
+def create_root(node):
     """
     Create a basic tree and start a 'Topics2BB' work sequence that
     takes the asynchronicity out of subscription.
@@ -30,7 +31,7 @@ def create_root(node, controller_ns=""):
     :class:`~py_trees.behaviour.Behaviour`: the root of the tree
     """
     root = py_trees.composites.Parallel(
-        name="StaticTree",
+        name="ROOT",
         policy=py_trees.common.ParallelPolicy.SuccessOnAll(
             synchronise=False )
         )
@@ -76,10 +77,8 @@ def create_root(node, controller_ns=""):
         )
     
     s_move1 = MoveJoint.MOVEJ(name="Move1", action_client=action_client,
-                              controller_ns=controller_ns,
                               action_goal=[0, -np.pi/2.0, np.pi/2.0, 0, np.pi/2., np.pi/2.])
     s_move2 = MoveJoint.MOVEJ(name="Move2", action_client=action_client,
-                              controller_ns=controller_ns,
                               action_goal=[0, -np.pi/2.0, np.pi/2.0, 0, np.pi/2., -np.pi/2.])
     seq_move.add_children([is_move, s_move1, s_move2])
                             
@@ -103,15 +102,7 @@ def main(args=None):
     rclpy.init()        
     node = rclpy.create_node("tree")
 
-    node.declare_parameters(
-        namespace='',
-        parameters=[
-            ('controller_ns', Parameter.Type.STRING),
-            ]
-    )    
-    controller_ns=node.get_parameter("controller_ns").get_parameter_value().string_value
-    
-    root = create_root(node, controller_ns)
+    root = create_root(node)
     behaviour_tree = py_trees_ros.trees.BehaviourTree(root=root,
                                                       unicode_tree_debug=True)
 
