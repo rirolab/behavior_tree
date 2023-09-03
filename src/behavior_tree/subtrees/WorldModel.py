@@ -346,3 +346,105 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         # place_pose.position.z += obj_height
         # place_pose.position.z -= grasp_offset_z
         return place_pose 
+
+
+class PARKING_POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
+    """
+    Note that this behaviour will return with
+    :attr:`~py_trees.common.Status.SUCCESS`. It will also send a clearing
+    command to the robot if it is cancelled or interrupted by a higher
+    priority behaviour.
+    """
+
+    def __init__(self, name, object_dict=None):
+        super(PARKING_POSE_ESTIMATOR, self).__init__(name=name)
+
+        self.object_dict = object_dict
+        self.sent_goal   = False
+        
+        self._pose_srv_channel = '/get_object_pose'
+        self._parking_pose_srv_channel = '/get_object_parking_pose'
+        
+        self._world_frame   = rospy.get_param("/world_frame", None)
+        self.torso_offset_x  = rospy.get_param("torso_offset_x", -0.40)
+        self.approaching_offset_x   = rospy.get_param("approaching_offset_x", -0.50)
+        
+    def setup(self, timeout):
+        self.feedback_message = "{}: setup".format(self.name)
+        ## rospy.wait_for_service("remove_wm_object")
+        ## self.cmd_req = rospy.ServiceProxy("remove_wm_object", String_None)
+
+        rospy.wait_for_service(self._pose_srv_channel)
+        self.pose_srv_req = rospy.ServiceProxy(self._pose_srv_channel, String_Pose)
+
+        rospy.wait_for_service(self._parking_pose_srv_channel)
+        self.parking_pose_srv_req = rospy.ServiceProxy(self._parking_pose_srv_channel, String_Pose)
+
+        # get odom 2 base
+        self.listener = tf.TransformListener()
+        
+        self.feedback_message = "{}: finished setting up".format(self.name)
+        return True
+
+    def initialise(self):
+        self.feedback_message = "Initialise"
+        self.logger.debug("{0}.initialise()".format(self.__class__.__name__))
+        self.sent_goal = False
+
+        self.blackboard = py_trees.Blackboard()
+        self.blackboard.set(self.name +'/near_parking_pose', Pose())
+        # self.blackboard.set(self.name +'/aligned_parking_pose', Pose())
+        self.blackboard.set(self.name +'/parking_pose', Pose())
+        
+
+    def update(self):
+        self.logger.debug("%s.update()" % self.__class__.__name__)
+
+        if not self.sent_goal:
+
+            # Request the top surface pose of an object to WM
+            obj = self.object_dict['destination']
+            try:
+                parking_pose = self.parking_pose_srv_req(obj).pose
+            except rospy.ServiceException as e:
+                self.feedback_message = "Parking Pose Srv Error"
+                print("Pose Service is not available: %s"%e)
+                return py_trees.common.Status.FAILURE
+
+            offset          = PyKDL.Frame(PyKDL.Rotation.Identity(),
+                                          PyKDL.Vector(self.torso_offset_x, 0, 0))
+            parking_pose  = misc.pose2KDLframe(parking_pose) * offset
+            offset          = PyKDL.Frame(PyKDL.Rotation.Identity(),
+                                          PyKDL.Vector(self.approaching_offset_x, 0, 0))
+            near_parking_pose  = parking_pose * offset
+
+            parking_pose = misc.KDLframe2Pose(parking_pose)
+            near_parking_pose = misc.KDLframe2Pose(near_parking_pose)
+            
+        
+            # try:
+            #     obj_base_pose = self.base_pose_srv_req(obj).pose
+            # except rospy.ServiceException as e:
+            #     self.feedback_message = "Pose Srv Error"
+            #     print("Base Pose Service is not available: %s"%e)
+            #     return py_trees.common.Status.FAILURE
+            
+            self.blackboard.set(self.name +'/parking_pose', parking_pose)
+            self.blackboard.set(self.name +'/near_parking_pose', near_parking_pose)
+            # rospy.set_param('obj_grasp_pose', json.dumps(misc.pose2list(obj_pose)))
+            
+            
+            self.sent_goal        = True
+            self.feedback_message = "WorldModel: successful parking pose estimation "
+            return py_trees.common.Status.SUCCESS
+            ## return py_trees.common.Status.RUNNING
+
+        
+        self.feedback_message = "WorldModel: successful parking pose estimation "
+        return py_trees.common.Status.SUCCESS
+            
+    
+    def terminate(self, new_status):
+        return
+
+

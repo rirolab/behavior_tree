@@ -13,7 +13,7 @@ import std_msgs.msg as std_msgs
 from complex_action_client import misc
 
 #sys.path.insert(0,'..')
-from behavior_tree.subtrees import MoveJoint, MovePose, Gripper, Stop, WorldModel
+from behavior_tree.subtrees import MoveJoint, MovePose, MoveBase, Gripper, Stop, WorldModel
 
 
 ##############################################################################
@@ -45,6 +45,7 @@ class Move(object):
         self.blackboard.gripper_open_force = rospy.get_param("gripper_open_force")
         self.blackboard.gripper_close_force = rospy.get_param("gripper_close_force")
         self.blackboard.init_config = eval(rospy.get_param("init_config", [0, -np.pi/2., np.pi/2., -np.pi/2., -np.pi/2., np.pi/4.]))
+        self.blackboard.drive_config = [np.pi/2, -2.4, 2.4, -np.pi/2., -np.pi/2., 0]
 
         ## self.object      = None
         ## self.destination = None
@@ -80,7 +81,7 @@ class Move(object):
         else:
             grounding = json.loads(msg.data)['params']
             for i in range( len(list(grounding.keys())) ):
-                if grounding[str(i+1)]['primitive_action'] in ['arch']:
+                if grounding[str(i+1)]['primitive_action'] in ['delivery']:
                     self.goal = grounding #[str(i+1)] )
                     break
                 
@@ -113,103 +114,66 @@ class Move(object):
            :class:`~py_trees.behaviour.Behaviour`: subtree root
         """
         # beahviors
-        root = py_trees.composites.Sequence(name="Arch")
+        root = py_trees.composites.Sequence(name="Delivery")
         blackboard = py_trees.blackboard.Blackboard()
         
-        if goal[idx]["primitive_action"] in ['arch']:
-            # obj         = goal[idx]['object']
-            # destination = goal[idx]['destination']
-            col1        = goal[idx]['col1']
-            col2        = goal[idx]['col2']
-            beam        = goal[idx]['beam']
-            
+        if goal[idx]["primitive_action"] in ['delivery']:
+            obj         = goal[idx]['object']
+            source      = goal[idx]['source']
+            destination = goal[idx]['destination']
         else:
             return None
 
-        # TODO
-        
-        # ----------------- Arch Construction Task ----------------        
-        s_init3 = MoveJoint.MOVEJ(name="Init", controller_ns=controller_ns,
+        # ----------------- Move Task ----------------        
+        s_init_pose = MoveJoint.MOVEJ(name="Init", controller_ns=controller_ns,
                                   action_goal=blackboard.init_config)
-        # ----------------- Pick Column ---------------------
-        pose_est1 = WorldModel.POSE_ESTIMATOR(name="Plan"+idx,
-                                              object_dict = {'target': col1,
-                                                             'destination':col2,
-                                                             }, 
-                                              place_aside=True,
-                                              )
-        s_move10 = MovePose.MOVEPROOT(name="Top1",
+        s_drive_pose = MoveJoint.MOVEJ(name="Drive", controller_ns=controller_ns,
+                                  action_goal=blackboard.drive_config)
+
+        # ----------------- Bring ---------------------
+        pose_est10 = WorldModel.PARKING_POSE_ESTIMATOR(name="Plan"+idx,
+                                              object_dict = {'destination': source})
+        s_drive10 = MoveBase.MOVEB(name="Bring",
                                       controller_ns=controller_ns,
-                                      action_goal={'pose': "Plan"+idx+"/grasp_top_pose"})
-        s_move11 = MovePose.MOVEP(name="Top2", controller_ns=controller_ns,
-                                 action_goal={'pose': "Plan"+idx+"/grasp_top_pose"})
-        s_move12 = Gripper.GOTO(name="Open", controller_ns=controller_ns,
-                               action_goal=blackboard.gripper_open_pos,
-                               force=blackboard.gripper_open_force)        
-        s_move13 = MovePose.MOVEP(name="Approach", controller_ns=controller_ns,
-                                 action_goal={'pose': "Plan"+idx+"/grasp_pose"})
-        s_move14 = Gripper.GOTO(name="Close", controller_ns=controller_ns,
-                               action_goal=blackboard.gripper_close_pos,
-                               force=blackboard.gripper_close_force)        
-        s_move15 = MovePose.MOVEP(name="Top", controller_ns=controller_ns,
-                                 action_goal={'pose': "Plan"+idx+"/grasp_top_pose"})
+                                      action_goal={'pose': "Plan"+idx+"/parking_pose"})
+        bring = py_trees.composites.Sequence(name="Bring")
+        bring.add_children([s_drive_pose, pose_est10, s_drive10])
 
-        archPickCol = py_trees.composites.Sequence(name="ArchPickCol")
-        archPickCol.add_children([pose_est1, s_move10, s_move11, s_move12, s_move13, s_move14, s_move15])
-
-
-        # ----------------- Place Column---------------------
-        # pose_est2 = WorldModel.POSE_ESTIMATOR(name="Plan"+idx,
-        #                                       object_dict = {'target': obj,
-        #                                                      'destination': destination})
+        # ----------------- Pick ---------------------
+        pose_est20 = WorldModel.POSE_ESTIMATOR(name="Plan"+idx,
+                                              object_dict = {'target': obj})
         s_move20 = MovePose.MOVEPROOT(name="Top1",
                                       controller_ns=controller_ns,
-                                      action_goal={'pose': "Plan"+idx+"/place_top_pose"})
-        s_move21 = MovePose.MOVEP(name="Top2", controller_ns=controller_ns,
-                                 action_goal={'pose': "Plan"+idx+"/place_top_pose"})
-        s_move22 = MovePose.MOVEP(name="Approach", controller_ns=controller_ns,
-                                 action_goal={'pose': "Plan"+idx+"/place_pose"})
-        s_move23 = Gripper.GOTO(name="Open", controller_ns=controller_ns,
-                                action_goal=blackboard.gripper_open_pos,
-                                force=blackboard.gripper_open_force)        
-        s_move24 = MovePose.MOVEP(name="Top", controller_ns=controller_ns,
-                                 action_goal={'pose': "Plan"+idx+"/place_top_pose"})
-        
-        # place.add_children([pose_est2, s_move20, s_move21, s_move22, s_move23, s_move24, s_init3])
-        archPlaceCol = py_trees.composites.Sequence(name="ArchPlaceCol")
-        archPlaceCol.add_children([s_move20, s_move21, s_move22, s_move23, s_move24, s_init3])
-        
-        
-        # ----------------- Pick Beam ---------------------
-        pose_est3 = WorldModel.POSE_ESTIMATOR(name="Plan"+idx,
-                                              object_dict = {'target': beam,
-                                                             'destination':[col1, col2],
-                                                             }
-                                              )
-        s_move30 = MovePose.MOVEPROOT(name="Top1",
-                                      controller_ns=controller_ns,
                                       action_goal={'pose': "Plan"+idx+"/grasp_top_pose"})
-        s_move31 = MovePose.MOVEP(name="Top2", controller_ns=controller_ns,
+        s_move21 = MovePose.MOVEP(name="Top2", controller_ns=controller_ns,
                                  action_goal={'pose': "Plan"+idx+"/grasp_top_pose"})
-        s_move32 = Gripper.GOTO(name="Open", controller_ns=controller_ns,
+        s_move22 = Gripper.GOTO(name="Open", controller_ns=controller_ns,
                                action_goal=blackboard.gripper_open_pos,
                                force=blackboard.gripper_open_force)        
-        s_move33 = MovePose.MOVEP(name="Approach", controller_ns=controller_ns,
+        s_move23 = MovePose.MOVEP(name="Approach", controller_ns=controller_ns,
                                  action_goal={'pose': "Plan"+idx+"/grasp_pose"})
-        s_move34 = Gripper.GOTO(name="Close", controller_ns=controller_ns,
+        s_move24 = Gripper.GOTO(name="Close", controller_ns=controller_ns,
                                action_goal=blackboard.gripper_close_pos,
                                force=blackboard.gripper_close_force)        
-        s_move35 = MovePose.MOVEP(name="Top", controller_ns=controller_ns,
+        s_move25 = MovePose.MOVEP(name="Top", controller_ns=controller_ns,
                                  action_goal={'pose': "Plan"+idx+"/grasp_top_pose"})
 
-        archPickBeam = py_trees.composites.Sequence(name="ArchPickBeam")
-        archPickBeam.add_children([pose_est3, s_move30, s_move31, s_move32, s_move33, s_move34, s_move35])
+        pick = py_trees.composites.Sequence(name="Pick")
+        pick.add_children([pose_est20, s_move20, s_move21, s_move22, s_move23, s_move24, s_move25])
 
 
-        # ----------------- Place Beam---------------------
-        # pose_est2 = WorldModel.POSE_ESTIMATOR(name="Plan"+idx,
-        #                                       object_dict = {'target': obj,
-        #                                                      'destination': destination})
+        # ----------------- Delivery ---------------------
+        pose_est30 = WorldModel.PARKING_POSE_ESTIMATOR(name="Plan"+idx,
+                                              object_dict = {'destination': source})
+        s_drive30 = MoveBase.MOVEB(name="Deliver",
+                                      controller_ns=controller_ns,
+                                      action_goal={'pose': "Plan"+idx+"/parking_pose"})
+        deliver = py_trees.composites.Sequence(name="Deliver")
+        deliver.add_children([s_drive_pose, pose_est30, s_drive30])
+
+        # ----------------- Place ---------------------
+        pose_est4 = WorldModel.POSE_ESTIMATOR(name="Plan"+idx,
+                                              object_dict = {'target': destination})
         s_move40 = MovePose.MOVEPROOT(name="Top1",
                                       controller_ns=controller_ns,
                                       action_goal={'pose': "Plan"+idx+"/place_top_pose"})
@@ -223,13 +187,11 @@ class Move(object):
         s_move44 = MovePose.MOVEP(name="Top", controller_ns=controller_ns,
                                  action_goal={'pose': "Plan"+idx+"/place_top_pose"})
         
-        # place.add_children([pose_est2, s_move20, s_move21, s_move22, s_move23, s_move24, s_init3])
-        archPlaceBeam = py_trees.composites.Sequence(name="ArchPlaceBeam")
-        archPlaceBeam.add_children([s_move40, s_move41, s_move42, s_move43, s_move44, s_init3])
+        place = py_trees.composites.Sequence(name="Place")
+        place.add_children([pose_est4, s_move40, s_move41, s_move42, s_move43, s_move44, s_init_pose])
         
-        
-        task = py_trees.composites.Sequence(name="Arch")
-        task.add_children([archPickCol, archPlaceCol, archPickBeam, archPlaceBeam])
+        task = py_trees.composites.Sequence(name="Delivery")
+        task.add_children([bring, pick, deliver, place])
         return task
 
 
