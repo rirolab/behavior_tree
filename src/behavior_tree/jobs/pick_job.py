@@ -133,7 +133,9 @@ class Move(object):
         # ----------------- Pick ---------------------
         pose_est1 = WorldModel.POSE_ESTIMATOR(name="Plan"+idx,
                                               object_dict = {'target': obj})
-        s_move11 = MovePose.MOVEP(name="Top", controller_ns=controller_ns,
+        s_move10 = MovePose.MOVEPROOT(name="Top1", controller_ns=controller_ns,
+                                 action_goal={'pose': "Plan"+idx+"/grasp_top_pose"})
+        s_move11 = MovePose.MOVEP(name="Top2", controller_ns=controller_ns,
                                  action_goal={'pose': "Plan"+idx+"/grasp_top_pose"})
         s_move12 = Gripper.GOTO(name="Open", controller_ns=controller_ns,
                                 action_goal=blackboard.gripper_open_pos,
@@ -147,8 +149,7 @@ class Move(object):
                                  action_goal={'pose': "Plan"+idx+"/grasp_top_pose"})
 
         pick = py_trees.composites.Sequence(name="Pick")
-        pick.add_children([pose_est1, s_init1, s_move11, s_move12, s_move13, s_move14, s_move15, s_init2])
-
+        pick.add_children([pose_est1, s_init1, s_move10, s_move11, s_move12, s_move13, s_move14, s_move15, s_init2])
         return pick
 
     
