@@ -56,10 +56,9 @@ class GOTO(Move.MOVE):
             return py_trees.common.Status.RUNNING
             
         if (self.goal_uuid_des == self.blackboard.goal_id).all() and \
-           self.blackboard.goal_status in [GoalStatus.STATUS_ABORTED,
+           self.blackboard.goal_status in [
                                 GoalStatus.STATUS_UNKNOWN,
-                                GoalStatus.STATUS_CANCELING,
-                                GoalStatus.STATUS_CANCELED]:
+                                ]:
             self.feedback_message = "FAILURE"
             self.logger.debug("%s.update()[%s->%s][%s]" % \
                                   (self.__class__.__name__, \
@@ -69,7 +68,10 @@ class GOTO(Move.MOVE):
             return py_trees.common.Status.FAILURE
 
         if (self.goal_uuid_des == self.blackboard.goal_id).all() and \
-           self.blackboard.goal_status is GoalStatus.STATUS_SUCCEEDED:
+           self.blackboard.goal_status in [GoalStatus.STATUS_ABORTED,
+                                               GoalStatus.STATUS_SUCCEEDED,
+                                               GoalStatus.STATUS_CANCELING,
+                                               GoalStatus.STATUS_CANCELED]:
             self.feedback_message = "SUCCESSFUL"
             self.logger.debug("%s.update()[%s->%s][%s]" % \
                                   (self.__class__.__name__, \
