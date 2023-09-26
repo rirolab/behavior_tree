@@ -1,9 +1,9 @@
 import copy, sys
-import py_trees, py_trees_ros
-import rclpy
 import threading
+import rclpy
 import json
 
+import py_trees, py_trees_ros
 import std_msgs.msg as std_msgs
 
 from . import base_job
@@ -50,7 +50,7 @@ class Move(base_job.BaseJob):
             msg (:class:`~std_msgs.Empty`): incoming goal message
         """
         if self.goal:
-            self._node.get_logger().error("move_job: rejecting new goal, previous still in the pipeline")
+            self._node.get_logger().error("MOVE: rejecting new goal, previous still in the pipeline")
         else:
             grounding = json.loads(msg.data)['params']
             for i in range( len(grounding.keys()) ):
@@ -60,7 +60,7 @@ class Move(base_job.BaseJob):
                 
             
     @staticmethod
-    def create_root(node, action_client, idx="1", goal=std_msgs.Empty(), **kwargs):
+    def create_root(action_client, idx="1", goal=std_msgs.Empty(), **kwargs):
         """
         Create the job subtree based on the incoming goal specification.
 
@@ -71,7 +71,7 @@ class Move(base_job.BaseJob):
            :class:`~py_trees.behaviour.Behaviour`: subtree root
         """
         # beahviors
-        root = py_trees.composites.Sequence(name="Move")
+        root = py_trees.composites.Sequence(name="Move", memory=True)
         blackboard = py_trees.blackboard.Client()
         blackboard.register_key(key="gripper_open_pos", access=py_trees.common.Access.READ)
         blackboard.register_key(key="gripper_close_pos", access=py_trees.common.Access.READ)
@@ -84,11 +84,6 @@ class Move(base_job.BaseJob):
             destination = goal[idx]['destination']
         else:
             return None
-
-        # TODO
-        if destination=='na':
-            destination='place_tray'
-            node.get_logger().info("destination is not assigned, so selected place-tray as a destination")
         
         # ----------------- Move Task ----------------        
         s_init3 = MoveJoint.MOVEJ(name="Init", action_client=action_client,
@@ -96,32 +91,38 @@ class Move(base_job.BaseJob):
 
         # ----------------- Pick ---------------------
         pose_est1 = WorldModel.POSE_ESTIMATOR(name="Plan"+idx,
-                                              object_dict = {'target': obj})
+                                              object_dict = {'target': obj},
+                                              tf_buffer=kwargs['tf_buffer'])
         s_move10 = MovePose.MOVEPROOT(name="Top1",
                                       action_client=action_client,
                                       action_goal={'pose': "Plan"+idx+"/grasp_top_pose"})
-        s_move11 = MovePose.MOVEP(name="Top2", action_client=action_client,
-                                 action_goal={'pose': "Plan"+idx+"/grasp_top_pose"})
-        s_move12 = Gripper.GOTO(name="Open", action_client=action_client,
-                               action_goal=blackboard.gripper_open_pos,
-                               force=blackboard.gripper_open_force)        
-        s_move13 = MovePose.MOVEP(name="Approach", action_client=action_client,
-                                 action_goal={'pose': "Plan"+idx+"/grasp_pose"})
-        s_move14 = Gripper.GOTO(name="Close", action_client=action_client,
-                               action_goal=blackboard.gripper_close_pos,
-                               force=blackboard.gripper_close_force)        
-        s_move15 = MovePose.MOVEP(name="Top", action_client=action_client,
-                                 action_goal={'pose': "Plan"+idx+"/grasp_top_pose"})
+        s_move11 = MovePose.MOVEP(name="Top2",
+                                  action_client=action_client,
+                                  action_goal={'pose': "Plan"+idx+"/grasp_top_pose"})
+        s_move12 = Gripper.GOTO(name="Open",
+                                action_client=action_client,
+                                action_goal=blackboard.gripper_open_pos,
+                                force=blackboard.gripper_open_force)        
+        s_move13 = MovePose.MOVEP(name="Approach",
+                                  action_client=action_client,
+                                  action_goal={'pose': "Plan"+idx+"/grasp_pose"})
+        s_move14 = Gripper.GOTO(name="Close",
+                                action_client=action_client,
+                                action_goal=blackboard.gripper_close_pos,
+                                force=blackboard.gripper_close_force)        
+        s_move15 = MovePose.MOVEP(name="Top",
+                                  action_client=action_client,
+                                  action_goal={'pose': "Plan"+idx+"/grasp_top_pose"})
 
-        pick = py_trees.composites.Sequence(name="MovePick")
+        pick = py_trees.composites.Sequence(name="MovePick", memory=True)
         pick.add_children([pose_est1, s_move10, s_move11, s_move12, s_move13, s_move14, s_move15])
 
 
         # ----------------- Place ---------------------
-        place = py_trees.composites.Sequence(name="MovePlace")
         pose_est2 = WorldModel.POSE_ESTIMATOR(name="Plan"+idx,
                                               object_dict = {'target': obj,
-                                                             'destination': destination})
+                                                             'destination': destination},
+                                              tf_buffer=kwargs['tf_buffer'])
         s_move20 = MovePose.MOVEPROOT(name="Top1",
                                       action_client=action_client,
                                       action_goal={'pose': "Plan"+idx+"/place_top_pose"})
@@ -135,8 +136,10 @@ class Move(base_job.BaseJob):
         s_move24 = MovePose.MOVEP(name="Top", action_client=action_client,
                                  action_goal={'pose': "Plan"+idx+"/place_top_pose"})
         
+        place = py_trees.composites.Sequence(name="MovePlace", memory=True)
         place.add_children([pose_est2, s_move20, s_move21, s_move22, s_move23, s_move24, s_init3])
-        task = py_trees.composites.Sequence(name="Move")
+        
+        task = py_trees.composites.Sequence(name="Move", memory=True)
         task.add_children([pick, place])
         return task
 

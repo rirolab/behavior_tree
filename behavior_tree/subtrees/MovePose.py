@@ -212,6 +212,9 @@ class MOVEPR(Move.MOVE):
                                    action_client=action_client,
                                    action_goal=action_goal)
 
+        self.blackboard.register_key(key=self.action_goal['pose'], \
+                                     access=py_trees.common.Access.READ)
+                                     
         # Enable continuous motion
         self.action_cont = cont
 
@@ -244,16 +247,18 @@ class MOVEPR(Move.MOVE):
                     'qy': self.action_goal['pose'].orientation.y,
                     'qz': self.action_goal['pose'].orientation.z,
                     'qw': self.action_goal['pose'].orientation.w,}                    
-            
+
+            self.goal_uuid_des = np.random.randint(0, 255, size=16,
+                                            dtype=np.uint8)
+                
             cmd_str = json.dumps({'action_type': 'movePoseRelative',
                                   'goal': json.dumps(goal),
                                   'frame': self.action_goal['frame'],
                                   'uuid': self.goal_uuid_des.tolist(),
                                   'timeout': 3.,
-                                  'enable_wait': True})
+                                  'enable_wait': False})
 
-            req = StringGoalStatus.Request(data=cmd_str)
-            
+            req = StringGoalStatus.Request(data=cmd_str)            
             self.future = self.cmd_req.call_async(req)
             
             self.sent_goal = True
@@ -334,14 +339,16 @@ class MOVEPROOT(Move.MOVE):
                         'qy': ps.orientation.y,
                         'qz': ps.orientation.z,
                         'qw': ps.orientation.w,}
-            
+
+            self.goal_uuid_des = np.random.randint(0, 255, size=16,
+                                            dtype=np.uint8)
+                    
             cmd_str = json.dumps({'action_type': 'movePoseRoot',
                                   'goal': json.dumps(goal),
                                   'uuid': self.goal_uuid_des.tolist(),
                                   'timeout': 3.,
-                                  'enable_wait': True})
-            req = StringGoalStatus.Request(data=cmd_str)
-            
+                                  'enable_wait': False})
+            req = StringGoalStatus.Request(data=cmd_str)            
             self.future = self.cmd_req.call_async(req)
             
             self.sent_goal = True
