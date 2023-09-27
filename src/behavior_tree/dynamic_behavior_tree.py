@@ -374,7 +374,8 @@ if __name__ == '__main__':
                                                  'jobs.pose_check_job.Move',
                                                  'jobs.arch_job.Move',
                                                  'jobs.delivery_job.Move',
-                                                 'jobs.drive_job.Move',],
+                                                 'jobs.drive_job.Move',
+                                                 'jobs.reach_job.Move',],
                                                  rec_topic_list=topic_list)
     rospy.on_shutdown(splintered_reality.shutdown)
     if not splintered_reality.setup():

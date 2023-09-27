@@ -12,8 +12,8 @@ import tf
 import std_msgs.msg as std_msgs
 from complex_action_client import misc
 
-#sys.path.insert(0,'..')
-from behavior_tree.subtrees import MoveJoint, MovePose, MoveBase, Gripper, Stop, WorldModel
+sys.path.insert(0,'..')
+from subtrees import MoveJoint, MovePose, Gripper, Stop, WorldModel
 
 
 ##############################################################################
@@ -38,16 +38,14 @@ class Move(object):
         self._subscriber = rospy.Subscriber(self._grounding_channel, std_msgs.String, self.incoming)
         self._goal = None
         self._lock = threading.Lock()
-        
+
         self.blackboard = py_trees.blackboard.Blackboard()
+        self.blackboard.gripper_open_pos = rospy.get_param("gripper_open_pos")
+        self.blackboard.gripper_close_pos = rospy.get_param("gripper_close_pos")
+        self.blackboard.gripper_open_force = rospy.get_param("gripper_open_force")
+        self.blackboard.gripper_close_force = rospy.get_param("gripper_close_force")
         self.blackboard.init_config = eval(rospy.get_param("init_config", [0, -np.pi/2., np.pi/2., -np.pi/2., -np.pi/2., np.pi/4.]))
-        self.blackboard.drive_config = [np.pi/2, -2.9, 2.7, -2., -np.pi/2., 0]
-        self.blackboard.detect_config = [np.pi/2, -2.4, 1.3, -np.pi/2, -np.pi/2, 0.]
-
-
-        ## self.object      = None
-        ## self.destination = None
-
+        
     @property
     def goal(self):
         """
@@ -75,13 +73,29 @@ class Move(object):
             msg (:class:`~std_msgs.Empty`): incoming goal message
         """
         if self.goal:
-            rospy.logerr("(drive) MOVE: rejecting new goal, previous still in the pipeline")
+            rospy.logerr("MOVE: rejecting new goal, previous still in the pipeline")
         else:
             grounding = json.loads(msg.data)['params']
-            for i in range( len(list(grounding.keys())) ):
-                if grounding[str(i+1)]['primitive_action'] in ['drive']:
+            for i in range( len(grounding.keys()) ):
+                if grounding[str(i+1)]['primitive_action'] in ['reach']:
                     self.goal = grounding #[str(i+1)] )
                     break
+                
+            
+    ## def create_report_string(self, subtree_root):
+    ##     """
+    ##     Introspect the subtree root to determine an appropriate human readable status report string.
+
+    ##     Args:
+    ##         subtree_root (:class:`~py_trees.behaviour.Behaviour`): introspect the subtree
+
+    ##     Returns:
+    ##         :obj:`str`: human readable substring
+    ##     """
+    ##     if subtree_root.tip().has_parent_with_name("Cancelling?"):
+    ##         return "cancelling"
+    ##     else:
+    ##         return "scanning"
 
 
     @staticmethod
@@ -96,33 +110,36 @@ class Move(object):
            :class:`~py_trees.behaviour.Behaviour`: subtree root
         """
         # beahviors
-        root = py_trees.composites.Sequence(name="Drive")
+        root = py_trees.composites.Sequence(name="Reach")
         blackboard = py_trees.blackboard.Blackboard()
-        
-        if goal[idx]["primitive_action"] in ['drive']:
-            destination = goal[idx]['destination']
+
+        if goal[idx]["primitive_action"] in ['reach']:
+            if 'destination' in goal[idx].keys():
+                destination = misc.list2Pose(goal[idx]['destination'])
+            else:
+                rospy.logerr("Reach: No destination to reach")
+                sys.exit()                
         else:
             return None
-
-        # ----------------- Move Task ----------------        
-        s_drive_pose = MoveJoint.MOVEJ(name="Init", controller_ns=controller_ns,
-                                  action_goal=blackboard.drive_config)
-        # ----------------- Bring ---------------------
-        pose_est10 = WorldModel.PARKING_POSE_ESTIMATOR(name="Plan"+idx,
-                                              object_dict = {'destination': destination})
-        s_drive10 = MoveBase.MOVEB(name="Navigate", 
-                                   action_goal={'pose': "Plan"+idx+"/near_parking_pose"})
-        s_drive11 = MoveBase.ALIGNB(name="Align", 
-                                   action_goal={'pose': "Plan"+idx+"/near_parking_pose"})
         
-        # s_drive12 = py_trees.composites.Parallel(name="Approach")
-        s_drive121 = MoveJoint.MOVEJ(name="Detection", controller_ns=controller_ns,
-                                  action_goal=blackboard.detect_config)
-        s_drive122 = MoveBase.TOUCHB(name="Nav")
-        # s_drive12.add_children([s_drive121, s_drive122])
+        # ------------ Compute -------------------------
+        # s_init1 = MoveJoint.MOVEJ(name="Init", controller_ns=controller_ns,
+        #                           action_goal=blackboard.init_config)
+        # s_move10 = MovePose.MOVEPROOT(name="Reach1", controller_ns=controller_ns,
+        #                          action_goal={'pose': destination})
+        s_move11 = MovePose.MOVEP(name="Reach2", controller_ns=controller_ns,
+                                 action_goal={'pose': destination})
+
+        # move_straight = misc.list2Pose([0.2, 0, 0, 0, 0, 0])
+        # s_move12 = MovePose.MOVEPR(name="Move", controller_ns=controller_ns,
+        #                          action_goal={'pose': move_straight, 'frame': rospy.get_param("arm_base_frame", 'arm_base_link')})
+        s_gripper_close = Gripper.GOTO(name="Close", controller_ns=controller_ns,
+                                action_goal=blackboard.gripper_close_pos,
+                                force=blackboard.gripper_close_force)   
+        reach = py_trees.composites.Sequence(name="Reach")
+        # reach.add_children([s_init1, s_move10, s_move11, s_move12, s_gripper_close])
+        reach.add_children([s_move11, s_gripper_close])
         
-        root.add_children([s_drive_pose, pose_est10, s_drive10, s_drive11, s_drive121, s_drive122])
-        # task = py_trees.composites.Sequence(name="Delivery")
-        return root
+        return reach
 
-
+    

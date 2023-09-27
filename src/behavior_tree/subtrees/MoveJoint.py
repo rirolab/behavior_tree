@@ -46,13 +46,15 @@ class MOVEJ(py_trees.behaviour.Behaviour):
 
     def update(self):
         self.logger.debug("%s.update()" % self.__class__.__name__)
-
+        print("HERE 1 @@@")
         if self.cmd_req is None:
+            print("HERE 2 @@@")
             self.feedback_message = \
               "no action client, did you call setup() on your tree?"
             return py_trees.Status.FAILURE
 
         if not self.sent_goal:
+            print("HERE 3 @@@")
             goal = {}
             for i, ang in enumerate(self.action_goal):
                 goal[str(i)] = ang
@@ -63,6 +65,7 @@ class MOVEJ(py_trees.behaviour.Behaviour):
                                   'no_wait': True})
             ret = self.cmd_req(cmd_str)
             if ret.data==GoalStatus.REJECTED or ret.data==GoalStatus.ABORTED:
+                print("HERE 4 @@@")
                 self.feedback_message = \
                   "failed to execute"
                 self.logger.debug("%s.update()[%s]" % (self.__class__.__name__, self.feedback_message))
@@ -81,15 +84,18 @@ class MOVEJ(py_trees.behaviour.Behaviour):
                       GoalStatus.PREEMPTED,
                       GoalStatus.REJECTED] and \
                       ret != FollowJointTrajectoryResult.SUCCESSFUL:
+            print(f"HERE 5 @@@, state: {state}, ret: {ret}")
             self.feedback_message = "FAILURE"
             self.logger.debug("%s.update()[%s->%s][%s]" % (self.__class__.__name__, self.status, py_trees.common.Status.FAILURE, self.feedback_message))
             return py_trees.common.Status.FAILURE
 
         if ret == FollowJointTrajectoryResult.SUCCESSFUL:
+            print("HERE 6 @@@")
             self.feedback_message = "SUCCESSFUL"
             self.logger.debug("%s.update()[%s->%s][%s]" % (self.__class__.__name__, self.status, py_trees.common.Status.SUCCESS, self.feedback_message))
             return py_trees.common.Status.SUCCESS
         else:
+            print("HERE 7 @@@")
             return py_trees.common.Status.RUNNING
                 
 
