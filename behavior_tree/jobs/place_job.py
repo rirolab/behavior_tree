@@ -117,7 +117,8 @@ class Move(base_job.BaseJob):
         s_move23 = Gripper.GOTO(name="Open",\
                                 action_client=action_client,\
                                 action_goal=blackboard.gripper_open_pos,
-                                force=blackboard.gripper_open_force)        
+                                force=blackboard.gripper_open_force,
+                                timeout=1)        
         s_move24 = MovePose.MOVEP(name="Top",\
                                   action_client=action_client,\
                                   action_goal={'pose': "Plan"+idx+"/place_top_pose"})

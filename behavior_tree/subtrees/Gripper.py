@@ -18,13 +18,14 @@ class GOTO(Move.MOVE):
     priority behaviour.
     """
     def __init__(self, name, action_client, action_goal=None,
-                     force=1., check_contact=False):
+                     force=1., check_contact=False, timeout=5):
         super(GOTO, self).__init__(name=name,
                                    action_client=action_client,
                                    action_goal=action_goal)
 
         self.force         = force
         self.check_contact = check_contact
+        self.timeout       = timeout
 
 
     def update(self):
@@ -43,7 +44,7 @@ class GOTO(Move.MOVE):
                                   'uuid': self.goal_uuid_des.tolist(),
                                   'force': self.force,
                                   'check_contact': self.check_contact,
-                                  'timeout': 5,
+                                  'timeout': self.timeout,
                                   'enable_wait': True })
             req = StringGoalStatus.Request(data=cmd_str)
             self.future = self.cmd_req.call_async(req)

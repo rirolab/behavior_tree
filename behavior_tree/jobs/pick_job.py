@@ -109,14 +109,16 @@ class Move(base_job.BaseJob):
         s_move12 = Gripper.GOTO(name="Open",
                                 action_client=action_client,\
                                 action_goal=blackboard.gripper_open_pos,\
-                                force=blackboard.gripper_open_force)        
+                                force=blackboard.gripper_open_force,\
+                                timeout=1)        
         s_move13 = MovePose.MOVEP(name="Approach",\
                                   action_client=action_client,\
                                   action_goal={'pose': "Plan"+idx+"/grasp_pose"})
         s_move14 = Gripper.GOTO(name="Close",\
                                 action_client=action_client,\
                                 action_goal=blackboard.gripper_close_pos,\
-                                force=blackboard.gripper_close_force)        
+                                force=blackboard.gripper_close_force,\
+                                timeout=5)        
         s_move15 = MovePose.MOVEP(name="Top",\
                                   action_client=action_client,\
                                   action_goal={'pose': "Plan"+idx+"/grasp_top_pose"})
