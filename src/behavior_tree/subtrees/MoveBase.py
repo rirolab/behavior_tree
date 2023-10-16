@@ -247,7 +247,7 @@ class ALIGNB(py_trees.behaviour.Behaviour):
     def setup(self, timeout):
         self.listener = tf.TransformListener()
         self.feedback_message = "{}: setup".format(self.name)
-        self.cmd_vel_pub = rospy.Publisher("cmd_vel", geometry_msgs.msg.Twist, queue_size=1)
+        self.cmd_vel_pub = rospy.Publisher("/cmd_vel", geometry_msgs.msg.Twist, queue_size=1)
         # rospy.wait_for_service("move_base_client/command")
         # self.cmd_req = rospy.ServiceProxy("move_base_client/command", String_Int)
         # rospy.wait_for_service("move_base_client/status")
@@ -323,7 +323,7 @@ class TOUCHB(py_trees.behaviour.Behaviour):
 
     def setup(self, timeout):
         self.scan_sub = rospy.Subscriber(self.scan_topic, LaserScan, self._laserscan_cb)
-        self.cmd_vel_pub = rospy.Publisher("cmd_vel", geometry_msgs.msg.Twist, queue_size=1)
+        self.cmd_vel_pub = rospy.Publisher("/cmd_vel", geometry_msgs.msg.Twist, queue_size=1)
         self.feedback_message = "{}: setup".format(self.name)
         return True
 
@@ -340,9 +340,9 @@ class TOUCHB(py_trees.behaviour.Behaviour):
         self.logger.debug("%s.update()" % self.__class__.__name__)
         with self._lock:
             scan = deepcopy(self.scan)
-        if scan is None:
-            self.feedback_message = "(Touch Base) scan topic not subscribed."
-            return py_trees.common.Status.RUNNING
+        # if scan is None:
+        #     self.feedback_message = "(Touch Base) scan topic not subscribed."
+        #     return py_trees.common.Status.RUNNING
         
         cmd_vel = geometry_msgs.msg.Twist()
         cmd_vel.linear.x = cmd_vel.linear.y = cmd_vel.linear.z = 0.0
