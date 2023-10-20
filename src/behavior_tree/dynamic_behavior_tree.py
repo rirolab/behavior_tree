@@ -298,6 +298,8 @@ class SplinteredReality(object):
                         
             if job.status == py_trees.common.Status.SUCCESS or job.status == py_trees.common.Status.FAILURE or job.status == py_trees.common.Status.INVALID:
                 rospy.loginfo("{0}: finished [{1}]".format(job.name, job.status))
+                print("{0}: finished [{1}]".format(job.name, job.status))
+                
                 tree.prune_subtree(job.id)
                 self.current_job = None
                 
@@ -361,19 +363,20 @@ if __name__ == '__main__':
     # TODO: import a list of jobs from a json file or ROS parameter server.
     # Keep the default job on the top
     rospy.init_node("tree")   
-    splintered_reality = SplinteredReality(jobs=['jobs.pick_job.Move',
+    splintered_reality = SplinteredReality(jobs=[
+                                                 'jobs.pick_job.Move',
                                                  'jobs.place_job.Move',
                                                  'jobs.move_job.Move',
-                                                 'jobs.handover_job.Move',
-                                                 'jobs.jog_job.Move',
+                                                #  'jobs.handover_job.Move',
+                                                #  'jobs.jog_job.Move',
                                                  'jobs.gripper_job.Move',
-                                                 'jobs.slide_job.Move',
-                                                 'jobs.attach_job.Move',
-                                                 'jobs.touch_job.Move',
-                                                 'jobs.pull_job.Move',
-                                                 'jobs.pose_check_job.Move',
-                                                 'jobs.arch_job.Move',
-                                                 'jobs.delivery_job.Move',
+                                                #  'jobs.slide_job.Move',
+                                                #  'jobs.attach_job.Move',
+                                                #  'jobs.touch_job.Move',
+                                                #  'jobs.pull_job.Move',
+                                                #  'jobs.pose_check_job.Move',
+                                                #  'jobs.arch_job.Move',
+                                                #  'jobs.delivery_job.Move',
                                                  'jobs.drive_job.Move',],
                                                  rec_topic_list=topic_list)
     rospy.on_shutdown(splintered_reality.shutdown)

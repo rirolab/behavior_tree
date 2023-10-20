@@ -75,8 +75,8 @@ class GOTO(py_trees.behaviour.Behaviour):
         ##     self.feedback_message = "FAILURE"
         ##     return py_trees.common.Status.FAILURE
 
-        if ret == GoalStatus.SUCCEEDED or ret == GoalStatus.PREEMPTED :
-            self.feedback_message = "SUCCESSFUL"
+        if ret == GoalStatus.SUCCEEDED or ret == GoalStatus.PREEMPTED or GoalStatus.RECALLED: # 2,3,8
+            self.feedback_message = "GRIPPER SUCCESSFUL"
             return py_trees.common.Status.SUCCESS
         else:
             return py_trees.common.Status.RUNNING
@@ -86,5 +86,6 @@ class GOTO(py_trees.behaviour.Behaviour):
         msg = self.status_req()
         d = json.loads(msg.data)
         if d['gripper_state'] == GoalStatus.ACTIVE:
+            self.feedback_message = "GRIPPER CANCEL GOAL"
             self.cmd_req( json.dumps({'action_type': 'cancel_goal'}) )        
         return

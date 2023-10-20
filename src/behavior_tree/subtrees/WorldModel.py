@@ -149,18 +149,17 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         self.logger.debug("%s.update()" % self.__class__.__name__)
 
         if not self.sent_goal:
-
             # Request the top surface pose of an object to WM
             obj = self.object_dict['target']
             try:
-                obj_pose = self.grasp_pose_srv_req(obj).pose
+                obj_grasp_pose = self.grasp_pose_srv_req(obj).pose # obj grasping pose w.r.t. world frame
             except rospy.ServiceException as e:
                 self.feedback_message = "Pose Srv Error"
                 print("Pose Service is not available: %s"%e)
                 return py_trees.common.Status.FAILURE
             
             try:
-                obj_base_pose = self.base_pose_srv_req(obj).pose
+                obj_base_pose = self.base_pose_srv_req(obj).pose # object base pose w.r.t. world frame (pose attached on object bottom surface)
             except rospy.ServiceException as e:
                 self.feedback_message = "Pose Srv Error"
                 print("Base Pose Service is not available: %s"%e)
@@ -192,10 +191,11 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                 PyKDL.Vector(pos[0], pos[1], pos[2]))
 
             # ------------ Compute -------------------------
-            grasp_pose =\
-            POSE_ESTIMATOR.get_grasp_pose(obj_pose, \
+            grasp_pose = \
+            POSE_ESTIMATOR.get_grasp_pose(obj_grasp_pose, \
                                           self.base2arm_baselink, \
-                                          self.grasp_offset_z)
+                                          self.grasp_offset_z) # object grasp pose w.r.t. arm base link
+                                                               # Considering top_offset_z value, normally set this as object top surface pose.
             grasp_top_pose  = copy.deepcopy(grasp_pose)
         
             offset          = PyKDL.Frame(PyKDL.Rotation.Identity(),
@@ -210,7 +210,7 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
             rospy.set_param('grasp_pose', json.dumps(misc.pose2list(grasp_pose)))
             rospy.set_param('grasp_top_pose', json.dumps(misc.pose2list(grasp_top_pose)))
             rospy.set_param('obj_base_pose', json.dumps(misc.pose2list(obj_base_pose)))
-            rospy.set_param('obj_grasp_pose', json.dumps(misc.pose2list(obj_pose)))
+            rospy.set_param('obj_grasp_pose', json.dumps(misc.pose2list(obj_grasp_pose)))
             
             
             # Place pose
@@ -220,7 +220,7 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                 destination = self.object_dict['destination']
                 try:
                     # Find a location on the destination top surface
-                    if isinstance(destination, list):
+                    if isinstance(destination, list): # For Arch Construction
                         dst_pose1 = misc.pose2array(self.pose_srv_req(destination[0]).pose)
                         dst_pose2 = misc.pose2array(self.pose_srv_req(destination[1]).pose)
                         dst_quat = (dst_pose1 + dst_pose2) / 2
@@ -240,7 +240,6 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                     self.logger.debug("%s.update()[%s]" % (self.__class__.__name__, self.feedback_message))
                     return py_trees.common.Status.FAILURE
 
-                print("(in WorldModel 1) ", dst_pose)
                 if 'destination_offset' in list(self.object_dict.keys()):
                     offset = self.object_dict['destination_offset']
                     offset_frame = PyKDL.Frame(PyKDL.Rotation.RotZ(offset[3]),
@@ -252,12 +251,9 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                     dst_pose = misc.KDLframe2Pose(dst_frame)
                 place_pose = POSE_ESTIMATOR.get_place_pose(dst_pose, \
                                                            self.base2arm_baselink, \
-                                                           grasp_pose, \
-                                                           obj_height, \
-                                                           obj_pose, obj_base_pose, \
+                                                           obj_grasp_pose, obj_base_pose, \
                                                            self.grasp_offset_z)
-                print("(in WorldModel) ", place_pose)
-
+                
                 ## from IPython import embed; embed(); sys.exit()
                 
                 # the sliding motion 
@@ -325,8 +321,8 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         return grasp_pose
 
     @staticmethod
-    def get_place_pose(destination_pose, base2arm_baselink, grasp_pose, \
-                       obj_height, obj_grip_pose, obj_base_pose, grasp_offset_z):
+    def get_place_pose(destination_pose, base2arm_baselink, \
+                       obj_grip_pose, obj_base_pose, grasp_offset_z):
         """ return the place pose """
         base2obj         = misc.pose2KDLframe(destination_pose)
         arm_baselink2obj = base2arm_baselink.Inverse() * base2obj

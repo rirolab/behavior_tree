@@ -41,7 +41,7 @@ class Move(object):
         
         self.blackboard = py_trees.blackboard.Blackboard()
         self.blackboard.init_config = eval(rospy.get_param("init_config", str([0, -np.pi/2., np.pi/2., -np.pi/2., -np.pi/2., np.pi/4.])))
-        self.blackboard.drive_config = [np.pi/2, -2.4, 2.4, -np.pi/2., -np.pi/2., 0]
+        self.blackboard.drive_config = eval(rospy.get_param("drive_config", str([np.pi/2, -2.4, 2.4, -np.pi/2., -np.pi/2., 0])))
 
         ## self.object      = None
         ## self.destination = None
