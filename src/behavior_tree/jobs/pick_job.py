@@ -44,7 +44,7 @@ class Move(object):
         self.blackboard.gripper_close_pos = rospy.get_param("gripper_close_pos")
         self.blackboard.gripper_open_force = rospy.get_param("gripper_open_force")
         self.blackboard.gripper_close_force = rospy.get_param("gripper_close_force")
-        self.blackboard.init_config = eval(rospy.get_param("init_config", [0, -np.pi/2., np.pi/2., -np.pi/2., -np.pi/2., np.pi/4.]))
+        self.blackboard.init_config = eval(rospy.get_param("init_config", "[0, -np.pi/2., np.pi/2., -np.pi/2., -np.pi/2., np.pi/4.]"))
         
     @property
     def goal(self):

@@ -328,8 +328,8 @@ class MOVEPR(py_trees.behaviour.Behaviour):
             self.cmd_req( json.dumps({'action_type': 'cancel_goal'}) )
         return
 
-
 class MOVEPROOT(py_trees.behaviour.Behaviour):
+
     """
     Note that this behaviour will return with
     :attr:`~py_trees.common.Status.SUCCESS`. It will also send a clearing
@@ -390,10 +390,10 @@ class MOVEPROOT(py_trees.behaviour.Behaviour):
                         'qz': ps.orientation.z,
                         'qw': ps.orientation.w,}
             
-            cmd_str = json.dumps({'action_type': 'movePoseRoot',
-                                  'goal': json.dumps(goal),
-                                  'timeout': 3.,
-                                  'no_wait': True})
+            cmd_str = json.dumps({'action_type' : 'movePoseRoot',
+                                  'goal'        : json.dumps(goal),
+                                  'timeout'     : 3.,
+                                  'no_wait'     : True})
             ret = self.cmd_req(cmd_str)
             if ret.data==GoalStatus.REJECTED or ret.data==GoalStatus.ABORTED:
                 self.feedback_message = "failed to execute"
