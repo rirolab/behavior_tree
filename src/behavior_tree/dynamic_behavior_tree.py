@@ -361,7 +361,8 @@ if __name__ == '__main__':
     # TODO: import a list of jobs from a json file or ROS parameter server.
     # Keep the default job on the top
     rospy.init_node("tree")   
-    splintered_reality = SplinteredReality(jobs=['jobs.pick_job.Move',
+    splintered_reality = SplinteredReality(jobs=[
+                                                'jobs.pick_job.Move',
                                                  'jobs.place_job.Move',
                                                  'jobs.move_job.Move',
                                                  'jobs.handover_job.Move',
