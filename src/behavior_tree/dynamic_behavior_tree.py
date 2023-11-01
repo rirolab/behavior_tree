@@ -149,8 +149,8 @@ class SplinteredReality(object):
             task_list = []
 
             # self.jobs are holding all available job classes
-            for idx in range(len(goal)):                
-                for job in self.jobs:
+            for idx in range(len(goal)):        
+                for job in self.jobs:   ##ex) "1: (GRIPPER_CLOSE)"         
                     # job.goal contains current goal json message.
                     if job.goal is not None:
                         job_root = job.create_root(str(idx+1), job.goal,
@@ -377,6 +377,7 @@ if __name__ == '__main__':
                                                 #  'jobs.pose_check_job.Move',
                                                 #  'jobs.arch_job.Move',
                                                 #  'jobs.delivery_job.Move',
+                                                 'jobs.load_job.Move',
                                                  'jobs.drive_job.Move',],
                                                  rec_topic_list=topic_list)
     rospy.on_shutdown(splintered_reality.shutdown)
