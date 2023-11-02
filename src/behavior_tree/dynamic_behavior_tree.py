@@ -10,6 +10,7 @@ import std_msgs.msg as std_msgs
 import sys
 import numpy as np
 import json
+from std_srvs.srv import Empty, EmptyResponse
 
 ## import subtrees.WM2Blackboard
 from subtrees import Grnd2Blackboard
@@ -100,6 +101,8 @@ class SplinteredReality(object):
         
         self.blackboard            = py_trees.blackboard.Blackboard()
         self.blackboard.is_running = False
+        self.tree_stop_srv  = rospy.Service('bt_stop', Empty, self._bt_stop_srv)
+        self.tree_start_srv = rospy.Service('bt_restart', Empty, self._bt_restart_srv)
         
         self.tree = py_trees_ros.trees.BehaviourTree(create_root(self.controller_ns))
         self.tree.add_pre_tick_handler(self.pre_tick_handler)
@@ -332,7 +335,17 @@ class SplinteredReality(object):
     def shutdown(self):
         self.tree.interrupt()
 
-
+    def _bt_stop_srv(self, req):
+        print(f"==================\nservice requested!! value = {self.blackboard.get('stop_cmd')}\n==================")
+        self.blackboard.set("stop_cmd", True)
+        print(f"==================\nservice requested!! value = {self.blackboard.get('stop_cmd')}\n==================")
+        return EmptyResponse()
+    
+    def _bt_restart_srv(self, req):
+        print(f"==================\nservice requested!! value = {self.blackboard.get('stop_cmd')}\n==================")
+        self.blackboard.set("stop_cmd", False)
+        return EmptyResponse()
+    
 
 
 ##############################################################################

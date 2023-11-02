@@ -95,8 +95,8 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
             self._world_frame    = rospy.get_param("world_frame", '/base_footprint')
         self._arm_base_frame = rospy.get_param("arm_base_frame", '/ur_arm_base_link')
 
-        self.grasp_offset_z = rospy.get_param("grasp_offset_z", 0.02)
-        self.top_offset_z   = rospy.get_param("top_offset_z", 0.10)
+        self.grasp_offset_z = rospy.get_param("grasp_offset_z", 0.03)
+        self.top_offset_z   = rospy.get_param("top_offset_z", 0.05)
 
 
 
@@ -362,8 +362,6 @@ class PARKING_POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         self._parking_pose_srv_channel = '/get_object_parking_pose'
         
         self._world_frame   = rospy.get_param("/world_frame", None)
-        self.torso_offset_x  = rospy.get_param("torso_offset_x", -0.40)
-        self.approaching_offset_x   = rospy.get_param("approaching_offset_x", -0.50)
         
     def setup(self, timeout):
         self.feedback_message = "{}: setup".format(self.name)
@@ -407,15 +405,15 @@ class PARKING_POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                 print("Pose Service is not available: %s"%e)
                 return py_trees.common.Status.FAILURE
 
-            offset          = PyKDL.Frame(PyKDL.Rotation.Identity(),
-                                          PyKDL.Vector(self.torso_offset_x, 0, 0))
-            parking_pose  = misc.pose2KDLframe(parking_pose) * offset
-            offset          = PyKDL.Frame(PyKDL.Rotation.Identity(),
-                                          PyKDL.Vector(self.approaching_offset_x, 0, 0))
-            near_parking_pose  = parking_pose * offset
+            # offset          = PyKDL.Frame(PyKDL.Rotation.Identity(),
+            #                               PyKDL.Vector(self.torso_offset_x, 0, 0))
+            # parking_pose  = misc.pose2KDLframe(parking_pose) * offset
+            # offset          = PyKDL.Frame(PyKDL.Rotation.Identity(),
+            #                               PyKDL.Vector(self.approaching_offset_x, 0, 0))
+            # near_parking_pose  = parking_pose * offset
 
-            parking_pose = misc.KDLframe2Pose(parking_pose)
-            near_parking_pose = misc.KDLframe2Pose(near_parking_pose)
+            # parking_pose = misc.KDLframe2Pose(parking_pose)
+            # near_parking_pose = misc.KDLframe2Pose(near_parking_pose)
             
         
             # try:
@@ -426,7 +424,7 @@ class PARKING_POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
             #     return py_trees.common.Status.FAILURE
             
             self.blackboard.set(self.name +'/parking_pose', parking_pose)
-            self.blackboard.set(self.name +'/near_parking_pose', near_parking_pose)
+            # self.blackboard.set(self.name +'/near_parking_pose', near_parking_pose)
             # rospy.set_param('obj_grasp_pose', json.dumps(misc.pose2list(obj_pose)))
             
             
