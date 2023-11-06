@@ -115,7 +115,10 @@ class Move(object):
                                    action_goal={'pose': "Plan"+idx+"/near_parking_pose"})
         
         s_drive12 = MoveBase.TOUCHB(name="Approach")
-        root.add_children([s_drive_pose, pose_est10, s_drive10, s_drive11, s_drive12])
+        # root.add_children([s_drive_pose, pose_est10, s_drive10, s_drive11, s_drive12])
+        root.add_children([s_drive_pose, pose_est10, s_drive10])
+
+
         # root.add_children([pose_est10, s_drive10, s_drive11, s_drive12])
         # task = py_trees.composites.Sequence(name="Delivery")
         return root
