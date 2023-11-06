@@ -47,7 +47,8 @@ class Move(object):
 
         ## self.object      = None
         ## self.destination = None
-
+        # print("!!!!!!!!!!!!!!!!!!!!!!!!!!\n\n\n\n\n\n\n\n\n\n\n", self.blackboard.get("Place1/place_top_pose"))
+        # exit()
     @property
     def goal(self):
         """
@@ -117,6 +118,13 @@ class Move(object):
         blackboard = py_trees.blackboard.Blackboard()
         ## grasp_offset_z = 0.02
         
+        ###################
+
+        # br = tf.TransformBroadcaster()
+        # br.sendTransform()
+
+        ###################
+
         if goal[idx]["primitive_action"] in ['place']:
             if 'object' in goal[idx].keys():
                 obj = goal[idx]['object']
@@ -135,6 +143,7 @@ class Move(object):
         else:
             return None
 
+
         s_init3 = MoveJoint.MOVEJ(name="Init", controller_ns=controller_ns,
                                   action_goal=blackboard.init_config)
 
@@ -144,7 +153,13 @@ class Move(object):
                                               object_dict = {'target': obj,
                                                              'destination': destination,
                                                              'destination_offset': destination_offset})
+
+        # print("!!!@!@!#@!#!#!@$!@$#!@$#!@$#!@$!@\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n", blackboard.get("Place4/place_top_pose"), idx, blackboard.get("Plan"+idx+"/place_top_pose"))
+        # raise NotImplementedError()
+
         #from IPython import embed; embed(); sys.exit()
+        s_move20 = MovePose.MOVEPROOT(name="Top", controller_ns=controller_ns,
+                                 action_goal={'pose': "Plan"+idx+"/place_top_pose"})
         s_move21 = MovePose.MOVEP(name="Top", controller_ns=controller_ns,
                                  action_goal={'pose': "Plan"+idx+"/place_top_pose"})
         s_move22 = MovePose.MOVEP(name="Approach", controller_ns=controller_ns,
@@ -155,7 +170,10 @@ class Move(object):
         s_move24 = MovePose.MOVEP(name="Top", controller_ns=controller_ns,
                                  action_goal={'pose': "Plan"+idx+"/place_top_pose"})
         
-        place.add_children([pose_est2, s_move21, s_move22, s_move23, s_move24, s_init3])
+        place.add_children([pose_est2, s_move20, s_move21, s_move22, s_move23, s_move24, s_init3])
+        # place.add_children([pose_est2, s_move20, s_move21, s_move23, s_move24, s_init3])
+        # place.add_children([pose_est2, s_move20, s_move21, s_move23, s_init3])
+
         return place
 
 

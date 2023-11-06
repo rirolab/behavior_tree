@@ -10,6 +10,8 @@ import geometry_msgs
 
 from complex_action_client.srv import String_Int, None_String
 
+import tf
+
 class MOVEP(py_trees.behaviour.Behaviour):
     """
     Move Pose
@@ -29,6 +31,36 @@ class MOVEP(py_trees.behaviour.Behaviour):
         self.action_goal = action_goal
         self.sent_goal   = False
         self.cmd_req     = None
+        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal) ### {'pose': 'Plan3/grasp_top_pose'}
+        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
+        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
+        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
+        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
+        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
+        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
+        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
+        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
+        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
+        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
+        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
+        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
+        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
+        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
+        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
+        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
+        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
+        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
+        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
+        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
+        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
+        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
+        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
+        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
+        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
+        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
+        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
+
+        # exit()
 
 
     def setup(self, timeout):
@@ -55,6 +87,8 @@ class MOVEP(py_trees.behaviour.Behaviour):
 
         if not self.sent_goal:
             if type(self.action_goal['pose']) is geometry_msgs.msg._Pose.Pose:
+                # print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n\n\n\n\n\n\n\n\n\n\n\n\n\n")
+                # exit()
                 goal = {'x': self.action_goal['pose'].position.x,
                         'y': self.action_goal['pose'].position.y,
                         'z': self.action_goal['pose'].position.z,
@@ -63,6 +97,8 @@ class MOVEP(py_trees.behaviour.Behaviour):
                         'qz': self.action_goal['pose'].orientation.z,
                         'qw': self.action_goal['pose'].orientation.w,}
             else:
+                # print("!22222!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n\n\n\n\n\n\n\n\n\n\n\n\n\n") ## through here
+                # exit()
                 blackboard = py_trees.Blackboard()
                 ps = blackboard.get(self.action_goal['pose'])
                 goal = {'x': ps.position.x,
@@ -72,7 +108,13 @@ class MOVEP(py_trees.behaviour.Behaviour):
                         'qy': ps.orientation.y,
                         'qz': ps.orientation.z,
                         'qw': ps.orientation.w,}
-            
+                print("fcvqefeqfqefqeqewfeqwfeqw!!!!!!!!!!!!!!!!!\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n", goal, self.action_goal['pose'])
+                # raise NotImplementedError
+
+
+                br = tf.TransformBroadcaster()
+                br.sendTransform((ps.position.x, ps.position.y, ps.position.z), (ps.orientation.x, ps.orientation.y, ps.orientation.z, ps.orientation.w), rospy.Time.now(), self.action_goal['pose'] + "_mj", 'haetae_ur5e_base_link')
+                
             cmd_str = json.dumps({'action_type': 'movePose',
                                   'goal': json.dumps(goal),
                                   'timeout': 3.,
@@ -87,6 +129,9 @@ class MOVEP(py_trees.behaviour.Behaviour):
             self.sent_goal        = True
             self.feedback_message = "Sending a joint goal"
             return py_trees.common.Status.RUNNING
+
+        # print("!!!!#!@$#!@$#!@$#@!$!@!QR#@!$!#@$#!$!\n\n\n")
+        # exit()
 
         msg = self.status_req()
         d = json.loads(msg.data)
