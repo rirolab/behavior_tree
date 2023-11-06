@@ -363,6 +363,7 @@ if __name__ == '__main__':
                  help='use visualization code for rviz')
     p.add_option('--rec_topics', '-t', action='store', dest='topic_json',
                  default=None, help='a list of topic to record')
+    p.add_option('--robot', '-r', action='store', dest='robot',help='type of robot. choose manip or quad')
     opt, args = p.parse_args()
 
     # load the list of topics for recording
@@ -375,23 +376,22 @@ if __name__ == '__main__':
 
     # TODO: import a list of jobs from a json file or ROS parameter server.
     # Keep the default job on the top
-    rospy.init_node("tree")   
-    splintered_reality = SplinteredReality(jobs=[
-                                                 'jobs.pick_job.Move',
-                                                 'jobs.place_job.Move',
-                                                 'jobs.move_job.Move',
-                                                #  'jobs.handover_job.Move',
-                                                #  'jobs.jog_job.Move',
-                                                 'jobs.gripper_job.Move',
-                                                #  'jobs.slide_job.Move',
-                                                #  'jobs.attach_job.Move',
-                                                #  'jobs.touch_job.Move',
-                                                #  'jobs.pull_job.Move',
-                                                #  'jobs.pose_check_job.Move',
-                                                #  'jobs.arch_job.Move',
-                                                #  'jobs.delivery_job.Move',
-                                                 'jobs.drive_job.Move',],
-                                                 rec_topic_list=topic_list)
+    rospy.init_node("tree")
+    rospy.loginfo("Robot Type: {0}".format(opt.robot))
+    jobs = []
+    if opt.robot == 'manip':
+        jobs = ['jobs.pick_job.Move',
+                'jobs.place_job.Move',
+                'jobs.move_job.Move',
+                'jobs.gripper_job.Move',
+                'jobs.drive_job.Move',]
+    elif opt.robot == 'quad':
+        jobs = ['jobs.spot_drive_job.Move',]
+    else:
+        print(f"Given robot type should be one of 'manip' and 'quad'. Input type: {opt.robot} ")
+        raise NotImplementedError()
+    
+    splintered_reality = SplinteredReality(jobs=jobs, rec_topic_list=topic_list)
     rospy.on_shutdown(splintered_reality.shutdown)
     if not splintered_reality.setup():
         console.logerror("failed to setup the tree, aborting.")
