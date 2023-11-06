@@ -120,16 +120,16 @@ class Move(object):
            :class:`~py_trees.behaviour.Behaviour`: subtree root
         """
         # beahviors
-        root = py_trees.composites.Sequence(name="Load")
+        root = py_trees.composites.Sequence(name="Unload")
         blackboard = py_trees.blackboard.Blackboard()
 
-        if goal[idx]["primitive_action"] in ['load']:
+        if goal[idx]["primitive_action"] in ['unload']:
             if 'object' in goal[idx].keys():
                 obj = goal[idx]['object']
             elif 'obj' in goal[idx].keys():
                 obj = goal[idx]['obj']
             else:
-                rospy.logerr("Load: No load object")
+                rospy.logerr("Unload: No unload object")
                 sys.exit()        
             destination = goal[idx]['destination']
 
@@ -138,8 +138,7 @@ class Move(object):
                 raise NotImplementedError
                 destination_offset = goal[idx]['destination_offset'] 
             else:
-                # destination_offset = [0,0,-0.1,0,0,0]
-                destination_offset = [0,0,0.1,0,0,0]
+                destination_offset = [0,0,0,0,0,0]
 
         else:
             return None
@@ -192,7 +191,7 @@ class Move(object):
         ############################
 
 
-        pick = py_trees.composites.Sequence(name="Load")
+        pick = py_trees.composites.Sequence(name="Unload")
         # pick.add_children([pose_est1, s_init1, s_move10, s_move11, s_move12, s_move13, s_move14, s_move15, s_init2])
         # pick.add_children([pose_est1, s_init1, s_move10, s_move11, s_move13, s_move14, s_move15])
         pick.add_children([pose_est1, s_init1, s_move10, s_move11, s_move13, s_move14, s_move15, pose_est2, s_move20, s_move21, s_move22, s_move23, s_move24, s_init2])
