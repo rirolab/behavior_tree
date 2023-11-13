@@ -84,6 +84,7 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
 
         self._pose_srv_channel = '/get_object_pose'
         self._grasp_pose_srv_channel = '/get_object_grasp_pose'
+        self._place_pose_srv_channel = '/get_object_place_pose'
         self._base_pose_srv_channel = '/get_object_base_pose'
         self._height_srv_channel = '/get_object_height'
         self._rnd_pose_srv_channel = '/get_object_rnd_pose'
@@ -111,6 +112,9 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         rospy.wait_for_service(self._grasp_pose_srv_channel)
         self.grasp_pose_srv_req = rospy.ServiceProxy(self._grasp_pose_srv_channel, String_Pose)
 
+        rospy.wait_for_service(self._place_pose_srv_channel)
+        self.place_pose_srv_req = rospy.ServiceProxy(self._place_pose_srv_channel, String_Pose)
+        
         rospy.wait_for_service(self._base_pose_srv_channel)
         self.base_pose_srv_req = rospy.ServiceProxy(self._base_pose_srv_channel, String_Pose)
         

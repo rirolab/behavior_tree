@@ -149,9 +149,8 @@ class Move(object):
                                  action_goal={'pose': "Plan"+idx+"/grasp_top_pose"})
 
         pick = py_trees.composites.Sequence(name="Pick")
-        # pick.add_children([pose_est1, s_init1, s_move10, s_move11, s_move12, s_move13, s_move14, s_move15, s_init2])
-        pick.add_children([pose_est1, s_init1, s_move10, s_move11, s_move13, s_move14, s_move15, s_init2])
-
+        pick.add_children([pose_est1, s_init1, s_move10, s_move11, s_move12, s_move13, s_move14, s_move15, s_init2])
+        
         return pick
 
     

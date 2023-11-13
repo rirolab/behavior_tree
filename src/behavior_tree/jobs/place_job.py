@@ -153,10 +153,6 @@ class Move(object):
                                               object_dict = {'target': obj,
                                                              'destination': destination,
                                                              'destination_offset': destination_offset})
-
-        # print("!!!@!@!#@!#!#!@$!@$#!@$#!@$#!@$!@\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n", blackboard.get("Place4/place_top_pose"), idx, blackboard.get("Plan"+idx+"/place_top_pose"))
-        # raise NotImplementedError()
-
         #from IPython import embed; embed(); sys.exit()
         s_move20 = MovePose.MOVEPROOT(name="Top", controller_ns=controller_ns,
                                  action_goal={'pose': "Plan"+idx+"/place_top_pose"})
@@ -170,7 +166,7 @@ class Move(object):
         s_move24 = MovePose.MOVEP(name="Top", controller_ns=controller_ns,
                                  action_goal={'pose': "Plan"+idx+"/place_top_pose"})
         
-        place.add_children([pose_est2, s_move20, s_move21, s_move22, s_move23, s_move24, s_init3])
+        place.add_children([s_init3, pose_est2, s_move20, s_move21, s_move22, s_move23, s_move24, s_init3])
         # place.add_children([pose_est2, s_move20, s_move21, s_move23, s_move24, s_init3])
         # place.add_children([pose_est2, s_move20, s_move21, s_move23, s_init3])
 
