@@ -13,7 +13,7 @@ import json
 from std_srvs.srv import Empty, EmptyResponse
 
 ## import subtrees.WM2Blackboard
-from subtrees import Grnd2Blackboard
+from subtrees import Grnd2Blackboard, WM2Blackboard
 import decorators
 
 def create_root(controller_ns=""):
@@ -30,8 +30,8 @@ def create_root(controller_ns=""):
     ## topics2bb = py_trees.composites.Sequence("Topics2BB")
     grnd2bb = Grnd2Blackboard.ToBlackboard(name="Grnd2BB",
                                            topic_name="symbol_grounding")
-    ## wm2bb   = WM2Blackboard.ToBlackboard(name="WM2BB",
-    ##                                      topic_name="/world_model" )
+    wm2bb   = WM2Blackboard.ToBlackboard(name="WM2BB",
+                                         topic_name="/world_model" )
     ## reccmd2bb = py_trees_ros.subscribers.EventToBlackboard(
     ##     name="RecCmd2BB",
     ##     topic_name="/record_cmd",
@@ -65,7 +65,9 @@ def create_root(controller_ns=""):
     idle       = py_trees.behaviours.Running(name="Idle")
     priorities.add_child(idle)
     
-    root.add_children([grnd2bb,priorities])
+    # root.add_children([grnd2bb,priorities])
+    root.add_children([grnd2bb, wm2bb ,priorities])
+
     return root
 
 
@@ -83,7 +85,7 @@ def load_topic_list(filename):
 
 class SplinteredReality(object):
 
-    def __init__(self, jobs, rec_topic_list=None, n_loop=1,
+    def __init__(self, jobs, robot_name, rec_topic_list=None, n_loop=1,
                  enable_inf_loop=False, loop_timeout=-1):
         """
         Initialise a core tree (minus a job) and preload job classes ready to
@@ -101,6 +103,7 @@ class SplinteredReality(object):
         
         self.blackboard            = py_trees.blackboard.Blackboard()
         self.blackboard.is_running = False
+        self.blackboard.robot_name = robot_name
         self.tree_stop_srv  = rospy.Service('bt_stop', Empty, self._bt_stop_srv)
         self.tree_start_srv = rospy.Service('bt_restart', Empty, self._bt_restart_srv)
         
@@ -364,6 +367,8 @@ if __name__ == '__main__':
     p.add_option('--rec_topics', '-t', action='store', dest='topic_json',
                  default=None, help='a list of topic to record')
     p.add_option('--robot', '-r', action='store', dest='robot',help='type of robot. choose manip or quad')
+    p.add_option('--robot_name', '-n', action='store', dest='robot_name',help='name of robot. haetae, spot, stretch')
+    
     opt, args = p.parse_args()
 
     # load the list of topics for recording
@@ -384,6 +389,7 @@ if __name__ == '__main__':
                 'jobs.place_job.Move',
                 'jobs.move_job.Move',
                 'jobs.gripper_job.Move',
+                'jobs.load_job.Move',
                 'jobs.drive_job.Move',]
     elif opt.robot == 'quad':
         jobs = ['jobs.spot_drive_job.Move',]
@@ -391,7 +397,11 @@ if __name__ == '__main__':
         print(f"Given robot type should be one of 'manip' and 'quad'. Input type: {opt.robot} ")
         raise NotImplementedError()
     
-    splintered_reality = SplinteredReality(jobs=jobs, rec_topic_list=topic_list)
+    if opt.robot_name not in ['haetae', 'spot', 'stretch']:
+        print(f"Given robot type should be one of spot/haetae/stretch. Input type: {opt.robot_name} ")
+        raise NotImplementedError
+
+    splintered_reality = SplinteredReality(jobs=jobs, rec_topic_list=topic_list, robot_name=opt.robot_name)
     rospy.on_shutdown(splintered_reality.shutdown)
     if not splintered_reality.setup():
         console.logerror("failed to setup the tree, aborting.")

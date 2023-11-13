@@ -110,7 +110,16 @@ class Move(object):
         
         # s_drive12 = MoveBase.TOUCHB(name="Approach")
         # root.add_children([s_drive_pose, pose_est10, s_drive10, s_drive11, s_drive12])
-        root.add_children([pose_est10, s_drive10])
+
+        sync_pose_est = WorldModel.SYNC_POSE_ESTIMATOR_SPOT(name="Sync"+idx, object_dict={'target1': 'spot', 'target2': 'haetae'}, distance_criteria=1.0)
+        wait_condition = py_trees.decorators.Condition(name="Wait"+idx, child=sync_pose_est, status=py_trees.common.Status.SUCCESS)
+
+        # sync_pose_est2 = WorldModel.SYNC_POSE_ESTIMATOR(name="Sync"+idx, object_dict={'target1': 'spot', 'target2': 'haetae'}, distance_criteria=1.0, smaller_than_criteria=False)
+        # wait_condition2 = py_trees.decorators.Condition(name="Wait"+idx, child=sync_pose_est2, status=py_trees.common.Status.SUCCESS)
+
+        # root.add_children([pose_est10, s_drive10])
+        root.add_children([pose_est10, wait_condition, s_drive10])
+
         # task = py_trees.composites.Sequence(name="Delivery")
         return root
 
