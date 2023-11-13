@@ -64,7 +64,7 @@ class MOVEB(py_trees.behaviour.Behaviour):
     def update(self):
 
         blackboard = py_trees.Blackboard()
-        listener = tf.TransformListener()
+        # listener = tf.TransformListener()
         # self.drive_status_update_req(blackboard.robot_name)
         # if blackboard.robot_name == 'spot':
         #     while not rospy.is_shutdown():
@@ -344,12 +344,12 @@ class ALIGNB(py_trees.behaviour.Behaviour):
             return py_trees.common.Status.RUNNING
 
 
-def terminate(self, new_status):
-    # msg = self.status_req()
-    # d = json.loads(msg.data)
-    # if d['state'] == GoalStatus.ACTIVE:
-    #     self.cmd_req( json.dumps({'action_type': 'cancel_goal'}) )
-    return
+    def terminate(self, new_status):
+        # msg = self.status_req()
+        # d = json.loads(msg.data)
+        # if d['state'] == GoalStatus.ACTIVE:
+        #     self.cmd_req( json.dumps({'action_type': 'cancel_goal'}) )
+        return
 
 class TOUCHB(py_trees.behaviour.Behaviour):
     """
@@ -438,10 +438,10 @@ class TOUCHB(py_trees.behaviour.Behaviour):
         #     return py_trees.common.Status.RUNNING
 
 
-def terminate(self, new_status):
-    # msg = self.status_req()
-    # d = json.loads(msg.data)
-    # if d['state'] == GoalStatus.ACTIVE:
-    #     self.cmd_req( json.dumps({'action_type': 'cancel_goal'}) )
-    return
+    def terminate(self, new_status):
+        # msg = self.status_req()
+        # d = json.loads(msg.data)
+        # if d['state'] == GoalStatus.ACTIVE:
+        #     self.cmd_req( json.dumps({'action_type': 'cancel_goal'}) )
+        return
 
