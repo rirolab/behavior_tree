@@ -17,6 +17,8 @@ from move_base_msgs.msg import MoveBaseAction, MoveBaseActionResult, MoveBaseGoa
 from complex_action_client import misc
 from complex_action_client.srv import String_Int, None_String, String_IntRequest
 
+from riro_srvs.srv import String_None, String_String, String_Pose, String_PoseResponse
+
 class MOVEB(py_trees.behaviour.Behaviour):
     """
     Move Base
@@ -37,6 +39,8 @@ class MOVEB(py_trees.behaviour.Behaviour):
         self._world_frame_id = rospy.get_param("/world_frame", 'map')
         self.cmd_req     = None
 
+        self._drive_status_update_srv_channel = "/update_robot_drive_state"
+
 
     def setup(self, timeout):
         self.feedback_message = "{}: setup".format(self.name)
@@ -44,15 +48,54 @@ class MOVEB(py_trees.behaviour.Behaviour):
         self.cmd_req = rospy.ServiceProxy("move_base_client/command", String_Int)
         rospy.wait_for_service("move_base_client/status")
         self.status_req = rospy.ServiceProxy("move_base_client/status", None_String)
+
+        rospy.wait_for_service(self._drive_status_update_srv_channel)
+        self.drive_status_update_req = rospy.ServiceProxy(self._drive_status_update_srv_channel, String_None)
+
         return True
 
 
     def initialise(self):
         self.logger.debug("{0}.initialise()".format(self.__class__.__name__))
         self.sent_goal = False
-
+        blackboard = py_trees.Blackboard()
+        self.drive_status_update_req(blackboard.robot_name)
 
     def update(self):
+
+        blackboard = py_trees.Blackboard()
+        listener = tf.TransformListener()
+        # self.drive_status_update_req(blackboard.robot_name)
+        # if blackboard.robot_name == 'spot':
+        #     while not rospy.is_shutdown():
+        #         try:
+        #             (pos, quat) = listener.lookupTransform("spot/base_link_plate", "box_s_grip_1", rospy.Time(0))
+        #             (pos2, quat2) = listener.lookupTransform("spot/base_link", "picking_station2_nav_1", rospy.Time(0))
+                    
+        #             print("!!!!!!!!!!\n\n", pos, len(pos))
+        #             print("!!",blackboard.robot_name)
+        #             # assert len(pos) == 3
+        #             box_plate_dist = pos[0] ** 2 + pos[1] ** 2 + pos[2] ** 2
+        #             spot_to_ps2 = pos2[0] ** 2 + pos2[1] ** 2 + pos2[2] ** 2
+        #             print(box_plate_dist, spot_to_ps2)
+        #             if box_plate_dist > 1.1: ## from origin -> picking_station2
+        #                 break
+        #             elif box_plate_dist < 0.5 and spot_to_ps2 < 0.7: ## stay at picking_station2
+        #                 break
+        #         except:
+        #             print("111111!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!23232\n")
+        #             pass
+
+        # elif blackboard.robot_name == 'haetae':
+        #     pass
+        
+        # elif blackboard.robot_name == 'stretch':
+        #     pass
+
+        # else:
+        #     raise NotImplementedError()
+
+
         self.logger.debug("%s.update()" % self.__class__.__name__)
 
         if self.cmd_req is None:
@@ -91,6 +134,7 @@ class MOVEB(py_trees.behaviour.Behaviour):
             if ret.data==GoalStatus.REJECTED or ret.data==GoalStatus.ABORTED:
                 self.feedback_message = "failed to execute"
                 self.logger.debug("%s.update()[%s]" % (self.__class__.__name__, self.feedback_message))
+                self.drive_status_update_req(blackboard.robot_name)
                 return py_trees.common.Status.FAILURE
             
             self.sent_goal        = True
@@ -104,11 +148,15 @@ class MOVEB(py_trees.behaviour.Behaviour):
         if state in [GoalStatus.ABORTED, GoalStatus.PREEMPTED, GoalStatus.REJECTED]:
             self.feedback_message = "FAILURE"
             self.logger.debug("%s.update()[%s->%s][%s]" % (self.__class__.__name__, self.status, py_trees.common.Status.FAILURE, self.feedback_message))
+            self.drive_status_update_req(blackboard.robot_name)
             return py_trees.common.Status.FAILURE
 
         if state == GoalStatus.SUCCEEDED:
             self.feedback_message = "SUCCESSFUL"
             self.logger.debug("%s.update()[%s->%s][%s]" % (self.__class__.__name__, self.status, py_trees.common.Status.SUCCESS, self.feedback_message))
+            
+            self.drive_status_update_req(blackboard.robot_name)
+            
             return py_trees.common.Status.SUCCESS
         else:
             return py_trees.common.Status.RUNNING
