@@ -15,7 +15,7 @@ class ToBlackboard(subscribers.ToBlackboard):
                                            )
 
         self.blackboard = py_trees.blackboard.Blackboard()
-
+        
 
     def update(self):
         self.logger.debug("%s.update()" % self.__class__.__name__)

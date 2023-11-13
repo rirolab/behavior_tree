@@ -78,6 +78,31 @@ class MOVEP(py_trees.behaviour.Behaviour):
 
 
     def update(self):
+        # blackboard = py_trees.Blackboard()
+        # listener = tf.TransformListener()
+        # if blackboard.robot_name == 'haetae':
+        #     while not rospy.is_shutdown():
+        #         try:
+        #             print("!@12134e2131231231/21#@!#!@#!$#@$%@#%^$#^%$^&\n")
+        #             # (pos, quat) = listener.lookupTransform("spot/base_link_plate", "box_s_grip_1", rospy.Time(0))
+        #             (pos, quat) = listener.lookupTransform("spot/base_link_plate", "box_s_grip_1", rospy.Time(0))
+                    
+        #             print("!!!!!!!!!!\n\n\n", pos, len(pos))
+        #             print("!!",blackboard.robot_name)
+        #             # assert len(pos) == 3
+        #             box_plate_dist = pos[0] ** 2 + pos[1] ** 2 + pos[2] ** 2
+        #             print("23")
+        #             print(box_plate_dist)
+        #             if box_plate_dist < 1.3:
+        #                 break
+        #         except:
+        #             print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!23232\n\n")
+        #             pass
+        # else:
+        #     raise NotImplementedError()
+        # raise NotImplementedError
+
+
         self.logger.debug("%s.update()" % self.__class__.__name__)
 
         if self.cmd_req is None:
@@ -108,7 +133,7 @@ class MOVEP(py_trees.behaviour.Behaviour):
                         'qy': ps.orientation.y,
                         'qz': ps.orientation.z,
                         'qw': ps.orientation.w,}
-                print("fcvqefeqfqefqeqewfeqwfeqw!!!!!!!!!!!!!!!!!\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n", goal, self.action_goal['pose'])
+                # print("fcvqefeqfqefqeqewfeqwfeqw!!!!!!!!!!!!!!!!!\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n", goal, self.action_goal['pose'])
                 # raise NotImplementedError
 
 

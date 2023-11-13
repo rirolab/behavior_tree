@@ -119,6 +119,23 @@ class Move(object):
         Returns:
            :class:`~py_trees.behaviour.Behaviour`: subtree root
         """
+
+        # listener = tf.TransformListener()
+        # while not rospy.is_shutdown():
+        #     try:
+        #         (pos, quat) = listener.lookupTransform("spot/base_link_plate", "box_s_grip_1", rospy.Time(0))
+        #         print("!!!!!!!!!!\n\n\n\n\n\n", pos)
+        #         assert len(pos) == 3
+        #         box_plate_dist = pos[0] ** 2 + pos[1] ** 2 + pso[2] ** 2
+        #         if box_plate_dist < 1.0:
+        #             break
+        #     except:
+        #         print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!23232\n\n\n\n\n\n\n\n\n\n")
+        #         pass
+        
+        # raise NotImplementedError
+
+
         # beahviors
         root = py_trees.composites.Sequence(name="Load")
         blackboard = py_trees.blackboard.Blackboard()
@@ -174,8 +191,11 @@ class Move(object):
                                                              'destination': destination,
                                                              'destination_offset': destination_offset})
 
+        sync_pose_est = WorldModel.SYNC_POSE_ESTIMATOR(name="Sync"+idx, object_dict={'target1': 'spot', 'target2': 'haetae'}, distance_criteria=1.0, wait_spot_drive=True)
         # print("!!!@!@!#@!#!#!@$!@$#!@$#!@$#!@$!@\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n", blackboard.get("Place4/place_top_pose"), idx, blackboard.get("Plan"+idx+"/place_top_pose"))
         # raise NotImplementedError()
+
+        wait_condition = py_trees.decorators.Condition(name="Wait"+idx, child=sync_pose_est, status=py_trees.common.Status.SUCCESS)
 
         #from IPython import embed; embed(); sys.exit()
         s_move20 = MovePose.MOVEPROOT(name="Top", controller_ns=controller_ns,
@@ -195,7 +215,9 @@ class Move(object):
         pick = py_trees.composites.Sequence(name="Load")
         # pick.add_children([pose_est1, s_init1, s_move10, s_move11, s_move12, s_move13, s_move14, s_move15, s_init2])
         # pick.add_children([pose_est1, s_init1, s_move10, s_move11, s_move13, s_move14, s_move15])
-        pick.add_children([pose_est1, s_init1, s_move10, s_move11, s_move13, s_move14, s_move15, pose_est2, s_move20, s_move21, s_move22, s_move23, s_move24, s_init2])
+
+        # pick.add_children([pose_est1, s_init1, s_move10, s_move11, s_move13, s_move14, s_move15, pose_est2, s_move20, s_move21, s_move22, s_move23, s_move24, s_init2])
+        pick.add_children([pose_est1, s_init1, s_move10, s_move11, s_move13, s_move14, s_move15, wait_condition, pose_est2, s_move20, s_move21, s_move22, s_move23, s_move24, s_init2])
 
         return pick
 
