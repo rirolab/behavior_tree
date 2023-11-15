@@ -390,6 +390,7 @@ if __name__ == '__main__':
                 'jobs.move_job.Move',
                 'jobs.gripper_job.Move',
                 'jobs.load_job.Move',
+                'jobs.unload_job.Move',
                 'jobs.drive_job.Move',]
     elif opt.robot == 'quad':
         jobs = ['jobs.spot_drive_job.Move',]

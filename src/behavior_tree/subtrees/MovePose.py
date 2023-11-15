@@ -12,6 +12,8 @@ from complex_action_client.srv import String_Int, None_String
 
 import tf
 
+from riro_srvs.srv import String_None, String_String, String_Pose, String_PoseResponse
+
 class MOVEP(py_trees.behaviour.Behaviour):
     """
     Move Pose
@@ -31,36 +33,9 @@ class MOVEP(py_trees.behaviour.Behaviour):
         self.action_goal = action_goal
         self.sent_goal   = False
         self.cmd_req     = None
-        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal) ### {'pose': 'Plan3/grasp_top_pose'}
-        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
-        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
-        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
-        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
-        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
-        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
-        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
-        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
-        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
-        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
-        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
-        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
-        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
-        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
-        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
-        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
-        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
-        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
-        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
-        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
-        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
-        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
-        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
-        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
-        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
-        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
-        # print("!!!!!!!!!!!!!!\n\n\n", self.action_goal)
+        
+        self._manip_status_update_srv_channel = "/update_robot_manip_state"
 
-        # exit()
 
 
     def setup(self, timeout):
@@ -69,42 +44,23 @@ class MOVEP(py_trees.behaviour.Behaviour):
         self.cmd_req = rospy.ServiceProxy("arm_client/command", String_Int)
         rospy.wait_for_service("arm_client/status")
         self.status_req = rospy.ServiceProxy("arm_client/status", None_String)    
+
+        rospy.wait_for_service(self._manip_status_update_srv_channel)
+        self.manip_status_update_req = rospy.ServiceProxy(self._manip_status_update_srv_channel, String_None)
+
         return True
 
 
     def initialise(self):
         self.logger.debug("{0}.initialise()".format(self.__class__.__name__))
         self.sent_goal = False
-
+        blackboard = py_trees.Blackboard()
+        self.manip_status_update_req(blackboard.robot_name)
 
     def update(self):
-        # blackboard = py_trees.Blackboard()
-        # listener = tf.TransformListener()
-        # if blackboard.robot_name == 'haetae':
-        #     while not rospy.is_shutdown():
-        #         try:
-        #             print("!@12134e2131231231/21#@!#!@#!$#@$%@#%^$#^%$^&\n")
-        #             # (pos, quat) = listener.lookupTransform("spot/base_link_plate", "box_s_grip_1", rospy.Time(0))
-        #             (pos, quat) = listener.lookupTransform("spot/base_link_plate", "box_s_grip_1", rospy.Time(0))
-                    
-        #             print("!!!!!!!!!!\n\n\n", pos, len(pos))
-        #             print("!!",blackboard.robot_name)
-        #             # assert len(pos) == 3
-        #             box_plate_dist = pos[0] ** 2 + pos[1] ** 2 + pos[2] ** 2
-        #             print("23")
-        #             print(box_plate_dist)
-        #             if box_plate_dist < 1.3:
-        #                 break
-        #         except:
-        #             print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!23232\n\n")
-        #             pass
-        # else:
-        #     raise NotImplementedError()
-        # raise NotImplementedError
-
 
         self.logger.debug("%s.update()" % self.__class__.__name__)
-
+        blackboard = py_trees.Blackboard()
         if self.cmd_req is None:
             self.feedback_message = \
               "no action client, did you call setup() on your tree?"
@@ -149,6 +105,7 @@ class MOVEP(py_trees.behaviour.Behaviour):
             if ret.data==GoalStatus.REJECTED or ret.data==GoalStatus.ABORTED:
                 self.feedback_message = "failed to execute"
                 self.logger.debug("%s.update()[%s]" % (self.__class__.__name__, self.feedback_message))
+                # self.manip_status_update_req(blackboard.robot_name)
                 return py_trees.common.Status.FAILURE
             
             self.sent_goal        = True
@@ -168,10 +125,12 @@ class MOVEP(py_trees.behaviour.Behaviour):
                       GoalStatus.REJECTED] and \
                       ret != FollowJointTrajectoryResult.SUCCESSFUL: 
             self.feedback_message = "FAILURE"
+            # self.manip_status_update_req(blackboard.robot_name)
             return py_trees.common.Status.FAILURE
 
         if ret == FollowJointTrajectoryResult.SUCCESSFUL:
             self.feedback_message = "SUCCESSFUL"
+            # self.manip_status_update_req(blackboard.robot_name)
             return py_trees.common.Status.SUCCESS
         else:
             return py_trees.common.Status.RUNNING
@@ -182,6 +141,9 @@ class MOVEP(py_trees.behaviour.Behaviour):
         d = json.loads(msg.data)
         if d['state'] == GoalStatus.ACTIVE:
             self.cmd_req( json.dumps({'action_type': 'cancel_goal'}) )
+        
+        blackboard = py_trees.Blackboard()
+        self.manip_status_update_req(blackboard.robot_name)
         return
 
 
@@ -416,6 +378,7 @@ class MOVEPROOT(py_trees.behaviour.Behaviour):
         self.action_goal = action_goal
         self.sent_goal = False
         self.cmd_req   = None
+        self._manip_status_update_srv_channel = "/update_robot_manip_state"
 
     def setup(self, timeout):
         self.feedback_message = "{}: setup".format(self.name)
@@ -423,17 +386,23 @@ class MOVEPROOT(py_trees.behaviour.Behaviour):
         self.cmd_req = rospy.ServiceProxy("arm_client/command", String_Int)
         rospy.wait_for_service("arm_client/status")
         self.status_req = rospy.ServiceProxy("arm_client/status", None_String)
+
+        rospy.wait_for_service(self._manip_status_update_srv_channel)
+        self.manip_status_update_req = rospy.ServiceProxy(self._manip_status_update_srv_channel, String_None)
+
         return True
 
 
     def initialise(self):
         self.logger.debug("{0}.initialise()".format(self.__class__.__name__))
         self.sent_goal = False
+        blackboard = py_trees.Blackboard()
+        self.manip_status_update_req(blackboard.robot_name)
 
 
     def update(self):
         self.logger.debug("%s.update()" % self.__class__.__name__)
-
+        blackboard = py_trees.Blackboard()
         if self.cmd_req is None:
             self.feedback_message = \
               "no action client, did you call setup() on your tree?"
@@ -468,6 +437,7 @@ class MOVEPROOT(py_trees.behaviour.Behaviour):
             if ret.data==GoalStatus.REJECTED or ret.data==GoalStatus.ABORTED:
                 self.feedback_message = "failed to execute"
                 self.logger.debug("%s.update()[%s]" % (self.__class__.__name__, self.feedback_message))
+                # self.manip_status_update_req(blackboard.robot_name)
                 return py_trees.common.Status.FAILURE
             
             self.sent_goal        = True
@@ -487,10 +457,12 @@ class MOVEPROOT(py_trees.behaviour.Behaviour):
                       GoalStatus.REJECTED] and \
                       ret != FollowJointTrajectoryResult.SUCCESSFUL: 
             self.feedback_message = "FAILURE"
+            # self.manip_status_update_req(blackboard.robot_name)
             return py_trees.common.Status.FAILURE
 
         if ret == FollowJointTrajectoryResult.SUCCESSFUL:
             self.feedback_message = "SUCCESSFUL"
+            # self.manip_status_update_req(blackboard.robot_name)
             return py_trees.common.Status.SUCCESS
         else:
             return py_trees.common.Status.RUNNING
@@ -502,5 +474,8 @@ class MOVEPROOT(py_trees.behaviour.Behaviour):
         d = json.loads(msg.data)
         if d['state'] == GoalStatus.ACTIVE:
             self.cmd_req( json.dumps({'action_type': 'cancel_goal'}) )
-        self.logger.debug("%s.terminate()[%s->%s]" % (self.__class__.__name__, self.status, new_status))            
+        self.logger.debug("%s.terminate()[%s->%s]" % (self.__class__.__name__, self.status, new_status))    
+
+        blackboard = py_trees.Blackboard()
+        self.manip_status_update_req(blackboard.robot_name)        
         return 

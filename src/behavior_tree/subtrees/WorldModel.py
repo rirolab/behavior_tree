@@ -445,7 +445,7 @@ class PARKING_POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
     def terminate(self, new_status):
         return
 
-
+## Haetae wait for Spot to come ## 
 class SYNC_POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
     """
     Note that this behaviour will return with
@@ -467,6 +467,7 @@ class SYNC_POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         self._sync_pose_srv_channel = '/get_sync_pose'
 
         self._world_frame   = rospy.get_param("/world_frame", None)
+        self._manip_status_update_srv_channel = "/update_robot_manip_state"
         
     def setup(self, timeout):
         self.feedback_message = "{}: setup".format(self.name)
@@ -490,6 +491,8 @@ class SYNC_POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         if self.wait_spot_drive == True:
             self.is_drive = None
 
+        self.manip_status_update_req = rospy.ServiceProxy(self._manip_status_update_srv_channel, String_None)
+
         return True
 
     def initialise(self):
@@ -501,7 +504,7 @@ class SYNC_POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         self.blackboard.set(self.name +'/sync_pose_target1', Pose())
         self.blackboard.set(self.name +'/sync_pose_target2', Pose())        
         
-        
+        self.manip_status_update_req(self.blackboard.robot_name)
 
     def update(self):
         self.logger.debug("%s.update()" % self.__class__.__name__)
@@ -546,7 +549,6 @@ class SYNC_POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         # sync_distance = np.sqrt(sync_distance)
 
         self.sent_goal        = True
-        # print("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$\n\n\n\n\n\n\n\n\n\n\n\n\n", self.is_drive, sync_distance_bb)
 
         if self.smaller_than_criteria == True:
             if sync_distance_bb > self.distance_criteria:
@@ -566,6 +568,7 @@ class SYNC_POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
 
 
         self.feedback_message = "WorldModel: successful sync pose estimation "
+
         return py_trees.common.Status.SUCCESS
 
         
@@ -574,9 +577,10 @@ class SYNC_POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
 
 
     def terminate(self, new_status):
+        self.manip_status_update_req(self.blackboard.robot_name)
         return
 
-
+## Spot wait for Haetae to load ## 
 class SYNC_POSE_ESTIMATOR_SPOT(py_trees.behaviour.Behaviour):
     """
     Note that this behaviour will return with
@@ -601,22 +605,13 @@ class SYNC_POSE_ESTIMATOR_SPOT(py_trees.behaviour.Behaviour):
         
     def setup(self, timeout):
         self.feedback_message = "{}: setup".format(self.name)
-        ## rospy.wait_for_service("remove_wm_object")
-        ## self.cmd_req = rospy.ServiceProxy("remove_wm_object", String_None)
-
-        # rospy.wait_for_service(self._pose_srv_channel)
-        # self.pose_srv_req = rospy.ServiceProxy(self._pose_srv_channel, String_Pose)
-
-
-        # rospy.wait_for_service(self._sync_pose_srv_channel)
-        # self.sync_srv_req = rospy.ServiceProxy(self._sync_pose_srv_channel, String_Pose)
 
         # get odom 2 base
         self.listener = tf.TransformListener()
         
         self.feedback_message = "{}: finished setting up".format(self.name)
 
-
+        self.is_manip = False
 
         return True
 
@@ -638,8 +633,6 @@ class SYNC_POSE_ESTIMATOR_SPOT(py_trees.behaviour.Behaviour):
         # Request the top surface pose of an object to WM
         obj1 = self.object_dict['target1'] ## spot
         obj2 = self.object_dict['target2'] ## haetae
-        # obj1 = 'spot'
-        # obj2 = ''
 
         wm_msg = json.loads(self.blackboard.wm_msg.data)["world"]
     
@@ -653,7 +646,8 @@ class SYNC_POSE_ESTIMATOR_SPOT(py_trees.behaviour.Behaviour):
             if wm_obj_name == 'box_s':
                 box_pose = wm_obj['pose']
 
- 
+            if wm_obj_name == 'haetae':
+                self.is_manip = wm_obj['robot_is_manip']
         
         sync_distance_bb = (obj1_pose[0] - obj2_pose[0]) ** 2 + (obj1_pose[1] - obj2_pose[1]) ** 2
         sync_distance_bb = np.sqrt(sync_distance_bb)
@@ -662,10 +656,107 @@ class SYNC_POSE_ESTIMATOR_SPOT(py_trees.behaviour.Behaviour):
         spot2box_s = np.sqrt(spot2box_s)
 
         self.sent_goal        = True
-        print("&&&&&&&&&&&&&$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$\n\n\n\n\n\n\n\n\n\n\n\n\n", spot2box_s, sync_distance_bb)
+        print("22222&&&&&&&&&&&&&$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$\n\n\n\n\n\n\n\n\n\n\n\n\n", self.is_manip,spot2box_s, sync_distance_bb)
 
-        if (sync_distance_bb < self.distance_criteria) and (spot2box_s > 0.05):
-            # print("fdqfeqqfqefwqFEQFEDQWFWFEWQ\n\n\n", sync_distance_bb)
+        # if (sync_distance_bb < 1.0) and (spot2box_s > 0.8) and ((box_pose[2] - obj1_pose[2]) > 0.4) and ((obj1_pose[0] - box_pose[0]) < 0.6):
+
+        if sync_distance_bb < 1.5:
+            if self.is_manip == True:
+                self.feedback_message = "SYNCING!!!!"
+                return py_trees.common.Status.RUNNING
+
+
+
+        self.feedback_message = "WorldModel: successful sync pose estimation "
+        return py_trees.common.Status.SUCCESS
+
+
+    def terminate(self, new_status):
+        return
+
+
+## Haetae wait til Spot move ## 
+class SYNC_POSE_ESTIMATOR_HAETAE(py_trees.behaviour.Behaviour):
+    """
+    Note that this behaviour will return with
+    :attr:`~py_trees.common.Status.SUCCESS`. It will also send a clearing
+    command to the robot if it is cancelled or interrupted by a higher
+    priority behaviour.
+    """
+
+    def __init__(self, name, distance_criteria, object_dict=None, wait_spot_drive=False):
+        super(SYNC_POSE_ESTIMATOR_HAETAE, self).__init__(name=name)
+
+        self.object_dict = object_dict
+        self.sent_goal   = False
+        self.distance_criteria = distance_criteria
+        self.wait_spot_drive = wait_spot_drive
+
+        self._pose_srv_channel = '/get_object_pose'
+        # self._parking_pose_srv_channel = '/get_object_parking_pose'
+        self._sync_pose_srv_channel = '/get_sync_pose'
+
+        self._world_frame   = rospy.get_param("/world_frame", None)
+        
+    def setup(self, timeout):
+        self.feedback_message = "{}: setup".format(self.name)
+
+        # get odom 2 base
+        self.listener = tf.TransformListener()
+        
+        self.feedback_message = "{}: finished setting up".format(self.name)
+
+        self.is_manip = False
+
+        return True
+
+    def initialise(self):
+        self.feedback_message = "Initialise"
+        self.logger.debug("{0}.initialise()".format(self.__class__.__name__))
+        self.sent_goal = False
+
+        self.blackboard = py_trees.Blackboard()
+        # self.blackboard.set(self.name +'/sync_pose_target1', Pose())
+        # self.blackboard.set(self.name +'/sync_pose_target2', Pose())        
+        
+        
+
+    def update(self):
+        self.logger.debug("%s.update()" % self.__class__.__name__)
+
+        # if not self.sent_goal:
+        # Request the top surface pose of an object to WM
+        obj1 = self.object_dict['target1'] ## spot
+        obj2 = self.object_dict['target2'] ## haetae
+
+        wm_msg = json.loads(self.blackboard.wm_msg.data)["world"]
+    
+        for wm_obj in wm_msg:
+            wm_obj_name = wm_obj['name']
+            if wm_obj_name == obj1:
+                obj1_pose = wm_obj['pose']
+            elif wm_obj_name == obj2:
+                obj2_pose = wm_obj['pose']
+            
+            if wm_obj_name == 'box_s':
+                box_pose = wm_obj['pose']
+
+            if wm_obj_name == 'spot':
+                self.is_manip = wm_obj['robot_is_driving']
+        
+        sync_distance_bb = (obj1_pose[0] - obj2_pose[0]) ** 2 + (obj1_pose[1] - obj2_pose[1]) ** 2
+        sync_distance_bb = np.sqrt(sync_distance_bb)
+        
+        spot2box_s = (obj1_pose[0] - box_pose[0])**2 + (obj1_pose[1] - box_pose[1])**2 + (obj1_pose[2] - box_pose[2])**2
+        spot2box_s = np.sqrt(spot2box_s)
+
+        self.sent_goal        = True
+        print("&&&&&&&&&&&&&$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$\n\n\n\n\n\n\n\n\n\n\n\n\n", self.is_manip,spot2box_s, sync_distance_bb)
+
+        # if (sync_distance_bb < 1.0) and (spot2box_s > 0.8) and ((box_pose[2] - obj1_pose[2]) > 0.4) and ((obj1_pose[0] - box_pose[0]) < 0.6):
+
+        # if sync_distance_bb < 1.0:
+        if self.is_manip == True:
             self.feedback_message = "SYNCING!!!!"
             return py_trees.common.Status.RUNNING
 
