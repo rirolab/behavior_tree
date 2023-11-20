@@ -134,7 +134,7 @@ class MOVEB(py_trees.behaviour.Behaviour):
             if ret.data==GoalStatus.REJECTED or ret.data==GoalStatus.ABORTED:
                 self.feedback_message = "failed to execute"
                 self.logger.debug("%s.update()[%s]" % (self.__class__.__name__, self.feedback_message))
-                self.drive_status_update_req(blackboard.robot_name)
+                # self.drive_status_update_req(blackboard.robot_name)
                 return py_trees.common.Status.FAILURE
             
             self.sent_goal        = True
@@ -148,14 +148,14 @@ class MOVEB(py_trees.behaviour.Behaviour):
         if state in [GoalStatus.ABORTED, GoalStatus.PREEMPTED, GoalStatus.REJECTED]:
             self.feedback_message = "FAILURE"
             self.logger.debug("%s.update()[%s->%s][%s]" % (self.__class__.__name__, self.status, py_trees.common.Status.FAILURE, self.feedback_message))
-            self.drive_status_update_req(blackboard.robot_name)
+            # self.drive_status_update_req(blackboard.robot_name)
             return py_trees.common.Status.FAILURE
 
         if state == GoalStatus.SUCCEEDED:
             self.feedback_message = "SUCCESSFUL"
             self.logger.debug("%s.update()[%s->%s][%s]" % (self.__class__.__name__, self.status, py_trees.common.Status.SUCCESS, self.feedback_message))
             
-            self.drive_status_update_req(blackboard.robot_name)
+            # self.drive_status_update_req(blackboard.robot_name)
             
             return py_trees.common.Status.SUCCESS
         else:
@@ -167,6 +167,10 @@ class MOVEB(py_trees.behaviour.Behaviour):
         d = json.loads(msg.data)
         if d['state'] == GoalStatus.ACTIVE:
             self.cmd_req( json.dumps({'action_type': 'cancel_goal'}) )
+        
+        blackboard = py_trees.Blackboard()
+        self.drive_status_update_req(blackboard.robot_name)
+        
         return
 
 

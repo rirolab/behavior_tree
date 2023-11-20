@@ -114,10 +114,13 @@ class Move(object):
         # s_drive11 = MoveBase.ALIGNB(name="Align", 
         #                            action_goal={'pose': "Plan"+idx+"/near_parking_pose"})
         # exit()
+        sync_pose_est = WorldModel.SYNC_POSE_ESTIMATOR_HAETAE(name="Sync"+idx, object_dict={'target1': 'spot', 'target2': 'haetae'}, distance_criteria=1.0)
+        wait_condition = py_trees.decorators.Condition(name="Wait"+idx, child=sync_pose_est, status=py_trees.common.Status.SUCCESS)
 
-        # root.add_children([s_drive_pose, pose_est10, wait_condition, s_drive10])
 
-        root.add_children([s_drive_pose, pose_est10, s_drive10])
+
+        root.add_children([s_drive_pose, pose_est10, wait_condition, s_drive10])
+
         # task = py_trees.composites.Sequence(name="Delivery")
         return root
 
