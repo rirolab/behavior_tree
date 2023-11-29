@@ -29,7 +29,7 @@ class MOVEB(py_trees.behaviour.Behaviour):
     priority behaviour.
     """
 
-    def __init__(self, name, action_goal=None):
+    def __init__(self, name, idx='', action_goal=None):
         super(MOVEB, self).__init__(name=name)
 
         # self.topic_name = topic_name
@@ -38,8 +38,9 @@ class MOVEB(py_trees.behaviour.Behaviour):
         self.sent_goal   = False
         self._world_frame_id = rospy.get_param("/world_frame", 'map')
         self.cmd_req     = None
-
+        self.idx = idx
         self._drive_status_update_srv_channel = "/update_robot_drive_state"
+        rospy.loginfo(f'{self.__class__.__name__}.__init__() called')
 
 
     def setup(self, timeout):
@@ -51,51 +52,24 @@ class MOVEB(py_trees.behaviour.Behaviour):
 
         rospy.wait_for_service(self._drive_status_update_srv_channel)
         self.drive_status_update_req = rospy.ServiceProxy(self._drive_status_update_srv_channel, String_None)
-
+        rospy.loginfo(f'{self.__class__.__name__}.setup() called')
         return True
 
 
     def initialise(self):
         self.logger.debug("{0}.initialise()".format(self.__class__.__name__))
+        rospy.loginfo(f"{self.__class__.__name__}.intialise() called")
         self.sent_goal = False
         blackboard = py_trees.Blackboard()
         self.drive_status_update_req(blackboard.robot_name)
 
     def update(self):
+        rospy.loginfo(f'{self.__class__.__name__}.update() called')
 
         blackboard = py_trees.Blackboard()
-        # listener = tf.TransformListener()
-        # self.drive_status_update_req(blackboard.robot_name)
-        # if blackboard.robot_name == 'spot':
-        #     while not rospy.is_shutdown():
-        #         try:
-        #             (pos, quat) = listener.lookupTransform("spot/base_link_plate", "box_s_grip_1", rospy.Time(0))
-        #             (pos2, quat2) = listener.lookupTransform("spot/base_link", "picking_station2_nav_1", rospy.Time(0))
-                    
-        #             print("!!!!!!!!!!\n\n", pos, len(pos))
-        #             print("!!",blackboard.robot_name)
-        #             # assert len(pos) == 3
-        #             box_plate_dist = pos[0] ** 2 + pos[1] ** 2 + pos[2] ** 2
-        #             spot_to_ps2 = pos2[0] ** 2 + pos2[1] ** 2 + pos2[2] ** 2
-        #             print(box_plate_dist, spot_to_ps2)
-        #             if box_plate_dist > 1.1: ## from origin -> picking_station2
-        #                 break
-        #             elif box_plate_dist < 0.5 and spot_to_ps2 < 0.7: ## stay at picking_station2
-        #                 break
-        #         except:
-        #             print("111111!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!23232\n")
-        #             pass
-
-        # elif blackboard.robot_name == 'haetae':
-        #     pass
-        
-        # elif blackboard.robot_name == 'stretch':
-        #     pass
-
-        # else:
-        #     raise NotImplementedError()
-
-
+        ticket = blackboard.get('Plan'+self.idx+'/ticket')
+        print(f"(MOVEBASE update) ticket: {ticket}")
+        docking = (ticket == 0)
         self.logger.debug("%s.update()" % self.__class__.__name__)
 
         if self.cmd_req is None:
@@ -122,12 +96,12 @@ class MOVEB(py_trees.behaviour.Behaviour):
                         'qy': ps.orientation.y,
                         'qz': ps.orientation.z,
                         'qw': ps.orientation.w,}
-
             cmd_str = json.dumps({'action_type': 'moveBase',
                                   'frame': self._world_frame_id,
                                   'goal': json.dumps(goal),
                                   'timeout': 10.,
-                                  'no_wait': True})
+                                  'no_wait': True,
+                                  'docking': docking})
 
             ret = self.cmd_req(cmd_str)
             print("(MOVEBASE update) goal: ", goal)
@@ -145,13 +119,16 @@ class MOVEB(py_trees.behaviour.Behaviour):
         d = json.loads(msg.data)
         state = d['state']
         
-        if state in [GoalStatus.ABORTED, GoalStatus.PREEMPTED, GoalStatus.REJECTED]:
+        print(f"[MoveBase subtree] goal state: {state}")
+        if state in [GoalStatus.ABORTED, GoalStatus.PREEMPTED, GoalStatus.REJECTED, GoalStatus.RECALLED]:
+            print(f"[MoveBase subtree] goal state: FAILED")
             self.feedback_message = "FAILURE"
             self.logger.debug("%s.update()[%s->%s][%s]" % (self.__class__.__name__, self.status, py_trees.common.Status.FAILURE, self.feedback_message))
             # self.drive_status_update_req(blackboard.robot_name)
             return py_trees.common.Status.FAILURE
 
         if state == GoalStatus.SUCCEEDED:
+            print(f"[MoveBase subtree] goal state: SUCCEEDED")
             self.feedback_message = "SUCCESSFUL"
             self.logger.debug("%s.update()[%s->%s][%s]" % (self.__class__.__name__, self.status, py_trees.common.Status.SUCCESS, self.feedback_message))
             
@@ -163,6 +140,7 @@ class MOVEB(py_trees.behaviour.Behaviour):
 
         
     def terminate(self, new_status):
+        rospy.loginfo(f'{self.__class__.__name__}.terminate() called')
         msg = self.status_req()
         d = json.loads(msg.data)
         if d['state'] == GoalStatus.ACTIVE:

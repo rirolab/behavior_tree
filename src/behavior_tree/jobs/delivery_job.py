@@ -14,7 +14,7 @@ from complex_action_client import misc
 
 #sys.path.insert(0,'..')
 from behavior_tree.subtrees import MoveJoint, MovePose, MoveBase, Gripper, Stop, WorldModel
-
+from behavior_tree.decorators import Ticketing, Replanning
 
 ##############################################################################
 # Behaviours
@@ -118,28 +118,32 @@ class Move(object):
         blackboard = py_trees.blackboard.Blackboard()
         
         if goal[idx]["primitive_action"] in ['delivery']:
+            robot       = goal[idx]['robot']
             obj         = goal[idx]['object']
             source      = goal[idx]['source']
             destination = goal[idx]['destination']
         else:
             return None
 
-        # ----------------- Move Task ----------------        
-        s_init_pose = MoveJoint.MOVEJ(name="Init", controller_ns=controller_ns,
-                                  action_goal=blackboard.init_config)
-        s_drive_pose = MoveJoint.MOVEJ(name="Drive", controller_ns=controller_ns,
-                                  action_goal=blackboard.drive_config)
-
+        
         # ----------------- Bring ---------------------
-        pose_est10 = WorldModel.PARKING_POSE_ESTIMATOR(name="Plan"+idx,
-                                              object_dict = {'destination': source})
-        s_drive10 = MoveBase.MOVEB(name="Bring",
-                                      controller_ns=controller_ns,
-                                      action_goal={'pose': "Plan"+idx+"/parking_pose"})
         bring = py_trees.composites.Sequence(name="Bring")
-        bring.add_children([s_drive_pose, pose_est10, s_drive10])
+        s_drive_pose1 = MoveJoint.MOVEJ(name="DrivePose", controller_ns=controller_ns,
+                                  action_goal=blackboard.drive_config)
+        pose_est10 = WorldModel.PARKING_POSE_ESTIMATOR(name="Plan"+idx,
+                                              object_dict = {'robot':robot,'destination': source})
+        ticketing1 = Ticketing(child=pose_est10, idx=idx, name="Ticketing")
+        s_drive10 = MoveBase.MOVEB(name="Drive", idx=idx,
+                                   action_goal={'pose': "Plan"+idx+"/parking_pose"})
+        replanning1 = Replanning(s_drive10, idx=idx, name="Replan")
+        waiting1 = py_trees.composites.Parallel(name='Waiting', children=[ticketing1, replanning1])
+        bring.add_children([s_drive_pose1, waiting1])
 
         # ----------------- Pick ---------------------
+        s_init_pose20 = MoveJoint.MOVEJ(name="Init", controller_ns=controller_ns,
+                                  action_goal=blackboard.init_config)
+        s_init_pose21 = MoveJoint.MOVEJ(name="Init", controller_ns=controller_ns,
+                                  action_goal=blackboard.init_config)
         pose_est20 = WorldModel.POSE_ESTIMATOR(name="Plan"+idx,
                                               object_dict = {'target': obj})
         s_move20 = MovePose.MOVEPROOT(name="Top1",
@@ -159,21 +163,31 @@ class Move(object):
                                  action_goal={'pose': "Plan"+idx+"/grasp_top_pose"})
 
         pick = py_trees.composites.Sequence(name="Pick")
-        pick.add_children([pose_est20, s_move20, s_move21, s_move22, s_move23, s_move24, s_move25])
+        pick.add_children([pose_est20, s_init_pose20, s_move20, s_move21, s_move22, s_move23, s_move24, s_move25, s_init_pose21])
 
 
         # ----------------- Delivery ---------------------
-        pose_est30 = WorldModel.PARKING_POSE_ESTIMATOR(name="Plan"+idx,
-                                              object_dict = {'destination': source})
-        s_drive30 = MoveBase.MOVEB(name="Deliver",
-                                      controller_ns=controller_ns,
-                                      action_goal={'pose': "Plan"+idx+"/parking_pose"})
         deliver = py_trees.composites.Sequence(name="Deliver")
-        deliver.add_children([s_drive_pose, pose_est30, s_drive30])
+        s_drive_pose3 = MoveJoint.MOVEJ(name="DrivePose", controller_ns=controller_ns,
+                                  action_goal=blackboard.drive_config)
+        pose_est3 = WorldModel.PARKING_POSE_ESTIMATOR(name="Plan"+idx,
+                                              object_dict = {'robot':robot,'destination': destination})
+        ticketing3 = Ticketing(child=pose_est3, idx=idx, name="Ticketing")
+        s_drive3 = MoveBase.MOVEB(name="Drive",idx=idx,
+                                   action_goal={'pose': "Plan"+idx+"/parking_pose"})
+        replanning3 = Replanning(s_drive3, idx=idx, name="Replan")
+        waiting3 = py_trees.composites.Parallel(name='Waiting', children=[ticketing3, replanning3])
+        deliver.add_children([s_drive_pose3, waiting3])
 
         # ----------------- Place ---------------------
+        place = py_trees.composites.Sequence(name="Place")
+        s_init_pose40 = MoveJoint.MOVEJ(name="Init", controller_ns=controller_ns,
+                                  action_goal=blackboard.init_config)
+        s_init_pose41 = MoveJoint.MOVEJ(name="Init", controller_ns=controller_ns,
+                                  action_goal=blackboard.init_config)
         pose_est4 = WorldModel.POSE_ESTIMATOR(name="Plan"+idx,
-                                              object_dict = {'target': destination})
+                                              object_dict = {'target': obj,
+                                                             'destination':destination})
         s_move40 = MovePose.MOVEPROOT(name="Top1",
                                       controller_ns=controller_ns,
                                       action_goal={'pose': "Plan"+idx+"/place_top_pose"})
@@ -187,8 +201,8 @@ class Move(object):
         s_move44 = MovePose.MOVEP(name="Top", controller_ns=controller_ns,
                                  action_goal={'pose': "Plan"+idx+"/place_top_pose"})
         
-        place = py_trees.composites.Sequence(name="Place")
-        place.add_children([pose_est4, s_move40, s_move41, s_move42, s_move43, s_move44, s_init_pose])
+        s_move45 = WorldModel.REMOVE(name="Remove", target=obj)
+        place.add_children([pose_est4, s_init_pose40, s_move40, s_move41, s_move42, s_move43, s_move44, s_move45, s_init_pose41])
         
         task = py_trees.composites.Sequence(name="Delivery")
         task.add_children([bring, pick, deliver, place])
