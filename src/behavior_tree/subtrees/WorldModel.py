@@ -7,9 +7,9 @@ import py_trees
 import PyKDL
 import tf
 
-from geometry_msgs.msg import Pose
+from geometry_msgs.msg import Pose, Point, Quaternion
 from complex_action_client import misc
-from riro_srvs.srv import String_None, String_String, String_Pose, String_PoseResponse
+from riro_srvs.srv import String_None, String_NoneRequest, String_Pose, String_PoseResponse, Delivery_Ticket, Delivery_TicketRequest
 
 
 class REMOVE(py_trees.behaviour.Behaviour):
@@ -20,20 +20,17 @@ class REMOVE(py_trees.behaviour.Behaviour):
     priority behaviour.
     """
 
-    def __init__(self, name, action_goal=None,
-                 topic_name="", controller_ns=""):
+    def __init__(self, name, target=''):
         super(REMOVE, self).__init__(name=name)
-
-        self.topic_name    = topic_name
-        self.action_goal   = action_goal
+        self.target        = target
         self.sent_goal     = False
-        self.cmd_req       = None
+        self.srv_req       = None
 
 
     def setup(self, timeout):
         self.feedback_message = "{}: setup".format(self.name)
-        rospy.wait_for_service("/remove_wm_object")
-        self.cmd_req = rospy.ServiceProxy("/remove_wm_object", String_None)
+        rospy.wait_for_service("/delete_box")
+        self.srv_req = rospy.ServiceProxy("/delete_box", String_None)
         return True
 
 
@@ -45,15 +42,15 @@ class REMOVE(py_trees.behaviour.Behaviour):
     def update(self):
         self.logger.debug("%s.update()" % self.__class__.__name__)
 
-        if self.cmd_req is None:
+        if self.srv_req is None:
             self.feedback_message = \
-              "no action client, did you call setup() on your tree?"
+              "Service not connected, did you call setup() on your tree?"
             return py_trees.Status.FAILURE
 
         if not self.sent_goal:
-            # cmd_str = json.dumps({'': 'gripperGotoPos',
-            #                       'goal': self.action_goal})
-            self.cmd_req(self.action_goal['obj_name'])
+            req = String_NoneRequest()
+            req.data = self.target
+            self.srv_req(req)
             self.sent_goal = True
             self.feedback_message = "Sending a world_model command"
             return py_trees.common.Status.RUNNING
@@ -363,9 +360,11 @@ class PARKING_POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         self.sent_goal   = False
         
         self._pose_srv_channel = '/get_object_pose'
-        self._parking_pose_srv_channel = '/get_object_parking_pose'
+        self._parking_pose_srv_channel = '/get_parking_ticket'
         
         self._world_frame   = rospy.get_param("/world_frame", None)
+        self._home_pose     = eval(rospy.get_param('home_config', str([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])))
+        self._home_pose     = misc.list_rpy2list_quat(self._home_pose)
         
     def setup(self, timeout):
         self.feedback_message = "{}: setup".format(self.name)
@@ -374,13 +373,9 @@ class PARKING_POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
 
         rospy.wait_for_service(self._pose_srv_channel)
         self.pose_srv_req = rospy.ServiceProxy(self._pose_srv_channel, String_Pose)
-
         rospy.wait_for_service(self._parking_pose_srv_channel)
-        self.parking_pose_srv_req = rospy.ServiceProxy(self._parking_pose_srv_channel, String_Pose)
+        self.parking_pose_srv_req = rospy.ServiceProxy(self._parking_pose_srv_channel, Delivery_Ticket)
 
-        # get odom 2 base
-        self.listener = tf.TransformListener()
-        
         self.feedback_message = "{}: finished setting up".format(self.name)
         return True
 
@@ -391,8 +386,10 @@ class PARKING_POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
 
         self.blackboard = py_trees.Blackboard()
         self.blackboard.set(self.name +'/near_parking_pose', Pose())
-        # self.blackboard.set(self.name +'/aligned_parking_pose', Pose())
         self.blackboard.set(self.name +'/parking_pose', Pose())
+        self.blackboard.set(self.name +'/home_pose', Pose(Point(self._home_pose[0],self._home_pose[1],self._home_pose[2]),
+                                                          Quaternion(self._home_pose[3],self._home_pose[4],self._home_pose[5],self._home_pose[6])))
+    
         
 
     def update(self):
@@ -402,41 +399,34 @@ class PARKING_POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
 
             # Request the top surface pose of an object to WM
             obj = self.object_dict['destination']
+            if obj == 'home':
+                self.blackboard.set(self.name +'/ticket', 1)
+                self.blackboard.set(self.name +'/home_pose', Pose(Point(self._home_pose[0],self._home_pose[1],self._home_pose[2]),
+                                                          Quaternion(self._home_pose[3],self._home_pose[4],self._home_pose[5],self._home_pose[6])))
+                self.sent_goal        = True
+                self.feedback_message = "WorldModel: successful home pose estimation "
+                return py_trees.common.Status.SUCCESS
+                
             try:
-                parking_pose = self.parking_pose_srv_req(obj).pose
+                req = Delivery_TicketRequest()
+                req.robot = self.object_dict['robot']
+                req.destination = self.object_dict['destination']
+                resp = self.parking_pose_srv_req(req)
+                
+                ticket_order = resp.order
+                parking_pose = resp.pose
+
             except rospy.ServiceException as e:
                 self.feedback_message = "Parking Pose Srv Error"
                 print("Pose Service is not available: %s"%e)
                 return py_trees.common.Status.FAILURE
-
-            # offset          = PyKDL.Frame(PyKDL.Rotation.Identity(),
-            #                               PyKDL.Vector(self.torso_offset_x, 0, 0))
-            # parking_pose  = misc.pose2KDLframe(parking_pose) * offset
-            # offset          = PyKDL.Frame(PyKDL.Rotation.Identity(),
-            #                               PyKDL.Vector(self.approaching_offset_x, 0, 0))
-            # near_parking_pose  = parking_pose * offset
-
-            # parking_pose = misc.KDLframe2Pose(parking_pose)
-            # near_parking_pose = misc.KDLframe2Pose(near_parking_pose)
             
-        
-            # try:
-            #     obj_base_pose = self.base_pose_srv_req(obj).pose
-            # except rospy.ServiceException as e:
-            #     self.feedback_message = "Pose Srv Error"
-            #     print("Base Pose Service is not available: %s"%e)
-            #     return py_trees.common.Status.FAILURE
-            
+            self.blackboard.set(self.name +'/ticket', ticket_order)
             self.blackboard.set(self.name +'/parking_pose', parking_pose)
-            # self.blackboard.set(self.name +'/near_parking_pose', near_parking_pose)
-            # rospy.set_param('obj_grasp_pose', json.dumps(misc.pose2list(obj_pose)))
-            
             
             self.sent_goal        = True
             self.feedback_message = "WorldModel: successful parking pose estimation "
             return py_trees.common.Status.SUCCESS
-            ## return py_trees.common.Status.RUNNING
-
         
         self.feedback_message = "WorldModel: successful parking pose estimation "
         return py_trees.common.Status.SUCCESS

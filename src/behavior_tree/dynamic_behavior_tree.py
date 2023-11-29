@@ -13,10 +13,10 @@ import json
 from std_srvs.srv import Empty, EmptyResponse
 
 ## import subtrees.WM2Blackboard
-from subtrees import Grnd2Blackboard, WM2Blackboard
+from subtrees import Grnd2Blackboard, WM2Blackboard, Idle
 import decorators
 
-def create_root(controller_ns=""):
+def create_root(controller_ns="", robot_type=''):
     """
     Create a basic tree and start a 'Topics2BB' work sequence that
     takes the asynchronicity out of subscription.
@@ -62,7 +62,8 @@ def create_root(controller_ns=""):
 
     # ---------------- Root->Priorities- -----------------------
     priorities = py_trees.composites.Selector("Priorities")
-    idle       = py_trees.behaviours.Running(name="Idle")
+    idle = Idle.Idle(name="Idle", type=robot_type, controller_ns=controller_ns)
+    # idle       = py_trees.behaviours.Running(name="Idle")
     priorities.add_child(idle)
     
     # root.add_children([grnd2bb,priorities])
@@ -85,7 +86,7 @@ def load_topic_list(filename):
 
 class SplinteredReality(object):
 
-    def __init__(self, jobs, robot_name, rec_topic_list=None, n_loop=1,
+    def __init__(self, jobs, robot_name, robot_type, rec_topic_list=None, n_loop=1,
                  enable_inf_loop=False, loop_timeout=-1):
         """
         Initialise a core tree (minus a job) and preload job classes ready to
@@ -107,7 +108,7 @@ class SplinteredReality(object):
         self.tree_stop_srv  = rospy.Service('bt_stop', Empty, self._bt_stop_srv)
         self.tree_start_srv = rospy.Service('bt_restart', Empty, self._bt_restart_srv)
         
-        self.tree = py_trees_ros.trees.BehaviourTree(create_root(self.controller_ns))
+        self.tree = py_trees_ros.trees.BehaviourTree(create_root(self.controller_ns, robot_type=robot_type))
         self.tree.add_pre_tick_handler(self.pre_tick_handler)
         self.tree.add_post_tick_handler(self.post_tick_handler)
         self.report_publisher = rospy.Publisher("~report", std_msgs.String, queue_size=5)
@@ -391,9 +392,14 @@ if __name__ == '__main__':
                 'jobs.gripper_job.Move',
                 'jobs.load_job.Move',
                 'jobs.unload_job.Move',
-                'jobs.drive_job.Move',]
+                'jobs.drive_job.Move',
+                'jobs.delivery_job.Move',
+                'jobs.home_job.Move',
+                ]
     elif opt.robot == 'quad':
-        jobs = ['jobs.spot_drive_job.Move',]
+        jobs = ['jobs.spot_drive_job.Move',
+                'jobs.home_job.Move',
+                ]
     else:
         print(f"Given robot type should be one of 'manip' and 'quad'. Input type: {opt.robot} ")
         raise NotImplementedError()
@@ -402,7 +408,7 @@ if __name__ == '__main__':
         print(f"Given robot type should be one of spot/haetae/stretch. Input type: {opt.robot_name} ")
         raise NotImplementedError
 
-    splintered_reality = SplinteredReality(jobs=jobs, rec_topic_list=topic_list, robot_name=opt.robot_name)
+    splintered_reality = SplinteredReality(jobs=jobs, rec_topic_list=topic_list, robot_name=opt.robot_name, robot_type=opt.robot)
     rospy.on_shutdown(splintered_reality.shutdown)
     if not splintered_reality.setup():
         console.logerror("failed to setup the tree, aborting.")
