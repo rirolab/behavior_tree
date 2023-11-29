@@ -110,7 +110,7 @@ class Move(object):
         pose_est10 = WorldModel.PARKING_POSE_ESTIMATOR(name="Plan"+idx,
                                               object_dict = {'destination': destination})
         s_drive10 = MoveBase.MOVEB(name="Navigate", 
-                                   action_goal={'pose': "Plan"+idx+"/parking_pose"})
+                                   action_goal={'pose': "Plan"+idx+"/parking_pose"}, destination=destination)
         # s_drive11 = MoveBase.ALIGNB(name="Align", 
         #                            action_goal={'pose': "Plan"+idx+"/near_parking_pose"})
         # exit()

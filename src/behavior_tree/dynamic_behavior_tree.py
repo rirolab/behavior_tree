@@ -391,9 +391,14 @@ if __name__ == '__main__':
                 'jobs.gripper_job.Move',
                 'jobs.load_job.Move',
                 'jobs.unload_job.Move',
+                'jobs.collabload_job.Move',
+                'jobs.collabunload_job.Move',
+                'jobs.wait_drive_job.Move',
                 'jobs.drive_job.Move',]
     elif opt.robot == 'quad':
-        jobs = ['jobs.spot_drive_job.Move',]
+        jobs = ['jobs.spot_drive_job.Move',
+                'jobs.wait_spot_drive_job.Move',
+                'jobs.collabspot_drive_job.Move',]
     else:
         print(f"Given robot type should be one of 'manip' and 'quad'. Input type: {opt.robot} ")
         raise NotImplementedError()
