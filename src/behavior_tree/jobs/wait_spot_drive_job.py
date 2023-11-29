@@ -14,7 +14,7 @@ from complex_action_client import misc
 
 #sys.path.insert(0,'..')
 from behavior_tree.subtrees import MoveJoint, MovePose, MoveBase, Gripper, Stop, WorldModel
-from behavior_tree.decorators import Ticketing, Replanning
+
 
 ##############################################################################
 # Behaviours
@@ -75,7 +75,7 @@ class Move(object):
         else:
             grounding = json.loads(msg.data)['params']
             for i in range( len(list(grounding.keys())) ):
-                if grounding[str(i+1)]['primitive_action'] in ['drive']:
+                if grounding[str(i+1)]['primitive_action'] in ['waitdrive']:
                     self.goal = grounding #[str(i+1)] )
                     break
 
@@ -92,50 +92,39 @@ class Move(object):
            :class:`~py_trees.behaviour.Behaviour`: subtree root
         """
         # beahviors
-        root = py_trees.composites.Sequence(name="Drive")
+        root = py_trees.composites.Sequence(name="WaitDrive")
         blackboard = py_trees.blackboard.Blackboard()
         
-        if goal[idx]["primitive_action"] in ['drive']:
-            robot       = goal[idx]['robot']
+        if goal[idx]["primitive_action"] in ['waitdrive']:
             destination = goal[idx]['destination']
+            target = goal[idx]['target']
         else:
             return None
 
-        # ----------------- Bring --------------------
-        # MJ origin
-        #pose_est10 = WorldModel.PARKING_POSE_ESTIMATOR(name="Plan"+idx,
+        # ----------------- Bring ---------------------
+        pose_est10 = WorldModel.PARKING_POSE_ESTIMATOR(name="Plan"+idx,
                                               object_dict = {'destination': destination})
-        #s_drive10 = MoveBase.MOVEB(name="Navigate", 
-        #                           action_goal={'pose': "Plan"+idx+"/parking_pose"}, destination=destination)
+        s_drive10 = MoveBase.MOVEB(name="Navigate", 
+                                   action_goal={'pose': "Plan"+idx+"/parking_pose"}, destination=destination)
         # s_drive11 = MoveBase.ALIGNB(name="Align", 
         #                            action_goal={'pose': "Plan"+idx+"/near_parking_pose"})
-        drive = py_trees.composites.Sequence(name="SpotDrive")
-        pose_est1 = WorldModel.PARKING_POSE_ESTIMATOR(name="Plan"+idx,
-                                              object_dict = {'robot':robot,'destination': destination})
-        ticketing1 = Ticketing(pose_est1, idx=idx, name="Plan"+idx)
-        s_drive1 = MoveBase.MOVEB(name="Plan"+idx, idx=idx,
-                                   action_goal={'pose': "Plan"+idx+"/parking_pose"})
-        replanning1 = Replanning(s_drive1, idx=idx, name="Plan"+idx)
-        waiting1 = py_trees.composites.Parallel(name='Waiting', children=[ticketing1, replanning1])
-#         drive.add_child(waiting1)
-#         root.add_child(drive)
         
-        
-        # # s_drive12 = MoveBase.TOUCHB(name="Approach")
-        # # root.add_children([s_drive_pose, pose_est10, s_drive10, s_drive11, s_drive12])
+        # s_drive12 = MoveBase.TOUCHB(name="Approach")
+        # root.add_children([s_drive_pose, pose_est10, s_drive10, s_drive11, s_drive12])
 
-        sync_pose_est = WorldModel.SYNC_POSE_ESTIMATOR_SPOT(name="Sync"+idx, object_dict={'target1': 'spot', 'target2': 'haetae'}, distance_criteria=1.0)
+        # sync_pose_est = WorldModel.SYNC_POSE_ESTIMATOR_SPOT(name="Sync"+idx, object_dict={'target1': 'spot', 'target2': 'haetae'}, distance_criteria=1.0)
+
+        sync_pose_est = WorldModel.SYNC_POSE_ESTIMATOR_WAIT(name="Sync"+idx, target_obj=target, placement=destination)
         wait_condition = py_trees.decorators.Condition(name="Wait"+idx, child=sync_pose_est, status=py_trees.common.Status.SUCCESS)
 
-        drive.add_child(waiting1)
-        root.add_children([drive, wait_condition])
-        # # sync_pose_est2 = WorldModel.SYNC_POSE_ESTIMATOR(name="Sync"+idx, object_dict={'target1': 'spot', 'target2': 'haetae'}, distance_criteria=1.0, smaller_than_criteria=False)
-        # # wait_condition2 = py_trees.decorators.Condition(name="Wait"+idx, child=sync_pose_est2, status=py_trees.common.Status.SUCCESS)
+        # sync_pose_est2 = WorldModel.SYNC_POSE_ESTIMATOR(name="Sync"+idx, object_dict={'target1': 'spot', 'target2': 'haetae'}, distance_criteria=1.0, smaller_than_criteria=False)
+        # wait_condition2 = py_trees.decorators.Condition(name="Wait"+idx, child=sync_pose_est2, status=py_trees.common.Status.SUCCESS)
 
         # root.add_children([pose_est10, s_drive10])
-        # # root.add_children([pose_est10, wait_condition, s_drive10])
+        # root.add_children([pose_est10, wait_condition, s_drive10])
+        root.add_children([pose_est10, s_drive10, wait_condition])
 
-        # # task = py_trees.composites.Sequence(name="Delivery")
+        # task = py_trees.composites.Sequence(name="Delivery")
         return root
 
 
