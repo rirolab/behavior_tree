@@ -1,5 +1,7 @@
 import time
+import py_trees
 from py_trees.decorators import *
+import rospy
 
 class Loop(Decorator):
     """
@@ -75,3 +77,99 @@ class Loop(Decorator):
             self.feedback_message = self.decorated.feedback_message
             return self.decorated.status
     
+class Ticketing(Decorator):
+    """
+    A decorator that loops the node or branch a number of times, or infinitely.
+    """
+    def __init__(self, child, idx, name=common.Name.AUTO_GENERATED):
+        """
+        Init with the decorated child.
+        
+        Args:
+        child (:class:`~py_trees.behaviour.Behaviour`): behaviour to time
+        name (:obj:`str`): the decorator name
+        """
+        super(Ticketing, self).__init__(name=name, child=child)
+        self.idx = idx
+        rospy.loginfo("(Ticketing) decorator initialized.")
+
+    def setup(self,timeout):
+        rospy.loginfo("(Ticketing) decorator setup function called.")
+        return super(Ticketing, self).setup(timeout)
+    
+    def initialise(self):
+        """
+        Reset the feedback message and finish time on behaviour entry.
+        """
+        self.blackboard = py_trees.Blackboard()
+        self.blackboard.set('Plan'+self.idx+'/ticket', -1)
+        self.feedback_message = "[(Decorator) Heading] Heading to somewhere."
+        rospy.loginfo("(Ticketing) decorator initialize function called.")
+        
+    def update(self):
+        """
+        Flip :data:`~py_trees.common.Status.FAILURE` and
+        :data:`~py_trees.common.Status.SUCCESS`
+        
+        Returns:
+        :class:`~py_trees.common.Status`: the behaviour's new status :class:`~py_trees.common.Status`
+        """
+        rospy.loginfo(f'[Ticketing] updated called')
+        order = self.blackboard.get('Plan'+self.idx+'/ticket')
+        if order == 0:
+            self.feedback_message = f'(Ticketing) current order: {order}'
+            rospy.loginfo(f"[Ticketing] SUCCESS order={order}")
+            return common.Status.SUCCESS
+        rospy.loginfo(f"[Ticketing] running order={order}")
+        return common.Status.RUNNING
+
+class Replanning(Decorator):
+    """
+    A decorator that loops the node or branch a number of times, or infinitely.
+    """
+    def __init__(self, child, idx, name=common.Name.AUTO_GENERATED):
+        """
+        Init with the decorated child.
+        
+        Args:
+        child (:class:`~py_trees.behaviour.Behaviour`): behaviour to time
+        name (:obj:`str`): the decorator name
+        """
+        super(Replanning, self).__init__(name=name, child=child)
+        self.idx = idx
+        rospy.loginfo("(Replanning) decorator initialized.")
+
+    def setup(self,timeout):
+        return super(Replanning, self).setup(timeout)
+    
+    def initialise(self):
+        """
+        Reset the feedback message and finish time on behaviour entry.
+        """
+        self.ticket = -1
+        self.blackboard = py_trees.Blackboard()
+        self.feedback_message = "[(Decorator) Replanning] Heading to somewhere."
+        rospy.loginfo("(Replanning) decorator initialize function called.")
+        
+    def update(self):
+        """
+        Flip :data:`~py_trees.common.Status.FAILURE` and
+        :data:`~py_trees.common.Status.SUCCESS`
+        
+        Returns:
+        :class:`~py_trees.common.Status`: the behaviour's new status :class:`~py_trees.common.Status`
+        """
+        rospy.loginfo(f'[Replannig] updated called')
+        prev_ticket = self.ticket
+        self.ticket = self.blackboard.get('Plan'+self.idx+'/ticket')
+        if self.ticket != prev_ticket:
+            self.feedback_message = f'[Replanning] ticket order changed {prev_ticket}->{self.ticket}'
+            self.decorated.initialise()
+            rospy.loginfo(f'[Replanning] ticket order changed {prev_ticket}->{self.ticket}')
+            return common.Status.RUNNING
+        elif self.ticket == 0:
+            if self.decorated.status == common.Status.SUCCESS:
+                rospy.loginfo(f'[Replanning] 1st order & move compledted.')
+                return common.Status.SUCCESS
+        rospy.loginfo(f"[Replanning] moving to somewhere ticket={self.ticket}")
+        return common.Status.RUNNING

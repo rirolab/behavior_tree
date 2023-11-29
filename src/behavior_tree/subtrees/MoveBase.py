@@ -289,7 +289,7 @@ class MOVEB(py_trees.behaviour.Behaviour):
     priority behaviour.
     """
 
-    def __init__(self, name, action_goal=None, destination=None):
+    def __init__(self, name, idx='', action_goal=None, destination=None):
         super(MOVEB, self).__init__(name=name)
 
         # self.topic_name = topic_name
@@ -298,8 +298,9 @@ class MOVEB(py_trees.behaviour.Behaviour):
         self.sent_goal   = False
         self._world_frame_id = rospy.get_param("/world_frame", 'map')
         self.cmd_req     = None
-
+        self.idx = idx
         self._drive_status_update_srv_channel = "/update_robot_drive_state"
+        rospy.loginfo(f'{self.__class__.__name__}.__init__() called')
 
         self._spot_cmd_vel = "/spot/cmd_vel"
 
@@ -324,7 +325,7 @@ class MOVEB(py_trees.behaviour.Behaviour):
         self.arrival_status_delete_req = rospy.ServiceProxy(self._arrival_state_delete_srv_channel, String_None)
 
         blackboard = py_trees.Blackboard()
-
+        rospy.loginfo(f'{self.__class__.__name__}.setup() called')
         return True
 
     def get_obj_pose_from_wm(self, target_name):
@@ -341,6 +342,7 @@ class MOVEB(py_trees.behaviour.Behaviour):
 
     def initialise(self):
         self.logger.debug("{0}.initialise()".format(self.__class__.__name__))
+        rospy.loginfo(f"{self.__class__.__name__}.intialise() called")
         self.sent_goal = False
         blackboard = py_trees.Blackboard()
         self.drive_status_update_req(blackboard.robot_name)
@@ -348,12 +350,17 @@ class MOVEB(py_trees.behaviour.Behaviour):
 
     def update(self):
         blackboard = py_trees.Blackboard()
+        ticket = blackboard.get('Plan'+self.idx+'/ticket')
+        print(f"(MOVEBASE update) ticket: {ticket}")
+        docking = (ticket == 0)
+        
         self.logger.debug("%s.update()" % self.__class__.__name__)
 
         if self.cmd_req is None:
             self.feedback_message = \
               "No action client, did you call setup() on your tree?"
             return py_trees.Status.FAILURE
+        rospy.loginfo(f'{self.__class__.__name__}.update() called')
 
         if not self.sent_goal:
             if type(self.action_goal['pose']) is geometry_msgs.msg._Pose.Pose:
@@ -554,7 +561,12 @@ class MOVEBCOLLAB(py_trees.behaviour.Behaviour):
     def update(self):
 
         blackboard = py_trees.Blackboard()
-
+        
+        ### only this? ## DM
+#         ticket = blackboard.get('Plan'+self.idx+'/ticket')
+#         print(f"(MOVEBASE update) ticket: {ticket}")
+#         docking = (ticket == 0)
+      
         self.logger.debug("%s.update()" % self.__class__.__name__)
 
         if self.cmd_req is None:
@@ -581,12 +593,12 @@ class MOVEBCOLLAB(py_trees.behaviour.Behaviour):
                         'qy': ps.orientation.y,
                         'qz': ps.orientation.z,
                         'qw': ps.orientation.w,}
-
             cmd_str = json.dumps({'action_type': 'moveBase',
                                   'frame': self._world_frame_id,
                                   'goal': json.dumps(goal),
                                   'timeout': 10.,
-                                  'no_wait': True})
+                                  'no_wait': True,
+                                  'docking': docking})
 
             ret = self.cmd_req(cmd_str)
             print("(MOVEBASE update) goal: ", goal)
@@ -604,7 +616,9 @@ class MOVEBCOLLAB(py_trees.behaviour.Behaviour):
         d = json.loads(msg.data)
         state = d['state']
         
-        if state in [GoalStatus.ABORTED, GoalStatus.PREEMPTED, GoalStatus.REJECTED]:
+        print(f"[MoveBase subtree] goal state: {state}")
+        if state in [GoalStatus.ABORTED, GoalStatus.PREEMPTED, GoalStatus.REJECTED, GoalStatus.RECALLED]:
+            print(f"[MoveBase subtree] goal state: FAILED")
             self.feedback_message = "FAILURE"
             self.logger.debug("%s.update()[%s->%s][%s]" % (self.__class__.__name__, self.status, py_trees.common.Status.FAILURE, self.feedback_message))
             # self.drive_status_update_req(blackboard.robot_name)
@@ -613,6 +627,7 @@ class MOVEBCOLLAB(py_trees.behaviour.Behaviour):
         self.publish_collab_cmd_vel()
 
         if state == GoalStatus.SUCCEEDED:
+            print(f"[MoveBase subtree] goal state: SUCCEEDED")
             self.feedback_message = "SUCCESSFUL"
             self.logger.debug("%s.update()[%s->%s][%s]" % (self.__class__.__name__, self.status, py_trees.common.Status.SUCCESS, self.feedback_message))
             
@@ -634,6 +649,7 @@ class MOVEBCOLLAB(py_trees.behaviour.Behaviour):
 
         
     def terminate(self, new_status):
+        rospy.loginfo(f'{self.__class__.__name__}.terminate() called')
         msg = self.status_req()
         d = json.loads(msg.data)
         if d['state'] == GoalStatus.ACTIVE:
