@@ -113,7 +113,7 @@ class Move(object):
         pose_est1 = WorldModel.PARKING_POSE_ESTIMATOR(name="Plan"+idx,
                                               object_dict = {'robot':robot,'destination': destination})
         ticketing1 = Ticketing(pose_est1, idx=idx, name="Plan"+idx)
-        s_drive1 = MoveBase.MOVEB(name="Plan"+idx, idx=idx,
+        s_drive1 = MoveBase.MOVEB(name="Plan"+idx, idx=idx, destination=destination,
                                    action_goal={'pose': "Plan"+idx+"/parking_pose"})
         replanning1 = Replanning(s_drive1, idx=idx, name="Plan"+idx)
         waiting1 = py_trees.composites.Parallel(name='Waiting', children=[ticketing1, replanning1])

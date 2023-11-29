@@ -417,7 +417,7 @@ class MOVEB(py_trees.behaviour.Behaviour):
             req_data = String_Dup_NoneRequest()
             req_data.data1 = self.destination
             req_data.data2 = blackboard.robot_name
-        
+            print("#####################################\n\n\n\n\n", req_data)
             self.arrival_status_update_req(req_data)
 
 

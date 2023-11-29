@@ -30,12 +30,12 @@ class Idle(py_trees.composites.Sequence):
         if type == 'manip':
             s_drive_pose = MoveJoint.MOVEJ(name="IdleInit", controller_ns=controller_ns, action_goal=self.blackboard.drive_config)
             pose_est10   = WorldModel.PARKING_POSE_ESTIMATOR(name='IdlePlan', object_dict = {'destination': 'home'})
-            s_drive10    = MoveBase.MOVEB(name="IdleGoHome", action_goal={'pose': name+'Plan/home_pose'})
+            s_drive10    = MoveBase.MOVEB(name="IdleGoHome", action_goal={'pose': name+'Plan/home_pose'}, destination='Home')
             idle         = py_trees.behaviours.Running(name="Idle")
             self.add_children([s_drive_pose, pose_est10, s_drive10, idle])
         elif type == 'quad':
             pose_est10   = WorldModel.PARKING_POSE_ESTIMATOR(name='IdlePlan', object_dict = {'destination': 'home'})
-            s_drive10    = MoveBase.MOVEB(name="IdleGoHome", action_goal={'pose': name+'Plan/home_pose'})
+            s_drive10    = MoveBase.MOVEB(name="IdleGoHome", action_goal={'pose': name+'Plan/home_pose'}, destination='Home')
             idle         = py_trees.behaviours.Running(name="Idle")
             self.add_children([pose_est10, s_drive10, idle])
         else:
