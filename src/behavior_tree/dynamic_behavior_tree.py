@@ -13,7 +13,7 @@ import json
 from std_srvs.srv import Empty, EmptyResponse
 
 ## import subtrees.WM2Blackboard
-from subtrees import Grnd2Blackboard, WM2Blackboard, Idle
+from subtrees import Grnd2Blackboard, WM2Blackboard, TS2Blackboard, Idle
 import decorators
 
 def create_root(controller_ns="", robot_type=''):
@@ -32,6 +32,8 @@ def create_root(controller_ns="", robot_type=''):
                                            topic_name="symbol_grounding")
     wm2bb   = WM2Blackboard.ToBlackboard(name="WM2BB",
                                          topic_name="/world_model" )
+    ts2bb   = TS2Blackboard.ToBlackboard(name="TS2BB",
+                                         topic_name="/task_status")
     ## reccmd2bb = py_trees_ros.subscribers.EventToBlackboard(
     ##     name="RecCmd2BB",
     ##     topic_name="/record_cmd",
@@ -67,7 +69,7 @@ def create_root(controller_ns="", robot_type=''):
     priorities.add_child(idle)
     
     # root.add_children([grnd2bb,priorities])
-    root.add_children([grnd2bb, wm2bb ,priorities])
+    root.add_children([grnd2bb, wm2bb ,ts2bb, priorities])
 
     return root
 
@@ -105,8 +107,6 @@ class SplinteredReality(object):
         self.blackboard            = py_trees.blackboard.Blackboard()
         self.blackboard.is_running = False
         self.blackboard.robot_name = robot_name
-        self.tree_stop_srv  = rospy.Service('bt_stop', Empty, self._bt_stop_srv)
-        self.tree_start_srv = rospy.Service('bt_restart', Empty, self._bt_restart_srv)
         
         self.tree = py_trees_ros.trees.BehaviourTree(create_root(self.controller_ns, robot_type=robot_type))
         self.tree.add_pre_tick_handler(self.pre_tick_handler)
@@ -128,6 +128,7 @@ class SplinteredReality(object):
         Returns:
             :obj:`bool`: whether it timed out trying to setup
         """
+        rospy.loginfo('root node setup start')
         return self.tree.setup(timeout=15)
 
 
@@ -139,30 +140,55 @@ class SplinteredReality(object):
         Args:
             tree (:class:`~py_trees.trees.BehaviourTree`): tree to investigate/manipulate.
         """
-
-        goal = None
-        for job in self.jobs:
-            if job.goal is not None:
-                goal = job.goal
-
-        if not self.busy() and goal is not None:
-            cancel_seq = py_trees.composites.Sequence(name="Cancel")        
-            is_stop_requested = py_trees.blackboard.CheckBlackboardVariable(
-                name="Stop?",
-                variable_name="stop_cmd",
-                expected_value=True
-                )
-            cancel_seq.add_child(is_stop_requested)                                
+        rospy.loginfo(f"[TREE ROOT] pre_tick_handler() called jobs: {self.blackboard.get('grnd_msg')}!!!")
+        goal = self.blackboard.get('grnd_msg')
+        
+        if goal is not None:
+            goal = json.loads(goal.data)['params']
             task_list = []
 
-            # self.jobs are holding all available job classes
+            if self.idle():
+                cancel_seq = py_trees.composites.Sequence(name="Cancel")        
+                is_stop_requested = py_trees.blackboard.CheckBlackboardVariable(
+                    name="Stop?",
+                    variable_name="stop_cmd",
+                    expected_value=True
+                    )
+                cancel_seq.add_child(is_stop_requested)                                
+
+                task = py_trees.composites.Sequence(name="Task")
+                        
+                if self.n_loop<=1 and self.enable_inf_loop is False:
+                    run_or_cancel = py_trees.composites.Selector(name="Run or Cancel?")
+                    run_or_cancel.add_children([cancel_seq, task])
+                else:
+                    loop = decorators.Loop(child=task, name='Loop', n_loop=self.n_loop,
+                                        enable_inf_loop=self.enable_inf_loop,
+                                        timeout=self.loop_timeout)
+
+                    run_or_cancel = py_trees.composites.Selector(name="Run or Cancel?")
+                    run_or_cancel.add_children([cancel_seq, loop])
+                
+                ## root = py_trees.composites.Sequence(name="SubRoot")
+                ## root.add_child(run_or_cancel)
+                root = run_or_cancel
+                tree.insert_subtree(root, self.priorities.id, 0)
+                rospy.loginfo("{0}: inserted job subtree".format(root.name))
+
+            
+            # Dynamic Reconfiguration
+            else:
+                task = self.priorities.children[0].children[-1] # Task Sequence Node
+                        # self.jobs are holding all available job classes
+            
             for idx in range(len(goal)):        
                 for job in self.jobs:   ##ex) "1: (GRIPPER_CLOSE)"         
                     # job.goal contains current goal json message.
-                    if job.goal is not None:
-                        job_root = job.create_root(str(idx+1), job.goal,
-                                                   self.controller_ns,
-                                                   rec_topic_list=self.rec_topic_list)
+                    # from IPython import embed; embed(); sys.exit()
+                    if job.name == goal[str(idx+1)]["primitive_action"]:
+                        job_root = job.create_root(str(idx+1), goal,
+                                                self.controller_ns,
+                                                rec_topic_list=self.rec_topic_list)
                         if job_root is None:
                             continue
                         rospy.loginfo("{0}: running to set up all subtree modules".format(idx+1))
@@ -171,124 +197,94 @@ class SplinteredReality(object):
                             continue
                         rospy.loginfo("{0}: finished setting up".format(idx+1))
                         task_list.append(job_root)
-                        #continue
                         break
-
-            task = py_trees.composites.Sequence(name="Task")
             task.add_children(task_list)
-                    
-            if self.n_loop<=1 and self.enable_inf_loop is False:
-                run_or_cancel = py_trees.composites.Selector(name="Run or Cancel?")
-                run_or_cancel.add_children([cancel_seq, task])
-            else:
-                loop = decorators.Loop(child=task, name='Loop', n_loop=self.n_loop,
-                                       enable_inf_loop=self.enable_inf_loop,
-                                       timeout=self.loop_timeout)
+            self.current_job = task.children[0].name
+        return
 
-                run_or_cancel = py_trees.composites.Selector(name="Run or Cancel?")
-                run_or_cancel.add_children([cancel_seq, loop])
-            
-            ## root = py_trees.composites.Sequence(name="SubRoot")
-            ## root.add_child(run_or_cancel)
-            root = run_or_cancel
-            tree.insert_subtree(root, self.priorities.id, 0)
-            rospy.loginfo("{0}: inserted job subtree".format(root.name))
-
-            # Reset goals
-            for job in self.jobs:
-                job.goal = None
-            self.current_job = job
-            
-            return
-            ## self.blackboard.is_running = True
-
-            ## if rec_job is not None:
-            ##     # launch rosbag?
-            ##     rospy.loginfo("Start to record rosbag")
-
-        # Dynamic Reconfiguration
-        elif self.busy() and goal is not None and False:
-            # Todo find the node by name
-            is_task_node = False
-            for task_node in self.priorities.iterate():
-                if task_node.name == 'Task':
-                    is_task_node = True
-                    break
-            if is_task_node is False:
-                rospy.logerr("No Task Node")
-            
-            ## task = self.priorities.children[0].children[-1].children[-1]
-            ## if task.name is not 'Task':
-            ##     rospy.logerr("Tree name does not match")
-            ## from IPython import embed; embed(); sys.exit()
-            
-            # Check from the last goal
-            for idx in range(1,len(goal)+1):
-                if "action" not in list(goal[str(len(goal)-idx+1)].keys()) and \
-                  "primitive_action" in list(goal[str(len(goal)-idx+1)].keys()):
-                    goal[str(len(goal)-idx+1)]["action"] = goal[str(len(goal)-idx+1)]["primitive_action"]
                 
-                print("Check: {}th plan".format(str(len(goal)-idx)), \
-                  goal[str(len(goal)-idx+1)]["action"])
+            # elif self.busy() and goal is not None and False:
+            #     # Todo find the node by name
+            #     is_task_node = False
+            #     for task_node in self.priorities.iterate():
+            #         if task_node.name == 'Task':
+            #             is_task_node = True
+            #             break
+            #     if is_task_node is False:
+            #         rospy.logerr("No Task Node")
                 
-                if len(task_node.children) >= idx and \
-                  task_node.children[-idx].name == goal[str(len(goal)-idx+1)]["action"]:
-                    rospy.loginfo("{0}: passing to set up".format(len(goal)-idx+1))
-                    continue
-
-                # check if there are removable plans
-                is_rm_plan = False                
-                for i in range(idx+1,len(task_node.children)+1):
-                    if task_node.children[-i].name == goal[str(len(goal)-idx+1)]["action"]:
-                        is_rm_plan = True
-                        break
-
-                if is_rm_plan:
-                    blackboard = py_trees.Blackboard()
-                    edges      = blackboard.get('edges')
-                    if edges is None: edges = []
-                        
-                    for j in range(idx,i)[::-1]:
-                        # remove the name from the known edge set
-                        cur_edge = eval(task_node.children[-j].name)
-                        edges.remove(cur_edge)
-                        task_node.remove_child_by_id(task_node.children[-j].id)
-                    blackboard.edges = edges
-                else:
-                    for job in self.jobs:
-                        # job.goal contains current goal json message.
-                        if job.goal is not None:
-
-                            job_root = job.create_root(str( len(goal)-idx+1 ), job.goal,
-                                                       self.controller_ns)
-                            if job_root is None:
-                                continue
-                            rospy.loginfo("{0}: running to set up".format(len(goal)-idx+1))
-                            if not job_root.setup(timeout=15):
-                                rospy.logerr("{0}: failed to setup".format(len(goal)-idx+1))
-                                continue
-                            ## from IPython import embed; embed(); sys.exit()
-                            task_node.insert_child(job_root, len(task_node.children)-idx+1)
-                            break
-
-                # remove old plans
-                if len(task_node.children)>len(goal):
-                    blackboard = py_trees.Blackboard()
-                    edges      = blackboard.get('edges')
-                    if edges is None: edges = []
+            #     ## task = self.priorities.children[0].children[-1].children[-1]
+            #     ## if task.name is not 'Task':
+            #     ##     rospy.logerr("Tree name does not match")
+            #     ## from IPython import embed; embed(); sys.exit()
+                
+            #     # Check from the last goal
+            #     for idx in range(1,len(goal)+1):
+            #         if "action" not in list(goal[str(len(goal)-idx+1)].keys()) and \
+            #         "primitive_action" in list(goal[str(len(goal)-idx+1)].keys()):
+            #             goal[str(len(goal)-idx+1)]["action"] = goal[str(len(goal)-idx+1)]["primitive_action"]
                     
-                    for i in range(len(task_node.children)-len(goal))[::-1]:
-                        cur_edge = eval(task_node.children[i].name)
-                        edges.remove(cur_edge)
-                        task_node.remove_child_by_id(task_node.children[i].id)
-                    blackboard.edges = edges
+            #         print("Check: {}th plan".format(str(len(goal)-idx)), \
+            #         goal[str(len(goal)-idx+1)]["action"])
+                    
+            #         if len(task_node.children) >= idx and \
+            #         task_node.children[-idx].name == goal[str(len(goal)-idx+1)]["action"]:
+            #             rospy.loginfo("{0}: passing to set up".format(len(goal)-idx+1))
+            #             continue
+
+            #         # check if there are removable plans
+            #         is_rm_plan = False                
+            #         for i in range(idx+1,len(task_node.children)+1):
+            #             if task_node.children[-i].name == goal[str(len(goal)-idx+1)]["action"]:
+            #                 is_rm_plan = True
+            #                 break
+
+            #         if is_rm_plan:
+            #             blackboard = py_trees.Blackboard()
+            #             edges      = blackboard.get('edges')
+            #             if edges is None: edges = []
+                            
+            #             for j in range(idx,i)[::-1]:
+            #                 # remove the name from the known edge set
+            #                 cur_edge = eval(task_node.children[-j].name)
+            #                 edges.remove(cur_edge)
+            #                 task_node.remove_child_by_id(task_node.children[-j].id)
+            #             blackboard.edges = edges
+            #         else:
+            #             for job in self.jobs:
+            #                 # job.goal contains current goal json message.
+            #                 if job.goal is not None:
+
+            #                     job_root = job.create_root(str( len(goal)-idx+1 ), job.goal,
+            #                                             self.controller_ns)
+            #                     if job_root is None:
+            #                         continue
+            #                     rospy.loginfo("{0}: running to set up".format(len(goal)-idx+1))
+            #                     if not job_root.setup(timeout=15):
+            #                         rospy.logerr("{0}: failed to setup".format(len(goal)-idx+1))
+            #                         continue
+            #                     ## from IPython import embed; embed(); sys.exit()
+            #                     task_node.insert_child(job_root, len(task_node.children)-idx+1)
+            #                     break
+
+            #         # remove old plans
+            #         if len(task_node.children)>len(goal):
+            #             blackboard = py_trees.Blackboard()
+            #             edges      = blackboard.get('edges')
+            #             if edges is None: edges = []
                         
-            # Reset goals
-            for job in self.jobs:
-                job.goal = None
-            self.current_job = job
-            return 
-            
+            #             for i in range(len(task_node.children)-len(goal))[::-1]:
+            #                 cur_edge = eval(task_node.children[i].name)
+            #                 edges.remove(cur_edge)
+            #                 task_node.remove_child_by_id(task_node.children[i].id)
+            #             blackboard.edges = edges
+                            
+                # # Reset goals
+                # for job in self.jobs:
+                #     job.goal = None
+                # self.current_job = job
+                # return 
+                
                     
 
     def post_tick_handler(self, tree):
@@ -300,8 +296,8 @@ class SplinteredReality(object):
             tree (:class:`~py_trees.trees.BehaviourTree`): tree to investigate/manipulate.
         """
         # delete the job subtree if it is finished
-        if self.busy():
-            job = self.priorities.children[-2]
+        if not self.idle():
+            job = self.priorities.children[0]
                         
             if job.status == py_trees.common.Status.SUCCESS or job.status == py_trees.common.Status.FAILURE or job.status == py_trees.common.Status.INVALID:
                 rospy.loginfo("{0}: finished [{1}]".format(job.name, job.status))
@@ -318,7 +314,8 @@ class SplinteredReality(object):
         ##     self.report_publisher.publish("battery")
         ## else:
             ## self.report_publisher.publish("idle")
-
+    def idle(self):
+        return len(self.priorities.children) == 1
 
     def busy(self):
         """
@@ -327,7 +324,7 @@ class SplinteredReality(object):
         Returns:
             :obj:`bool`: whether it is busy with a job subtree or not
         """
-        return len(self.priorities.children) == 2
+        return len(self.priorities.children) == 3
 
     @property
     def priorities(self):
@@ -386,28 +383,34 @@ if __name__ == '__main__':
     rospy.loginfo("Robot Type: {0}".format(opt.robot))
     jobs = []
     if opt.robot == 'manip':
-        jobs = ['jobs.pick_job.Move',
-                'jobs.place_job.Move',
-                'jobs.move_job.Move',
-                'jobs.gripper_job.Move',
-                'jobs.load_job.Move',
-                'jobs.unload_job.Move',
-                'jobs.collabload_job.Move',
-                'jobs.collabunload_job.Move',
-                'jobs.wait_drive_job.Move',
+        jobs = [
+                # 'jobs.pick_job.Move',
+                # 'jobs.place_job.Move',
+                # 'jobs.move_job.Move',
+                # 'jobs.gripper_job.Move',
+                # 'jobs.load_job.Move',
+                # 'jobs.unload_job.Move',
+                # 'jobs.collabload_job.Move',
+                # 'jobs.collabunload_job.Move',
+                # 'jobs.wait_drive_job.Move',
                 'jobs.delivery_job.Move',
                 'jobs.home_job.Move',
-                'jobs.drive_job.Move',]
+                'jobs.drive_job.Move',
+                'jobs.help_load_job.Move',
+                'jobs.help_unload_job.Move',
+                ]
     elif opt.robot == 'quad':
-        jobs = ['jobs.spot_drive_job.Move',
-                'jobs.wait_spot_drive_job.Move',
+        jobs = ['jobs.drive_job.Move',
+                'jobs.spot_delivery_job.Move',
+                # 'jobs.wait_spot_drive_job.Move',
                 'jobs.home_job.Move',
-                'jobs.collabspot_drive_job.Move',]
+                # 'jobs.collabspot_drive_job.Move',
+                ]
         
     else:
         print(f"Given robot type should be one of 'manip' and 'quad'. Input type: {opt.robot} ")
         raise NotImplementedError()
-    
+    rospy.loginfo(jobs)
     if opt.robot_name not in ['haetae', 'spot', 'stretch']:
         print(f"Given robot type should be one of spot/haetae/stretch. Input type: {opt.robot_name} ")
         raise NotImplementedError

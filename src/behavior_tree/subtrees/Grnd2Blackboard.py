@@ -11,7 +11,7 @@ class ToBlackboard(subscribers.ToBlackboard):
         super(ToBlackboard, self).__init__(name=name,
                                            topic_name=topic_name,
                                            topic_type=std_msgs.String,
-                                           blackboard_variables={"grnd_msg": None}, clearing_policy=py_trees.common.ClearingPolicy.ON_INITIALISE 
+                                           blackboard_variables={"grnd_msg": None}, clearing_policy=py_trees.common.ClearingPolicy.ON_SUCCESS 
                                            )
 
         self.blackboard = py_trees.blackboard.Blackboard()
@@ -19,13 +19,14 @@ class ToBlackboard(subscribers.ToBlackboard):
 
 
     def update(self):
+        rospy.loginfo(f"[Subtree] Grnd2BB update() called.")
         self.logger.debug("%s.update()" % self.__class__.__name__)
         status = super(ToBlackboard, self).update()
         self.blackboard.stop_cmd = False
         
         if status != py_trees.common.Status.RUNNING:
-
             # we got something
+            rospy.loginfo(f"[Subtree] Grnd2BB msg arrived.")
             if self.blackboard.grnd_msg.data is None:
                 rospy.logwarn_throttle(60, "%s: No grounding on the blackboard!" % self.name)
             grounding = json.loads(self.blackboard.grnd_msg.data)
@@ -40,6 +41,8 @@ class ToBlackboard(subscribers.ToBlackboard):
                     self.blackboard.stop_cmd = True
                     break
                     
-            #self.feedback_message = "Grounding is ok"
-            
+            self.feedback_message = "Grounding is ok"
+            return status
+
+        self.blackboard.set('grnd_msg', None)    
         return status

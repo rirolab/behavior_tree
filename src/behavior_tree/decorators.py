@@ -140,6 +140,7 @@ class Replanning(Decorator):
         rospy.loginfo("(Replanning) decorator initialized.")
 
     def setup(self,timeout):
+        rospy.loginfo("[Decorator] Replanning: setup() done.")
         return super(Replanning, self).setup(timeout)
     
     def initialise(self):
@@ -147,6 +148,7 @@ class Replanning(Decorator):
         Reset the feedback message and finish time on behaviour entry.
         """
         self.ticket = -1
+        self.sent_goal = False
         self.blackboard = py_trees.Blackboard()
         self.feedback_message = "[(Decorator) Replanning] Heading to somewhere."
         rospy.loginfo("(Replanning) decorator initialize function called.")
@@ -162,6 +164,16 @@ class Replanning(Decorator):
         rospy.loginfo(f'[Replannig] updated called')
         prev_ticket = self.ticket
         self.ticket = self.blackboard.get('Plan'+self.idx+'/ticket')
+        if not self.sent_goal:
+            rospy.loginfo(f"[Replanning] moving to somewhere ticket={self.ticket}")
+            self.decorated.initialise()
+            self.sent_goal = True
+            return common.Status.RUNNING
+        
+        if self.decorated.status == common.Status.FAILURE:
+            rospy.loginfo(f'[Replannig] child is failed')
+            return common.Status.FAILURE
+        
         if self.ticket != prev_ticket:
             self.feedback_message = f'[Replanning] ticket order changed {prev_ticket}->{self.ticket}'
             self.decorated.initialise()
@@ -171,5 +183,6 @@ class Replanning(Decorator):
             if self.decorated.status == common.Status.SUCCESS:
                 rospy.loginfo(f'[Replanning] 1st order & move compledted.')
                 return common.Status.SUCCESS
+        
         rospy.loginfo(f"[Replanning] moving to somewhere ticket={self.ticket}")
         return common.Status.RUNNING

@@ -33,9 +33,9 @@ class Move(object):
         subscriber here but more typically would be a service or action interface.
         """
         self._grounding_channel = "symbol_grounding" #rospy.get_param('grounding_channel')
-        
+        self.name = "home"
         ## self._subscriber = rospy.Subscriber("/dashboard/move", std_msgs.Empty, self.incoming)
-        self._subscriber = rospy.Subscriber(self._grounding_channel, std_msgs.String, self.incoming)
+        # self._subscriber = rospy.Subscriber(self._grounding_channel, std_msgs.String, self.incoming)
         self._goal = None
         self._lock = threading.Lock()
         
