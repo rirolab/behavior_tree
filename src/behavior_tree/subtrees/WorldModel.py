@@ -20,17 +20,29 @@ class REMOVE(py_trees.behaviour.Behaviour):
     priority behaviour.
     """
 
-    def __init__(self, name, target=''):
+    def __init__(self, name, target='', unload=None):
         super(REMOVE, self).__init__(name=name)
         self.target        = target
         self.sent_goal     = False
         self.srv_req       = None
+        if unload is None:
+            self.unload = None
+            self.is_unload = False
+        else:
+            self.unload = unload
+            self.is_unload = True
+
+        self._update_load_state_srv_channel = "/update_load_state"
 
 
     def setup(self, timeout):
         self.feedback_message = "{}: setup".format(self.name)
         rospy.wait_for_service("/delete_box")
         self.srv_req = rospy.ServiceProxy("/delete_box", String_None)
+
+        rospy.wait_for_service(self._update_load_state_srv_channel)
+        self.update_load_req = rospy.ServiceProxy(self._update_load_state_srv_channel, String_None)
+
         return True
 
 
@@ -38,6 +50,7 @@ class REMOVE(py_trees.behaviour.Behaviour):
         self.logger.debug("{0}.initialise()".format(self.__class__.__name__))
         self.sent_goal = False
 
+        self.update_load_req(self.unload)
 
     def update(self):
         self.logger.debug("%s.update()" % self.__class__.__name__)
@@ -88,6 +101,8 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         self._close_pose_srv_channel = '/get_object_close_pose'
         self._aside_pose_srv_channel = '/get_object_aside_pose'
         
+        self._collab_pose_srv_channel = '/get_collab_psoe'
+
         self._world_frame    = rospy.get_param("/world_frame", None)
         if self._world_frame is None:
             self._world_frame    = rospy.get_param("world_frame", '/base_footprint')
@@ -127,6 +142,9 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         rospy.wait_for_service(self._close_pose_srv_channel)
         self.close_pose_srv_req = rospy.ServiceProxy(self._close_pose_srv_channel, String_Pose)
 
+        # rospy.wait_for_service(self._collab_pose_srv_channel)
+        # self.collab_pose_srv_req = rospy.ServiceProxy(self._collab_pose_srv_channel, String_Pose)
+
         # get odom 2 base
         self.listener = tf.TransformListener()
         
@@ -152,6 +170,16 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         if not self.sent_goal:
             # Request the top surface pose of an object to WM
             obj = self.object_dict['target']
+
+            # if 'collab' in self.object_dict.keys():
+            #     try:
+            #         obj_collab_pose = self.collab_pose_srv_req(obj).pose # obj grasping pose w.r.t. world frame
+            #     except rospy.ServiceException as e:
+            #         self.feedback_message = "Pose Srv Error"
+            #         print("Pose Service is not available: %s"%e)
+            #         return py_trees.common.Status.FAILURE
+                    
+
             try:
                 obj_grasp_pose = self.grasp_pose_srv_req(obj).pose # obj grasping pose w.r.t. world frame
             except rospy.ServiceException as e:
@@ -362,6 +390,8 @@ class PARKING_POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         self._pose_srv_channel = '/get_object_pose'
         self._parking_pose_srv_channel = '/get_parking_ticket'
         
+        self._collab_pose_srv_channel = '/get_collab_pose'
+
         self._world_frame   = rospy.get_param("/world_frame", None)
         self._home_pose     = eval(rospy.get_param('home_config', str([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])))
         self._home_pose     = misc.list_rpy2list_quat(self._home_pose)
@@ -376,6 +406,9 @@ class PARKING_POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         rospy.wait_for_service(self._parking_pose_srv_channel)
         self.parking_pose_srv_req = rospy.ServiceProxy(self._parking_pose_srv_channel, Delivery_Ticket)
 
+        rospy.wait_for_service(self._collab_pose_srv_channel)
+        self.collab_pose_srv_req = rospy.ServiceProxy(self._collab_pose_srv_channel, String_Pose)
+        
         self.feedback_message = "{}: finished setting up".format(self.name)
         return True
 
@@ -394,11 +427,32 @@ class PARKING_POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
 
     def update(self):
         self.logger.debug("%s.update()" % self.__class__.__name__)
-
+        
         if not self.sent_goal:
 
             # Request the top surface pose of an object to WM
             obj = self.object_dict['destination']
+            # print("SSSSSSDFFDFDFDDFDFDFDFDFD\n\n\n\n\n\n\n\n\n\n", self.object_dict)
+            if 'collab' in self.object_dict.keys():
+                if self.object_dict['collab'] == True:
+                    try:
+                        obj_collab_pose = self.collab_pose_srv_req(obj).pose # obj grasping pose w.r.t. world frame
+                        # print("@@@@@\n\n\n\n", obj_collab_pose)
+                        ticket_order = 0
+                        self.blackboard.set(self.name +'/ticket', ticket_order)
+                        self.blackboard.set(self.name +'/parking_pose', obj_collab_pose)
+                        
+                        self.sent_goal        = True
+                        self.feedback_message = "WorldModel: successful parking pose estimation "
+                        return py_trees.common.Status.SUCCESS
+
+                    except rospy.ServiceException as e:
+                        self.feedback_message = "Pose Srv Error"
+                        print("Pose Service is not available: %s"%e)
+                        return py_trees.common.Status.FAILURE
+
+                    
+
             if obj == 'home':
                 self.blackboard.set(self.name +'/ticket', 1)
                 self.blackboard.set(self.name +'/home_pose', Pose(Point(self._home_pose[0],self._home_pose[1],self._home_pose[2]),
@@ -887,8 +941,13 @@ class SYNC_POSE_ESTIMATOR_HAETAE2(py_trees.behaviour.Behaviour):
         elif "picking_station2" in destination:
             # print("@@@@@@@@@@@@@@@@@@@@@@@@!!!!!111144441\n\n\n")
             nav_goal = "picking_station2"
+        elif destination == 'ps1_collab_spot_parking_target':
+            nav_goal = 'placing_shelf1'
+
+        elif destination == 'ps2_collab_spot_parking_target':
+            nav_goal = 'placing_shelf2'
         else:
-            # print("@@@@@@@@@@@@@@@@@@@@@@@@!!!!!11155511\n\n\n")
+            print("dddddd??????????????\n\n\n", destination)
             raise NotImplementedError()
         self.destination = nav_goal
 
@@ -934,8 +993,7 @@ class SYNC_POSE_ESTIMATOR_HAETAE2(py_trees.behaviour.Behaviour):
             wm_obj_name = wm_obj['name']
 
             if wm_obj_name == self.destination:
-
-
+                # print("SSISISISISISISISISISBAKL\n\n\n\n\n\n\n\n\n\n\n\n\n", wm_obj_name, wm_obj["arrival_obj"])
                 if "spot" in wm_obj["arrival_obj"]:
                     self.spot_arrival_state = True
         
@@ -968,19 +1026,19 @@ class SYNC_POSE_ESTIMATOR_WAIT(py_trees.behaviour.Behaviour):
 
 
         if "placing_shelf1" in placement:
-            print("@@@@@@@@@@@@@@@@@@@@@@@@!!!!!11111\n\n\n")
+            # print("@@@@@@@@@@@@@@@@@@@@@@@@!!!!!11111\n\n\n")
             nav_goal = "placing_shelf1"            
         elif "placing_shelf2" in placement:
-            print("@@@@@@@@@@@@@@@@@@@@@@@@!!!!!11111222\n\n\n")
+            # print("@@@@@@@@@@@@@@@@@@@@@@@@!!!!!11111222\n\n\n")
             nav_goal = "placing_shelf2"
         elif "picking_station1" in placement:
-            print("@@@@@@@@@@@@@@@@@@@@@@@@!!!!!111133331\n\n\n")
+            # print("@@@@@@@@@@@@@@@@@@@@@@@@!!!!!111133331\n\n\n")
             nav_goal = "picking_station1"
         elif "picking_station2" in placement:
-            print("@@@@@@@@@@@@@@@@@@@@@@@@!!!!!111144441\n\n\n")
+            # print("@@@@@@@@@@@@@@@@@@@@@@@@!!!!!111144441\n\n\n")
             nav_goal = "picking_station2"
         else:
-            print("@@@@@@@@@@@@@@@@@@@@@@@@!!!!!11155511\n\n\n")
+            # print("@@@@@@@@@@@@@@@@@@@@@@@@!!!!!11155511\n\n\n")
             raise NotImplementedError()
 
         self.placement = nav_goal
@@ -1071,6 +1129,54 @@ class SYNC_POSE_ESTIMATOR_LOAD(py_trees.behaviour.Behaviour):
                 else:
                     self.feedback_message = "SYNCING!!!!"
                     return py_trees.common.Status.RUNNING
+
+    def terminate(self, new_status):
+        return
+
+## wait until "taget_obj" is deleted ## 
+class SYNC_POSE_ESTIMATOR_DELETE(py_trees.behaviour.Behaviour):
+    """
+    Note that this behaviour will return with
+    :attr:`~py_trees.common.Status.SUCCESS`. It will also send a clearing
+    command to the robot if it is cancelled or interrupted by a higher
+    priority behaviour.
+    """
+
+    def __init__(self, name, target_obj='box_large0'):
+        super(SYNC_POSE_ESTIMATOR_DELETE, self).__init__(name=name)
+        self.sent_goal   = False
+        self.target_obj = target_obj
+        
+
+    def setup(self, timeout):
+        self.feedback_message = "{}: setup".format(self.name)
+        self.feedback_message = "{}: finished setting up".format(self.name)
+        return True
+
+    def initialise(self):
+        self.feedback_message = "Initialise"
+        self.logger.debug("{0}.initialise()".format(self.__class__.__name__))
+        self.sent_goal = False
+
+        self.blackboard = py_trees.Blackboard()    
+        
+    def update(self):
+        self.logger.debug("%s.update()" % self.__class__.__name__)
+        # if not self.sent_goal:
+        # Request the top surface pose of an object to WM
+        wm_msg = json.loads(self.blackboard.wm_msg.data)["world"]
+    
+        for wm_obj in wm_msg:
+            wm_obj_name = wm_obj['name']
+            # print("dfdasfdasfdasfdasf!!!!!!!!!!!!!!\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n", wm_obj_name, self.target_obj)
+            if wm_obj_name == self.target_obj:
+                self.feedback_message = "SYNCING!!!!"
+                return py_trees.common.Status.RUNNING
+        # print("WTFWTFWTFWTFWTF\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n")
+
+        self.feedback_message = "WorldModel: successful sync pose estimation "
+        return py_trees.common.Status.SUCCESS
+
 
     def terminate(self, new_status):
         return

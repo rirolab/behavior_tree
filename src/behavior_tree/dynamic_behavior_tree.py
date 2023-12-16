@@ -397,12 +397,14 @@ if __name__ == '__main__':
                 'jobs.wait_drive_job.Move',
                 'jobs.delivery_job.Move',
                 'jobs.home_job.Move',
-                'jobs.drive_job.Move',]
+                'jobs.drive_job.Move',
+                'jobs.collabhaetae_delivery_job.Move',]
     elif opt.robot == 'quad':
         jobs = ['jobs.spot_drive_job.Move',
                 'jobs.wait_spot_drive_job.Move',
                 'jobs.home_job.Move',
-                'jobs.collabspot_drive_job.Move',]
+                'jobs.collabspot_drive_job.Move',
+                'jobs.collabspot_delivery_job.Move']
         
     else:
         print(f"Given robot type should be one of 'manip' and 'quad'. Input type: {opt.robot} ")
