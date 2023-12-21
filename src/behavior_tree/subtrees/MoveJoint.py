@@ -29,28 +29,31 @@ class MOVEJ(py_trees.behaviour.Behaviour):
         self.action_goal = action_goal
         self.sent_goal = False
         self.cmd_req   = None
-        self._manip_status_update_srv_channel = "/update_robot_manip_state"
+        # self._manip_status_update_srv_channel = "/update_robot_manip_state"
 
     def setup(self, timeout):
         ## self.publisher = rospy.Publisher(self.topic_name, std_msgs.String, queue_size=10, latch=True)
         self.feedback_message = "{}: setup".format(self.name)
+        rospy.loginfo('[subtree] MOVEJOINT: setup() called.')
         rospy.wait_for_service("arm_client/command")
         self.cmd_req = rospy.ServiceProxy("arm_client/command", String_Int)
         rospy.wait_for_service("arm_client/status")
         self.status_req = rospy.ServiceProxy("arm_client/status", None_String)
-
-        rospy.wait_for_service(self._manip_status_update_srv_channel)
-        self.manip_status_update_req = rospy.ServiceProxy(self._manip_status_update_srv_channel, String_None)
+        rospy.loginfo('[subtree] MOVEJOINT: setup() done.')
+        # rospy.wait_for_service(self._manip_status_update_srv_channel)
+        # self.manip_status_update_req = rospy.ServiceProxy(self._manip_status_update_srv_channel, String_None)
         return True
 
 
     def initialise(self):
+        rospy.loginfo('[subtree] MOVEJOINT: initialize() called.')
         self.logger.debug("{0}.initialise()".format(self.__class__.__name__))
         self.sent_goal = False
         blackboard = py_trees.Blackboard()
         # self.manip_status_update_req(blackboard.robot_name)
 
     def update(self):
+        rospy.loginfo('[subtree] MOVEJOINT: update() called.')
         self.logger.debug("%s.update()" % self.__class__.__name__)
         blackboard = py_trees.Blackboard()
         if self.cmd_req is None:
@@ -73,16 +76,20 @@ class MOVEJ(py_trees.behaviour.Behaviour):
                   "failed to execute"
                 self.logger.debug("%s.update()[%s]" % (self.__class__.__name__, self.feedback_message))
                 # self.manip_status_update_req(blackboard.robot_name)
+                rospy.loginfo('[subtree] MOVEJOINT: update() --- FAILURE.')
                 return py_trees.common.Status.FAILURE
             
             self.sent_goal = True
             self.feedback_message = "Sending a joint goal"
+            rospy.loginfo('[subtree] MOVEJOINT: update() --- sent_goal.')
             return py_trees.common.Status.RUNNING
 
         msg = self.status_req()
         d = json.loads(msg.data)
         state = d['state']
         ret   = d['result']
+        rospy.loginfo(f"[SubTree] MoveJoint : state = {state}, ret = {ret}  <---------------------------")
+        terminal_states = [GoalStatus.PREEMPTED, GoalStatus.SUCCEEDED, GoalStatus.ABORTED, GoalStatus.REJECTED, GoalStatus.RECALLED]
         
         if  state in [GoalStatus.ABORTED,
                       GoalStatus.PREEMPTED,
@@ -91,14 +98,16 @@ class MOVEJ(py_trees.behaviour.Behaviour):
             self.feedback_message = "FAILURE"
             self.logger.debug("%s.update()[%s->%s][%s]" % (self.__class__.__name__, self.status, py_trees.common.Status.FAILURE, self.feedback_message))
             # self.manip_status_update_req(blackboard.robot_name)
+            rospy.loginfo(f'[subtree] MOVEJOINT: FAILED state = {state}, result = {ret}.')
             return py_trees.common.Status.FAILURE
-
-        if ret == FollowJointTrajectoryResult.SUCCESSFUL:
+        if state in terminal_states and ret == FollowJointTrajectoryResult.SUCCESSFUL:
             self.feedback_message = "SUCCESSFUL"
             self.logger.debug("%s.update()[%s->%s][%s]" % (self.__class__.__name__, self.status, py_trees.common.Status.SUCCESS, self.feedback_message))
             # self.manip_status_update_req(blackboard.robot_name)
+            rospy.loginfo(f'[subtree] MOVEJOINT: SUCCESSDED state = {state}, result = {ret}.')
             return py_trees.common.Status.SUCCESS
         else:
+            rospy.loginfo(f'[subtree] MOVEJOINT: RUNNING state = {state}, result = {ret}.')
             return py_trees.common.Status.RUNNING
                 
 

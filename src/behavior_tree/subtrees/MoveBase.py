@@ -14,16 +14,12 @@ from geometry_msgs.msg import Quaternion, TwistWithCovarianceStamped, Twist, Pos
 from sensor_msgs.msg import LaserScan
 from actionlib_msgs.msg import GoalStatus
 from move_base_msgs.msg import MoveBaseAction, MoveBaseActionResult, MoveBaseGoal
-
 from dynamic_reconfigure.srv import Reconfigure, ReconfigureRequest
 from dynamic_reconfigure.msg import DoubleParameter
-
 from complex_action_client import misc
 from complex_action_client.srv import String_Int, None_String, String_IntRequest
 
 from riro_srvs.srv import String_None, String_String, String_Pose, String_PoseResponse, String_Dup_None, String_Dup_NoneRequest
-
-
 
 class MOVEB(py_trees.behaviour.Behaviour):
     """
@@ -45,7 +41,7 @@ class MOVEB(py_trees.behaviour.Behaviour):
         self._world_frame_id = rospy.get_param("/world_frame", 'map')
         self.cmd_req     = None
         self.idx = idx
-        self._drive_status_update_srv_channel = "/update_robot_drive_state"
+        # self._drive_status_update_srv_channel = "/update_robot_drive_state"
         rospy.loginfo(f'{self.__class__.__name__}.__init__() called')
 
         self._spot_cmd_vel = "/spot/cmd_vel"
@@ -55,23 +51,23 @@ class MOVEB(py_trees.behaviour.Behaviour):
         self._arrival_state_delete_srv_channel = '/delete_arrival_state'
 
     def setup(self, timeout):
+        rospy.loginfo('[subtree] movebase: setup() called.')
         self.feedback_message = "{}: setup".format(self.name)
         rospy.wait_for_service("move_base_client/command")
         self.cmd_req = rospy.ServiceProxy("move_base_client/command", String_Int)
         rospy.wait_for_service("move_base_client/status")
         self.status_req = rospy.ServiceProxy("move_base_client/status", None_String)
+        rospy.loginfo('[subtree] movebase: setup() done.')
+        # rospy.wait_for_service(self._drive_status_update_srv_channel)
+        # self.drive_status_update_req = rospy.ServiceProxy(self._drive_status_update_srv_channel, String_None)
 
-        rospy.wait_for_service(self._drive_status_update_srv_channel)
-        self.drive_status_update_req = rospy.ServiceProxy(self._drive_status_update_srv_channel, String_None)
+        # rospy.wait_for_service(self._arrival_state_udpate_srv_channel)
+        # self.arrival_status_update_req = rospy.ServiceProxy(self._arrival_state_udpate_srv_channel, String_Dup_None)
 
-        rospy.wait_for_service(self._arrival_state_udpate_srv_channel)
-        self.arrival_status_update_req = rospy.ServiceProxy(self._arrival_state_udpate_srv_channel, String_Dup_None)
-
-        rospy.wait_for_service(self._arrival_state_delete_srv_channel)
-        self.arrival_status_delete_req = rospy.ServiceProxy(self._arrival_state_delete_srv_channel, String_None)
+        # rospy.wait_for_service(self._arrival_state_delete_srv_channel)
+        # self.arrival_status_delete_req = rospy.ServiceProxy(self._arrival_state_delete_srv_channel, String_None)
 
         blackboard = py_trees.Blackboard()
-        rospy.loginfo(f'{self.__class__.__name__}.setup() called')
         return True
 
     def get_obj_pose_from_wm(self, target_name):
@@ -87,14 +83,16 @@ class MOVEB(py_trees.behaviour.Behaviour):
         return target_pose
 
     def initialise(self):
+        rospy.loginfo('[subtree] movebase: initialise() called.')
         self.logger.debug("{0}.initialise()".format(self.__class__.__name__))
         rospy.loginfo(f"{self.__class__.__name__}.intialise() called")
         self.sent_goal = False
         blackboard = py_trees.Blackboard()
-        self.drive_status_update_req(blackboard.robot_name)
-        self.arrival_status_delete_req(blackboard.robot_name)
+        # self.drive_status_update_req(blackboard.robot_name)
+        # self.arrival_status_delete_req(blackboard.robot_name)
 
     def update(self):
+        rospy.loginfo('[subtree] movebase: update() called.')
         blackboard = py_trees.Blackboard()
         ticket = blackboard.get('Plan'+self.idx+'/ticket')
         print(f"(MOVEBASE update) ticket: {ticket}")
@@ -134,7 +132,6 @@ class MOVEB(py_trees.behaviour.Behaviour):
                                   'timeout': 10.,
                                   'no_wait': True,
                                   'docking': docking})
-                                  
 
             ret = self.cmd_req(cmd_str)
             print("(MOVEBASE update) goal: ", goal)
@@ -152,7 +149,7 @@ class MOVEB(py_trees.behaviour.Behaviour):
         d = json.loads(msg.data)
         state = d['state']
         
-        if state in [GoalStatus.ABORTED, GoalStatus.PREEMPTED, GoalStatus.REJECTED]:
+        if state in [GoalStatus.ABORTED, GoalStatus.PREEMPTED, GoalStatus.REJECTED, GoalStatus.RECALLED]:
             self.feedback_message = "FAILURE"
             self.logger.debug("%s.update()[%s->%s][%s]" % (self.__class__.__name__, self.status, py_trees.common.Status.FAILURE, self.feedback_message))
             # self.drive_status_update_req(blackboard.robot_name)
@@ -180,8 +177,8 @@ class MOVEB(py_trees.behaviour.Behaviour):
         if d['state'] == GoalStatus.ACTIVE:
             self.cmd_req( json.dumps({'action_type': 'cancel_goal'}) )
         
-        blackboard = py_trees.Blackboard()
-        self.drive_status_update_req(blackboard.robot_name)
+        # blackboard = py_trees.Blackboard()
+        # self.drive_status_update_req(blackboard.robot_name)
         return
 
 class MOVEBCOLLAB(py_trees.behaviour.Behaviour):
@@ -505,9 +502,9 @@ class MOVEBR(py_trees.behaviour.Behaviour):
     priority behaviour.
     """
 
-    def __init__(self, name, action_goal=None):
+    def __init__(self, name, idx, action_goal=None):
         super(MOVEBR, self).__init__(name=name)
-
+        self.idx = idx
         self.action_goal = action_goal
         self.sent_goal   = False
         self._frame_id = rospy.get_param("torso_frame", 'base_link')
@@ -520,6 +517,7 @@ class MOVEBR(py_trees.behaviour.Behaviour):
         self.cmd_req = rospy.ServiceProxy("move_base_client/command", String_Int)
         rospy.wait_for_service("move_base_client/status")
         self.status_req = rospy.ServiceProxy("move_base_client/status", None_String)
+        
         return True
 
 
@@ -529,6 +527,10 @@ class MOVEBR(py_trees.behaviour.Behaviour):
 
 
     def update(self):
+        blackboard = py_trees.Blackboard()
+        ticket = blackboard.get('Plan'+self.idx+'/ticket')
+        print(f"(MOVEBASE update) ticket: {ticket}")
+        docking = (ticket == 0)
         self.logger.debug("%s.update()" % self.__class__.__name__)
 
         if self.cmd_req is None:
@@ -678,7 +680,7 @@ class ALIGNB(py_trees.behaviour.Behaviour):
 
 class TOUCHB(py_trees.behaviour.Behaviour):
     """
-    Rotate Base to align with goal pose 
+    Move Base
     
     Note that this behaviour will return with
     :attr:`~py_trees.common.Status.SUCCESS`. It will also send a clearing
@@ -686,87 +688,144 @@ class TOUCHB(py_trees.behaviour.Behaviour):
     priority behaviour.
     """
 
-    def __init__(self, name):
+    def __init__(self, name, idx='', action_goal=None):
         super(TOUCHB, self).__init__(name=name)
 
-        self.scan_topic   = "front_rgbd_camera/scan"
-        self.scan = None
-        self.steps = 0
-        self._lock = threading.Lock()
+        # self.topic_name = topic_name
+        # self.controller_ns = controller_ns
+        self.action_goal = action_goal
+        self.sent_goal   = False
+        self._world_frame_id = rospy.get_param("/world_frame", 'map')
+        self._local_planner = rospy.get_param("local_planner", "sibals")
+        self._prev_params = dict()
+        self.cmd_req     = None
+        self.idx = idx
+        rospy.loginfo(f'{self.__class__.__name__}.__init__() called')
 
     def setup(self, timeout):
-        self.scan_sub = rospy.Subscriber(self.scan_topic, LaserScan, self._laserscan_cb)
-        self.cmd_vel_pub = rospy.Publisher("/cmd_vel", geometry_msgs.msg.Twist, queue_size=1)
+        rospy.loginfo('[subtree] TouchBase: setup() called.')
         self.feedback_message = "{}: setup".format(self.name)
+        rospy.wait_for_service("move_base_client/command")
+        self.cmd_req = rospy.ServiceProxy("move_base_client/command", String_Int)
+        rospy.wait_for_service("move_base_client/status")
+        self.status_req = rospy.ServiceProxy("move_base_client/status", None_String)
+        # rospy.wait_for_service(f"{self._local_planner}/set_parameters", timeout=20.0)
+        self.reconfigure_req_srv = rospy.ServiceProxy(f"move_base/{self._local_planner}/set_parameters", Reconfigure)
+        rospy.loginfo('[subtree] TouchBase: setup() done.')
+
+        self.blackboard = py_trees.Blackboard()
         return True
 
-    def _laserscan_cb(self, msg):
-        with self._lock:
-            self.scan = deepcopy(msg)
-
     def initialise(self):
+        rospy.loginfo('[subtree] TouchBase: initialise() called.')
         self.logger.debug("{0}.initialise()".format(self.__class__.__name__))
-        self.scan = None
-        self.steps = 0
+        self.sent_goal = False
+        rospy.loginfo(f"{self.__class__.__name__}.intialise() called")
+        rospy.loginfo(f"[TOUCHB] initialize() called : local_planner = {self._local_planner}.")
+        if self._local_planner == "TebLocalPlannerROS":
+            self._prev_params = {'xy_goal_tolerance':None, 'yaw_goal_tolerance':None,'min_obstacle_dist':None}
+        elif self._local_planner == "DWAPlannerROS":
+            self._prev_params = dict()
+        elif self._local_planner == "TrajectoryPlannerROS":
+            self._prev_params = dict()
+        else:
+            raise NotImplementedError("Only TEB, Trajectory LocalPlanner is available")
+        for k in self._prev_params.keys():
+            self._prev_params[k] = rospy.get_param(f'move_base/{self._local_planner}/{k}')
 
     def update(self):
-        self.logger.debug("%s.update()" % self.__class__.__name__)
-        with self._lock:
-            scan = deepcopy(self.scan)
-        # if scan is None:
-        #     self.feedback_message = "(Touch Base) scan topic not subscribed."
-        #     return py_trees.common.Status.RUNNING
+        rospy.loginfo('[subtree] Touchbase: update() called.')
+        if self._local_planner == "TrajectoryPlannerROS" or self._local_planner == "DWAPlannerROS":
+            return py_trees.Status.SUCCESS
         
-        cmd_vel = geometry_msgs.msg.Twist()
-        cmd_vel.linear.x = cmd_vel.linear.y = cmd_vel.linear.z = 0.0
-        cmd_vel.angular.x = cmd_vel.angular.y = cmd_vel.angular.z = 0.0
-        if self.steps > 6:
-            print("[TOUCH] Touch Done.")
-            self.cmd_vel_pub.publish(cmd_vel)        
+        ticket = self.blackboard.get('Plan'+self.idx+'/ticket')
+        docking = (ticket == 0)
+        
+        self.logger.debug("%s.update()" % self.__class__.__name__)
+
+        if self.cmd_req is None:
+            self.feedback_message = \
+              "No action client, did you call setup() on your tree?"
+            return py_trees.Status.FAILURE
+        rospy.loginfo(f'{self.__class__.__name__}.update() called')
+
+        if not self.sent_goal:
+            reconfigure_req = ReconfigureRequest()
+            for k in self._prev_params.keys():
+                reconfigure_req.config.doubles.append(DoubleParameter(k, 0.05))
+            rospy.loginfo(f"[SUBTREE] TOUCHB : wait for service (move_base/{self._local_planner}/set_parameters)")
+            rospy.wait_for_service(f"move_base/{self._local_planner}/set_parameters")
+            self.reconfigure_req_srv(reconfigure_req)
+
+            if type(self.action_goal['pose']) is geometry_msgs.msg._Pose.Pose:
+                goal = {'x': self.action_goal['pose'].position.x,
+                        'y': self.action_goal['pose'].position.y,
+                        'z': self.action_goal['pose'].position.z,
+                        'qx': self.action_goal['pose'].orientation.x,
+                        'qy': self.action_goal['pose'].orientation.y,
+                        'qz': self.action_goal['pose'].orientation.z,
+                        'qw': self.action_goal['pose'].orientation.w,}
+            else:
+                blackboard = py_trees.Blackboard()
+                ps = blackboard.get(self.action_goal['pose'])
+                goal = {'x': ps.position.x,
+                        'y': ps.position.y,
+                        'z': ps.position.z,
+                        'qx': ps.orientation.x,
+                        'qy': ps.orientation.y,
+                        'qz': ps.orientation.z,
+                        'qw': ps.orientation.w,}
+
+            cmd_str = json.dumps({'action_type': 'moveBase',
+                                  'frame': self._world_frame_id,
+                                  'goal': json.dumps(goal),
+                                  'timeout': 10.,
+                                  'no_wait': True,
+                                  'docking':docking})
+
+            ret = self.cmd_req(cmd_str)
+            print("(MOVEBASE update) goal: ", goal)
+            if ret.data==GoalStatus.REJECTED or ret.data==GoalStatus.ABORTED:
+                self.feedback_message = "failed to execute"
+                self.logger.debug("%s.update()[%s]" % (self.__class__.__name__, self.feedback_message))
+                # self.drive_status_update_req(blackboard.robot_name)
+                return py_trees.common.Status.FAILURE
+            
+            self.sent_goal        = True
+            self.feedback_message = "Sending a navigation goal"
+            return py_trees.common.Status.RUNNING
+
+        msg = self.status_req()
+        d = json.loads(msg.data)
+        state = d['state']
+        
+        if state in [GoalStatus.ABORTED, GoalStatus.PREEMPTED, GoalStatus.REJECTED, GoalStatus.RECALLED]:
+            self.feedback_message = "FAILURE"
+            self.logger.debug("%s.update()[%s->%s][%s]" % (self.__class__.__name__, self.status, py_trees.common.Status.FAILURE, self.feedback_message))
+            reconfigure_req = ReconfigureRequest()
+            for k in self._prev_params.keys():
+                reconfigure_req.config.doubles.append(DoubleParameter(k, self._prev_params[k]))
+            self.reconfigure_req_srv(reconfigure_req)
+            return py_trees.common.Status.FAILURE
+
+        if state == GoalStatus.SUCCEEDED:
+            self.feedback_message = "SUCCESSFUL"
+            self.logger.debug("%s.update()[%s->%s][%s]" % (self.__class__.__name__, self.status, py_trees.common.Status.SUCCESS, self.feedback_message))
+            reconfigure_req = ReconfigureRequest()
+            for k in self._prev_params.keys():
+                reconfigure_req.config.doubles.append(DoubleParameter(k, self._prev_params[k]))
+            self.reconfigure_req_srv(reconfigure_req)
             return py_trees.common.Status.SUCCESS
         else:
-            print("[TOuch] ", self.steps)
-            cmd_vel.linear.x = 0.1
-            self.cmd_vel_pub.publish(cmd_vel)        
-            self.steps += 1
             return py_trees.common.Status.RUNNING
-        
-        
-        # ranges = np.array(scan.ranges)
-        
-        # valid_index = np.where((ranges < scan.range_max))[0]
-        # print("(len of vaild index) ", len(valid_index))
-        # valid_ranges = ranges[valid_index]
-        # if len(valid_index) == 0:
-        #     cmd_vel = geometry_msgs.msg.Twist()
-        #     cmd_vel.linear.x = cmd_vel.linear.y = cmd_vel.linear.z = 0.0
-        #     cmd_vel.angular.x = cmd_vel.angular.y = cmd_vel.angular.z = 0.0
-        #     self.cmd_vel_pub.publish(cmd_vel)        
-        #     return py_trees.common.Status.SUCCESS
-        
-        # projected_ranges = scan.angle_min + scan.angle_increment*valid_index
-        # projected_ranges = np.cos(projected_ranges) * valid_ranges
-        # min_dist = np.min(projected_ranges)
-        # print("(closest obs) ", min_dist)        
-        # cmd_vel = geometry_msgs.msg.Twist()
-        # cmd_vel.linear.x = cmd_vel.linear.y = cmd_vel.linear.z = 0.0
-        # cmd_vel.angular.x = cmd_vel.angular.y = cmd_vel.angular.z = 0.0
-        
-        # if min_dist < (scan.range_min+0.05):
-        #     self.cmd_vel_pub.publish(cmd_vel)
-        #     self.feedback_message = "Completed a alignment goal"
-        #     return py_trees.common.Status.SUCCESS
-        # else:
-        #     cmd_vel.linear.x = 0.01
-        #     self.cmd_vel_pub.publish(cmd_vel)
-        #     self.feedback_message = "(Touch Base) Move Forward."
-        #     return py_trees.common.Status.RUNNING
 
-
+        
     def terminate(self, new_status):
-        # msg = self.status_req()
-        # d = json.loads(msg.data)
-        # if d['state'] == GoalStatus.ACTIVE:
-        #     self.cmd_req( json.dumps({'action_type': 'cancel_goal'}) )
+        msg = self.status_req()
+        d = json.loads(msg.data)
+        if d['state'] == GoalStatus.ACTIVE:
+            self.cmd_req( json.dumps({'action_type': 'cancel_goal'}) )
+        
+        # blackboard = py_trees.Blackboard()
+        # self.drive_status_update_req(blackboard.robot_name)
         return
-

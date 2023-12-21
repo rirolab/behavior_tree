@@ -34,20 +34,21 @@ class MOVEP(py_trees.behaviour.Behaviour):
         self.sent_goal   = False
         self.cmd_req     = None
         
-        self._manip_status_update_srv_channel = "/update_robot_manip_state"
+        # self._manip_status_update_srv_channel = "/update_robot_manip_state"
 
 
 
     def setup(self, timeout):
+        rospy.loginfo(f"[Subtree] MOVEP : setup() called ({self.name}).")
         self.feedback_message = "{}: setup".format(self.name)
         rospy.wait_for_service("arm_client/command")
         self.cmd_req = rospy.ServiceProxy("arm_client/command", String_Int)
         rospy.wait_for_service("arm_client/status")
         self.status_req = rospy.ServiceProxy("arm_client/status", None_String)    
 
-        rospy.wait_for_service(self._manip_status_update_srv_channel)
-        self.manip_status_update_req = rospy.ServiceProxy(self._manip_status_update_srv_channel, String_None)
-
+        # rospy.wait_for_service(self._manip_status_update_srv_channel)
+        # self.manip_status_update_req = rospy.ServiceProxy(self._manip_status_update_srv_channel, String_None)
+        rospy.loginfo(f"[Subtree] MOVEP : setup() done ({self.name}).")
         return True
 
 
@@ -55,7 +56,7 @@ class MOVEP(py_trees.behaviour.Behaviour):
         self.logger.debug("{0}.initialise()".format(self.__class__.__name__))
         self.sent_goal = False
         blackboard = py_trees.Blackboard()
-        self.manip_status_update_req(blackboard.robot_name)
+        # self.manip_status_update_req(blackboard.robot_name)
 
     def update(self):
 
@@ -119,7 +120,8 @@ class MOVEP(py_trees.behaviour.Behaviour):
         d = json.loads(msg.data)
         state = d['state']
         ret   = d['result']
-
+        rospy.loginfo(f"[SubTree] MOVEP : state = {state}, ret = {ret}  <---------------------------")
+        terminal_states = [GoalStatus.PREEMPTED, GoalStatus.SUCCEEDED, GoalStatus.ABORTED, GoalStatus.REJECTED, GoalStatus.RECALLED]
         if  state in [GoalStatus.ABORTED,
                       GoalStatus.PREEMPTED,
                       GoalStatus.REJECTED] and \
@@ -128,7 +130,8 @@ class MOVEP(py_trees.behaviour.Behaviour):
             # self.manip_status_update_req(blackboard.robot_name)
             return py_trees.common.Status.FAILURE
 
-        if ret == FollowJointTrajectoryResult.SUCCESSFUL:
+        if state in terminal_states and \
+                    ret == FollowJointTrajectoryResult.SUCCESSFUL:
             self.feedback_message = "SUCCESSFUL"
             # self.manip_status_update_req(blackboard.robot_name)
             return py_trees.common.Status.SUCCESS
@@ -143,7 +146,7 @@ class MOVEP(py_trees.behaviour.Behaviour):
             self.cmd_req( json.dumps({'action_type': 'cancel_goal'}) )
         
         blackboard = py_trees.Blackboard()
-        self.manip_status_update_req(blackboard.robot_name)
+        # self.manip_status_update_req(blackboard.robot_name)
         return
 
 
@@ -378,17 +381,18 @@ class MOVEPROOT(py_trees.behaviour.Behaviour):
         self.action_goal = action_goal
         self.sent_goal = False
         self.cmd_req   = None
-        self._manip_status_update_srv_channel = "/update_robot_manip_state"
+        # self._manip_status_update_srv_channel = "/update_robot_manip_state"
 
     def setup(self, timeout):
+        rospy.loginfo("[Subtree] MOVEPROOT : setup() called.")
         self.feedback_message = "{}: setup".format(self.name)
         rospy.wait_for_service("arm_client/command")
         self.cmd_req = rospy.ServiceProxy("arm_client/command", String_Int)
         rospy.wait_for_service("arm_client/status")
         self.status_req = rospy.ServiceProxy("arm_client/status", None_String)
-
-        rospy.wait_for_service(self._manip_status_update_srv_channel)
-        self.manip_status_update_req = rospy.ServiceProxy(self._manip_status_update_srv_channel, String_None)
+        rospy.loginfo("[Subtree] MOVEPROOT : setup() done.")
+        # rospy.wait_for_service(self._manip_status_update_srv_channel)
+        # self.manip_status_update_req = rospy.ServiceProxy(self._manip_status_update_srv_channel, String_None)
 
         return True
 
@@ -397,7 +401,7 @@ class MOVEPROOT(py_trees.behaviour.Behaviour):
         self.logger.debug("{0}.initialise()".format(self.__class__.__name__))
         self.sent_goal = False
         blackboard = py_trees.Blackboard()
-        self.manip_status_update_req(blackboard.robot_name)
+        # self.manip_status_update_req(blackboard.robot_name)
 
 
     def update(self):
@@ -448,6 +452,10 @@ class MOVEPROOT(py_trees.behaviour.Behaviour):
         d = json.loads(msg.data)
         state = d['state']
         ret   = d['result']
+        
+        rospy.loginfo(f"[SubTree] MOVEPROOT : state = {state}, ret = {ret}  <---------------------------")
+        terminal_states = [GoalStatus.PREEMPTED, GoalStatus.SUCCEEDED, GoalStatus.ABORTED, GoalStatus.REJECTED, GoalStatus.RECALLED]
+        
         # print("#######\n", d, "\n#####")
         # print("#######\n", state, "\n#####")
         # print("#######\n", ret, "\n#####")
@@ -460,7 +468,7 @@ class MOVEPROOT(py_trees.behaviour.Behaviour):
             # self.manip_status_update_req(blackboard.robot_name)
             return py_trees.common.Status.FAILURE
 
-        if ret == FollowJointTrajectoryResult.SUCCESSFUL:
+        if state in terminal_states and ret == FollowJointTrajectoryResult.SUCCESSFUL:
             self.feedback_message = "SUCCESSFUL"
             # self.manip_status_update_req(blackboard.robot_name)
             return py_trees.common.Status.SUCCESS
@@ -476,6 +484,6 @@ class MOVEPROOT(py_trees.behaviour.Behaviour):
             self.cmd_req( json.dumps({'action_type': 'cancel_goal'}) )
         self.logger.debug("%s.terminate()[%s->%s]" % (self.__class__.__name__, self.status, new_status))    
 
-        blackboard = py_trees.Blackboard()
-        self.manip_status_update_req(blackboard.robot_name)        
+        # blackboard = py_trees.Blackboard()
+        # self.manip_status_update_req(blackboard.robot_name)        
         return 

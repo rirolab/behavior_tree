@@ -34,15 +34,22 @@ class Move(object):
         subscriber here but more typically would be a service or action interface.
         """
         self._grounding_channel = "symbol_grounding" #rospy.get_param('grounding_channel')
-        
+        self._name = "drive"
         ## self._subscriber = rospy.Subscriber("/dashboard/move", std_msgs.Empty, self.incoming)
-        self._subscriber = rospy.Subscriber(self._grounding_channel, std_msgs.String, self.incoming)
+        # self._subscriber = rospy.Subscriber(self._grounding_channel, std_msgs.String, self.incoming)
         self._goal = None
         self._lock = threading.Lock()
         
         self.blackboard = py_trees.blackboard.Blackboard()
         self.blackboard.drive_config = eval(rospy.get_param("drive_config", str([0, 0, 0, 0, 0, 0])))
-
+    
+    @property
+    def name(self):
+        return self._name
+    @name.getter
+    def name(self):
+        return self._name 
+    
     @property
     def goal(self):
         """
@@ -72,7 +79,6 @@ class Move(object):
         if self.goal:
             rospy.logerr("(drive) MOVE: rejecting new goal, previous still in the pipeline")
         else:
-            rospy.loginfo("(drive job) sended")
             grounding = json.loads(msg.data)['params']
             for i in range( len(list(grounding.keys())) ):
                 if grounding[str(i+1)]['primitive_action'] in ['drive']:
@@ -99,6 +105,8 @@ class Move(object):
         if goal[idx]["primitive_action"] in ['drive']:
             robot       = goal[idx]['robot']
             destination = goal[idx]['destination']
+            side        = goal[idx].get('side', False)
+            rospy.loginfo(f"(in drive job) side={side}")
         else:
             return None
 
@@ -117,26 +125,32 @@ class Move(object):
         # # wait_condition = py_trees.decorators.Condition(name="Wait"+idx, child=sync_pose_est, status=py_trees.common.Status.SUCCESS)
         
         drive = py_trees.composites.Sequence(name="Drive")
-        s_drive_pose1 = MoveJoint.MOVEJ(name="DrivePose", controller_ns=controller_ns,
-                                  action_goal=blackboard.drive_config)
-        sync_pose_est = WorldModel.SYNC_POSE_ESTIMATOR_HAETAE(name="Sync"+idx, object_dict={'target1': 'spot', 'target2': 'haetae'}, distance_criteria=1.0)
-        wait_condition = py_trees.decorators.Condition(name="Wait"+idx, child=sync_pose_est, status=py_trees.common.Status.SUCCESS)
+        # sync_pose_est = WorldModel.SYNC_POSE_ESTIMATOR_HAETAE(name="Sync"+idx, object_dict={'target1': 'spot', 'target2': 'haetae'}, distance_criteria=1.0)
+        # wait_condition = py_trees.decorators.Condition(name="Wait"+idx, child=sync_pose_est, status=py_trees.common.Status.SUCCESS)
 
         pose_est1 = WorldModel.PARKING_POSE_ESTIMATOR(name="Plan"+idx,
-                                              object_dict = {'robot':robot,'destination': destination})
+                                              object_dict = {'robot':robot,'destination': destination, 'side': side})
         ticketing1 = Ticketing(pose_est1, idx=idx, name="Ticketing")
         s_drive1 = MoveBase.MOVEB(name="Drive", idx=idx,
                                    action_goal={'pose': "Plan"+idx+"/parking_pose"})
         replanning1 = Replanning(s_drive1, idx=idx, name="Replan")
         waiting1 = py_trees.composites.Parallel(name='Waiting', children=[ticketing1, replanning1])
-        drive.add_children([s_drive_pose1, waiting1, wait_condition])
+        approaching1 = MoveBase.TOUCHB(name="Touch", idx=idx,
+                                      action_goal={'pose': "Plan"+idx+"/parking_pose"})
+        #FIXME
+        if robot == 'spot':
+            drive.add_children([waiting1, approaching1])
+        else:
+            s_drive_pose1 = MoveJoint.MOVEJ(name="DrivePose", controller_ns=controller_ns,
+                                    action_goal=blackboard.drive_config)
+            drive.add_children([s_drive_pose1, waiting1, approaching1])
+        # drive.add_children([s_drive_pose1, waiting1, wait_condition])
 
 
-
-        root.add_child(drive)
+        run_once1 = py_trees.decorators.OneShot(name="Once", child=drive)
+        # root.add_child(drive)
         # root.add_children([s_drive_pose, pose_est10, wait_condition, s_drive10])
-        print("[JOB] drive: create root DONE")
         # task = py_trees.composites.Sequence(name="Delivery")
-        return root
+        return run_once1
 
 

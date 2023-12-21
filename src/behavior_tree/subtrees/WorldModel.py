@@ -114,6 +114,7 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
 
 
     def setup(self, timeout):
+        rospy.loginfo("[Subtree] Pose_Estimater : setup() called.")
         self.feedback_message = "{}: setup".format(self.name)
         ## rospy.wait_for_service("remove_wm_object")
         ## self.cmd_req = rospy.ServiceProxy("remove_wm_object", String_None)
@@ -149,6 +150,7 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         self.listener = tf.TransformListener()
         
         self.feedback_message = "{}: finished setting up".format(self.name)
+        rospy.loginfo("[Subtree] Pose_Estimater : setup() called.")
         return True
 
 
@@ -236,10 +238,10 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
             #from IPython import embed; embed(); sys.exit()
             self.blackboard.set(self.name +'/grasp_pose', grasp_pose)
             self.blackboard.set(self.name +'/grasp_top_pose', grasp_top_pose)
-            rospy.set_param('grasp_pose', json.dumps(misc.pose2list(grasp_pose)))
-            rospy.set_param('grasp_top_pose', json.dumps(misc.pose2list(grasp_top_pose)))
-            rospy.set_param('obj_base_pose', json.dumps(misc.pose2list(obj_base_pose)))
-            rospy.set_param('obj_grasp_pose', json.dumps(misc.pose2list(obj_grasp_pose)))
+            # rospy.set_param('grasp_pose', json.dumps(misc.pose2list(grasp_pose)))
+            # rospy.set_param('grasp_top_pose', json.dumps(misc.pose2list(grasp_top_pose)))
+            # rospy.set_param('obj_base_pose', json.dumps(misc.pose2list(obj_base_pose)))
+            # rospy.set_param('obj_grasp_pose', json.dumps(misc.pose2list(obj_grasp_pose)))
             
             
             # Place pose
@@ -387,8 +389,8 @@ class PARKING_POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         self.object_dict = object_dict
         self.sent_goal   = False
         
-        self._pose_srv_channel = '/get_object_pose'
         self._parking_pose_srv_channel = '/get_parking_ticket'
+        self._parking_side_pose_srv_channel = '/get_parking_side_pose'        
         
         self._collab_pose_srv_channel = '/get_collab_pose'
 
@@ -400,16 +402,17 @@ class PARKING_POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         self.feedback_message = "{}: setup".format(self.name)
         ## rospy.wait_for_service("remove_wm_object")
         ## self.cmd_req = rospy.ServiceProxy("remove_wm_object", String_None)
-
-        rospy.wait_for_service(self._pose_srv_channel)
-        self.pose_srv_req = rospy.ServiceProxy(self._pose_srv_channel, String_Pose)
+        rospy.loginfo('[subtree] parking_pose_estimator: setup() called.')
         rospy.wait_for_service(self._parking_pose_srv_channel)
         self.parking_pose_srv_req = rospy.ServiceProxy(self._parking_pose_srv_channel, Delivery_Ticket)
+        rospy.wait_for_service(self._parking_side_pose_srv_channel)
+        self.side_pose_srv_req = rospy.ServiceProxy(self._parking_side_pose_srv_channel, Delivery_Ticket)
 
         rospy.wait_for_service(self._collab_pose_srv_channel)
         self.collab_pose_srv_req = rospy.ServiceProxy(self._collab_pose_srv_channel, String_Pose)
         
         self.feedback_message = "{}: finished setting up".format(self.name)
+        rospy.loginfo('[subtree] parking_pose_estimator: setup() done.')
         return True
 
     def initialise(self):
@@ -418,12 +421,10 @@ class PARKING_POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         self.sent_goal = False
 
         self.blackboard = py_trees.Blackboard()
-        self.blackboard.set(self.name +'/near_parking_pose', Pose())
         self.blackboard.set(self.name +'/parking_pose', Pose())
         self.blackboard.set(self.name +'/home_pose', Pose(Point(self._home_pose[0],self._home_pose[1],self._home_pose[2]),
                                                           Quaternion(self._home_pose[3],self._home_pose[4],self._home_pose[5],self._home_pose[6])))
     
-        
 
     def update(self):
         self.logger.debug("%s.update()" % self.__class__.__name__)
@@ -432,12 +433,10 @@ class PARKING_POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
 
             # Request the top surface pose of an object to WM
             obj = self.object_dict['destination']
-            # print("SSSSSSDFFDFDFDDFDFDFDFDFD\n\n\n\n\n\n\n\n\n\n", self.object_dict)
             if 'collab' in self.object_dict.keys():
                 if self.object_dict['collab'] == True:
                     try:
                         obj_collab_pose = self.collab_pose_srv_req(obj).pose # obj grasping pose w.r.t. world frame
-                        # print("@@@@@\n\n\n\n", obj_collab_pose)
                         ticket_order = 0
                         self.blackboard.set(self.name +'/ticket', ticket_order)
                         self.blackboard.set(self.name +'/parking_pose', obj_collab_pose)
@@ -453,19 +452,32 @@ class PARKING_POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
 
                     
 
-            if obj == 'home':
-                self.blackboard.set(self.name +'/ticket', 1)
-                self.blackboard.set(self.name +'/home_pose', Pose(Point(self._home_pose[0],self._home_pose[1],self._home_pose[2]),
-                                                          Quaternion(self._home_pose[3],self._home_pose[4],self._home_pose[5],self._home_pose[6])))
-                self.sent_goal        = True
-                self.feedback_message = "WorldModel: successful home pose estimation "
-                return py_trees.common.Status.SUCCESS
+#             if obj == 'home':
+#                 self.blackboard.set(self.name +'/ticket', 1)
+#                 self.blackboard.set(self.name +'/home_pose', Pose(Point(self._home_pose[0],self._home_pose[1],self._home_pose[2]),
+#                                                           Quaternion(self._home_pose[3],self._home_pose[4],self._home_pose[5],self._home_pose[6])))
+#                 self.sent_goal        = True
+#                 self.feedback_message = "WorldModel: successful home pose estimation "
+#                 return py_trees.common.Status.SUCCESS
                 
             try:
+                
+                obj = self.object_dict['destination']
+                if obj == 'home':
+                    self.blackboard.set(self.name +'/ticket', 1)
+                    self.blackboard.set(self.name +'/home_pose', Pose(Point(self._home_pose[0],self._home_pose[1],self._home_pose[2]),
+                                                            Quaternion(self._home_pose[3],self._home_pose[4],self._home_pose[5],self._home_pose[6])))
+                    self.sent_goal        = True
+                    self.feedback_message = "WorldModel: successful home pose estimation "
+                    return py_trees.common.Status.SUCCESS
+                
                 req = Delivery_TicketRequest()
                 req.robot = self.object_dict['robot']
                 req.destination = self.object_dict['destination']
-                resp = self.parking_pose_srv_req(req)
+                if 'side' in self.object_dict.keys() and self.object_dict['side']:
+                    resp = self.side_pose_srv_req(req)    
+                else:
+                    resp = self.parking_pose_srv_req(req)
                 
                 ticket_order = resp.order
                 parking_pose = resp.pose
@@ -480,7 +492,7 @@ class PARKING_POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
             
             self.sent_goal        = True
             self.feedback_message = "WorldModel: successful parking pose estimation "
-            return py_trees.common.Status.SUCCESS
+            return py_trees.common.Status.RUNNING
         
         self.feedback_message = "WorldModel: successful parking pose estimation "
         return py_trees.common.Status.SUCCESS
