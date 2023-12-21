@@ -29,7 +29,7 @@ class GOTO(py_trees.behaviour.Behaviour):
         self.sent_goal     = False
         self.cmd_req       = None
         self.check_contact = check_contact
-        # self._manip_status_update_srv_channel = "/update_robot_manip_state"
+        self._manip_status_update_srv_channel = "/update_robot_manip_state"
 
     def setup(self, timeout):
         rospy.loginfo(f"[Subtree] Goto({self.name}) setup() called.")
@@ -38,8 +38,8 @@ class GOTO(py_trees.behaviour.Behaviour):
         self.cmd_req = rospy.ServiceProxy("arm_client/command", String_Int)
         rospy.wait_for_service("arm_client/status")
         self.status_req = rospy.ServiceProxy("arm_client/status", None_String)   
-        # rospy.wait_for_service(self._manip_status_update_srv_channel)
-        # self.manip_status_update_req = rospy.ServiceProxy(self._manip_status_update_srv_channel, String_None)
+        rospy.wait_for_service(self._manip_status_update_srv_channel)
+        self.manip_status_update_req = rospy.ServiceProxy(self._manip_status_update_srv_channel, String_None)
 
         return True
 
@@ -49,7 +49,7 @@ class GOTO(py_trees.behaviour.Behaviour):
         self.logger.debug("{0}.initialise()".format(self.__class__.__name__))
         self.sent_goal = False
         blackboard = py_trees.Blackboard()
-        # self.manip_status_update_req(blackboard.robot_name)
+        self.manip_status_update_req(blackboard.robot_name)
 
 
     def update(self):
@@ -99,5 +99,5 @@ class GOTO(py_trees.behaviour.Behaviour):
             self.feedback_message = "GRIPPER CANCEL GOAL"
             self.cmd_req( json.dumps({'action_type': 'cancel_goal'}) )        
         blackboard = py_trees.Blackboard()
-        # self.manip_status_update_req(blackboard.robot_name)        
+        self.manip_status_update_req(blackboard.robot_name)        
         return
