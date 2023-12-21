@@ -41,7 +41,7 @@ class MOVEB(py_trees.behaviour.Behaviour):
         self._world_frame_id = rospy.get_param("/world_frame", 'map')
         self.cmd_req     = None
         self.idx = idx
-        # self._drive_status_update_srv_channel = "/update_robot_drive_state"
+        self._drive_status_update_srv_channel = "/update_robot_drive_state"
         rospy.loginfo(f'{self.__class__.__name__}.__init__() called')
 
         self._spot_cmd_vel = "/spot/cmd_vel"
@@ -58,14 +58,14 @@ class MOVEB(py_trees.behaviour.Behaviour):
         rospy.wait_for_service("move_base_client/status")
         self.status_req = rospy.ServiceProxy("move_base_client/status", None_String)
         rospy.loginfo('[subtree] movebase: setup() done.')
-        # rospy.wait_for_service(self._drive_status_update_srv_channel)
-        # self.drive_status_update_req = rospy.ServiceProxy(self._drive_status_update_srv_channel, String_None)
+        rospy.wait_for_service(self._drive_status_update_srv_channel)
+        self.drive_status_update_req = rospy.ServiceProxy(self._drive_status_update_srv_channel, String_None)
 
-        # rospy.wait_for_service(self._arrival_state_udpate_srv_channel)
-        # self.arrival_status_update_req = rospy.ServiceProxy(self._arrival_state_udpate_srv_channel, String_Dup_None)
+        rospy.wait_for_service(self._arrival_state_udpate_srv_channel)
+        self.arrival_status_update_req = rospy.ServiceProxy(self._arrival_state_udpate_srv_channel, String_Dup_None)
 
-        # rospy.wait_for_service(self._arrival_state_delete_srv_channel)
-        # self.arrival_status_delete_req = rospy.ServiceProxy(self._arrival_state_delete_srv_channel, String_None)
+        rospy.wait_for_service(self._arrival_state_delete_srv_channel)
+        self.arrival_status_delete_req = rospy.ServiceProxy(self._arrival_state_delete_srv_channel, String_None)
 
         blackboard = py_trees.Blackboard()
         return True
@@ -88,8 +88,8 @@ class MOVEB(py_trees.behaviour.Behaviour):
         rospy.loginfo(f"{self.__class__.__name__}.intialise() called")
         self.sent_goal = False
         blackboard = py_trees.Blackboard()
-        # self.drive_status_update_req(blackboard.robot_name)
-        # self.arrival_status_delete_req(blackboard.robot_name)
+        self.drive_status_update_req(blackboard.robot_name)
+        self.arrival_status_delete_req(blackboard.robot_name)
 
     def update(self):
         rospy.loginfo('[subtree] movebase: update() called.')
