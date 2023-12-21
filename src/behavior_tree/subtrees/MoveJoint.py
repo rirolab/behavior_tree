@@ -29,7 +29,7 @@ class MOVEJ(py_trees.behaviour.Behaviour):
         self.action_goal = action_goal
         self.sent_goal = False
         self.cmd_req   = None
-        # self._manip_status_update_srv_channel = "/update_robot_manip_state"
+        self._manip_status_update_srv_channel = "/update_robot_manip_state"
 
     def setup(self, timeout):
         ## self.publisher = rospy.Publisher(self.topic_name, std_msgs.String, queue_size=10, latch=True)
@@ -40,8 +40,8 @@ class MOVEJ(py_trees.behaviour.Behaviour):
         rospy.wait_for_service("arm_client/status")
         self.status_req = rospy.ServiceProxy("arm_client/status", None_String)
         rospy.loginfo('[subtree] MOVEJOINT: setup() done.')
-        # rospy.wait_for_service(self._manip_status_update_srv_channel)
-        # self.manip_status_update_req = rospy.ServiceProxy(self._manip_status_update_srv_channel, String_None)
+        rospy.wait_for_service(self._manip_status_update_srv_channel)
+        self.manip_status_update_req = rospy.ServiceProxy(self._manip_status_update_srv_channel, String_None)
         return True
 
 
@@ -50,7 +50,7 @@ class MOVEJ(py_trees.behaviour.Behaviour):
         self.logger.debug("{0}.initialise()".format(self.__class__.__name__))
         self.sent_goal = False
         blackboard = py_trees.Blackboard()
-        # self.manip_status_update_req(blackboard.robot_name)
+        self.manip_status_update_req(blackboard.robot_name)
 
     def update(self):
         rospy.loginfo('[subtree] MOVEJOINT: update() called.')
@@ -75,7 +75,7 @@ class MOVEJ(py_trees.behaviour.Behaviour):
                 self.feedback_message = \
                   "failed to execute"
                 self.logger.debug("%s.update()[%s]" % (self.__class__.__name__, self.feedback_message))
-                # self.manip_status_update_req(blackboard.robot_name)
+                self.manip_status_update_req(blackboard.robot_name)
                 rospy.loginfo('[subtree] MOVEJOINT: update() --- FAILURE.')
                 return py_trees.common.Status.FAILURE
             
@@ -97,13 +97,13 @@ class MOVEJ(py_trees.behaviour.Behaviour):
                       ret != FollowJointTrajectoryResult.SUCCESSFUL:
             self.feedback_message = "FAILURE"
             self.logger.debug("%s.update()[%s->%s][%s]" % (self.__class__.__name__, self.status, py_trees.common.Status.FAILURE, self.feedback_message))
-            # self.manip_status_update_req(blackboard.robot_name)
+            self.manip_status_update_req(blackboard.robot_name)
             rospy.loginfo(f'[subtree] MOVEJOINT: FAILED state = {state}, result = {ret}.')
             return py_trees.common.Status.FAILURE
         if state in terminal_states and ret == FollowJointTrajectoryResult.SUCCESSFUL:
             self.feedback_message = "SUCCESSFUL"
             self.logger.debug("%s.update()[%s->%s][%s]" % (self.__class__.__name__, self.status, py_trees.common.Status.SUCCESS, self.feedback_message))
-            # self.manip_status_update_req(blackboard.robot_name)
+            self.manip_status_update_req(blackboard.robot_name)
             rospy.loginfo(f'[subtree] MOVEJOINT: SUCCESSDED state = {state}, result = {ret}.')
             return py_trees.common.Status.SUCCESS
         else:
@@ -119,7 +119,7 @@ class MOVEJ(py_trees.behaviour.Behaviour):
         self.logger.debug("%s.terminate()[%s->%s]" % (self.__class__.__name__, self.status, new_status))   
         
         blackboard = py_trees.Blackboard()
-        # self.manip_status_update_req(blackboard.robot_name)
+        self.manip_status_update_req(blackboard.robot_name)
         return 
 
 
