@@ -396,6 +396,7 @@ if __name__ == '__main__':
                 'jobs.delivery_job.Move',
                 'jobs.home_job.Move',
                 'jobs.drive_job.Move',
+                'jobs.collabhaetae_delivery_job.Move',
                 'jobs.help_load_job.Move',
                 'jobs.help_unload_job.Move',
                 ]
@@ -404,7 +405,8 @@ if __name__ == '__main__':
                 'jobs.spot_delivery_job.Move',
                 # 'jobs.wait_spot_drive_job.Move',
                 'jobs.home_job.Move',
-                # 'jobs.collabspot_drive_job.Move',
+                'jobs.collabspot_drive_job.Move',
+                'jobs.collabspot_delivery_job.Move'
                 ]
         
     else:
