@@ -13,7 +13,7 @@ import std_msgs.msg as std_msgs
 from complex_action_client import misc
 
 #sys.path.insert(0,'..')
-from behavior_tree.subtrees import MoveJoint, MovePose, MoveBase, Gripper, Stop, WorldModel
+from behavior_tree.subtrees import MoveJoint, MovePose, MoveBase, Gripper, Stop, WorldModel, Communicate
 from behavior_tree.decorators import Ticketing, Replanning
 
 ##############################################################################
@@ -33,7 +33,7 @@ class Move(object):
         subscriber here but more typically would be a service or action interface.
         """
         self._grounding_channel = "symbol_grounding" #rospy.get_param('grounding_channel')
-        self._name = "delivery"
+        self._name = "help_load"
         ## self._subscriber = rospy.Subscriber("/dashboard/move", std_msgs.Empty, self.incoming)
         # self._subscriber = rospy.Subscriber(self._grounding_channel, std_msgs.String, self.incoming)
         self._goal = None
@@ -45,19 +45,15 @@ class Move(object):
         self.blackboard.gripper_open_force = rospy.get_param("gripper_open_force")
         self.blackboard.gripper_close_force = rospy.get_param("gripper_close_force")
         self.blackboard.init_config = eval(rospy.get_param("init_config", [0, -np.pi/2., np.pi/2., -np.pi/2., -np.pi/2., np.pi/4.]))
-        self.blackboard.drive_config = [np.pi/2, -2.4, 2.4, -np.pi/2., -np.pi/2., 0]
+        self.blackboard.drive_config = eval(rospy.get_param("drive_config", str([0, 0, 0, 0, 0, 0])))
 
-        ## self.object      = None
-        ## self.destination = None
-    
     @property
     def name(self):
         return self._name
-    
     @name.getter
     def name(self):
-        return self._name
-    
+        return self._name        
+
     @property
     def goal(self):
         """
@@ -89,7 +85,8 @@ class Move(object):
         else:
             grounding = json.loads(msg.data)['params']
             for i in range( len(list(grounding.keys())) ):
-                if grounding[str(i+1)]['primitive_action'] in ['delivery']:
+                if grounding[str(i+1)]['primitive_action'] in ['help_load']:
+                    rospy.loginfo(f'[Job] Help Load : HERE!!!!!!!!!!!!!!!!!!!!!!')
                     self.goal = grounding #[str(i+1)] )
                     break
                 
@@ -122,33 +119,46 @@ class Move(object):
            :class:`~py_trees.behaviour.Behaviour`: subtree root
         """
         # beahviors
-        root = py_trees.composites.Sequence(name="Delivery")
+        rospy.loginfo("[Job] help : create_root() called.")
+        root = py_trees.composites.Sequence(name="Help")
         blackboard = py_trees.blackboard.Blackboard()
-        
-        if goal[idx]["primitive_action"] in ['delivery']:
+        """ Ex) 
+        [Load]                              |  [UnLoad]
+        robot       : haetae,               |   robot       : haetae
+        object      : box_s1                |   object      : box_s1
+        source      : picking_station1      |   source      : spot_table
+        destination : spot_table            |   destination : placing_shelf1
+        task_id     : spot_load_box_s1      |   task_id     : spot_unload_box_s1
+        """
+        if goal[idx]["primitive_action"] in ['help_load']:
             robot       = goal[idx]['robot']
             obj         = goal[idx]['object']
             source      = goal[idx]['source']
             destination = goal[idx]['destination']
+            task_id     = goal[idx]['task_id']
         else:
             return None
 
         
-        # ----------------- Bring ---------------------
-        bring = py_trees.composites.Sequence(name="Bring")
+        # ----------------- Come ---------------------
+        come = py_trees.composites.Sequence(name="Come")
+
+        action_goal_arrived = {'robot':robot, 'task_id':f'{task_id}_arrived'}
+        assignment1 = Communicate.Assigning(name="Arrived?", idx=idx, action_goal=action_goal_arrived)
+        
         s_drive_pose1 = MoveJoint.MOVEJ(name="DrivePose", controller_ns=controller_ns,
                                   action_goal=blackboard.drive_config)
-        pose_est10 = WorldModel.PARKING_POSE_ESTIMATOR(name="Plan"+idx,
-                                              object_dict = {'robot':robot,'destination': source})
-        ticketing1 = Ticketing(child=pose_est10, idx=idx, name="Ticketing")
-        s_drive10 = MoveBase.MOVEB(name="Drive", idx=idx, destination=source,
+        pose_est1 = WorldModel.PARKING_POSE_ESTIMATOR(name="Plan"+idx,
+                                              object_dict = {'robot':robot,'destination': source, 'side':True})
+        s_drive1 = MoveBase.MOVEB(name="Drive", idx=idx,
                                    action_goal={'pose': "Plan"+idx+"/parking_pose"})
-        replanning1 = Replanning(s_drive10, idx=idx, name="Replan")
-        waiting1 = py_trees.composites.Parallel(name='Waiting', children=[ticketing1, replanning1])
         approaching1 = MoveBase.TOUCHB(name="Touch", idx=idx,
                                       action_goal={'pose': "Plan"+idx+"/parking_pose"})
-        bring.add_children([s_drive_pose1, waiting1, approaching1])
+        submission1 = Communicate.Submit(name="Come", idx=idx, action_goal={'status':1, 'task_id':f'{task_id}_come'})
 
+        come.add_children([assignment1, s_drive_pose1, pose_est1, s_drive1, approaching1, submission1])
+        rospy.loginfo("[Job] help : create_root() --- come done.")
+        
         # ----------------- Pick ---------------------
         pose_est20 = WorldModel.POSE_ESTIMATOR(name="Plan"+idx,
                                               object_dict = {'target': obj})
@@ -171,26 +181,25 @@ class Move(object):
                                  action_goal={'pose': "Plan"+idx+"/grasp_top_pose"})
         s_init_pose21 = MoveJoint.MOVEJ(name="Init", controller_ns=controller_ns,
                                   action_goal=blackboard.init_config)
-
+        checking2 = Communicate.Checking(name="Checked", idx=idx, action_goal=action_goal_arrived)
+        
         pick = py_trees.composites.Sequence(name="Pick")
-        pick.add_children([pose_est20, s_init_pose20, s_move20, s_move21, s_move22, s_move23, s_move24, s_move25, s_init_pose21])
+        pick.add_children([pose_est20, s_init_pose20, s_move20, s_move21, s_move22, s_move23, s_move24, s_move25, s_init_pose21, checking2])
+        
+        # ----------------- Approach ---------------------
 
-        # ----------------- Delivery ---------------------
-        deliver = py_trees.composites.Sequence(name="Deliver")
+        approach = py_trees.composites.Sequence(name="Approach")
+
         s_drive_pose3 = MoveJoint.MOVEJ(name="DrivePose", controller_ns=controller_ns,
                                   action_goal=blackboard.drive_config)
         pose_est3 = WorldModel.PARKING_POSE_ESTIMATOR(name="Plan"+idx,
-                                              object_dict = {'robot':robot,'destination': destination})
-        ticketing3 = Ticketing(child=pose_est3, idx=idx, name="Ticketing")
-        s_drive3 = MoveBase.MOVEB(name="Drive",idx=idx, destination=destination,
+                                              object_dict = {'robot':robot,'destination': destination, 'side':True})
+        s_drive3 = MoveBase.TOUCHB(name="Drive", idx=idx,
                                    action_goal={'pose': "Plan"+idx+"/parking_pose"})
-        replanning3 = Replanning(s_drive3, idx=idx, name="Replan")
-        waiting3 = py_trees.composites.Parallel(name='Waiting', children=[ticketing3, replanning3])
-        approaching3 = MoveBase.TOUCHB(name="Touch", idx=idx,
-                                      action_goal={'pose': "Plan"+idx+"/parking_pose"})
-        deliver.add_children([s_drive_pose3, waiting3, approaching3])
+        approach.add_children([s_drive_pose3, pose_est3, s_drive3])
 
-        # ----------------- Place ---------------------
+        # ----------------- Load ---------------------
+
         place = py_trees.composites.Sequence(name="Place")
         s_init_pose40 = MoveJoint.MOVEJ(name="Init", controller_ns=controller_ns,
                                   action_goal=blackboard.init_config)
@@ -211,12 +220,14 @@ class Move(object):
                                 force=blackboard.gripper_open_force)        
         s_move44 = MovePose.MOVEP(name="Top", controller_ns=controller_ns,
                                  action_goal={'pose': "Plan"+idx+"/place_top_pose"})
+        submission4 = Communicate.Submit(name="Load", idx=idx, action_goal={'status':1, 'task_id':f'{task_id}_load'})
         
-        s_move45 = WorldModel.REMOVE(name="Remove", target=obj)
-        place.add_children([pose_est4, s_init_pose40, s_move40, s_move41, s_move42, s_move43, s_move44, s_move45, s_init_pose41])
-        
-        task = py_trees.composites.Sequence(name="Delivery")
-        task.add_children([bring, pick, deliver, place])
+        place.add_children([pose_est4, s_init_pose40, s_move40, s_move41, s_move42, s_move43, s_move44, s_init_pose41, submission4])
+        # rospy.loginfo("[Job] help : create_root() --- place done.")
+
+        task = py_trees.composites.Sequence(name="Help")
+        # task.add_children([come, pick, approach, place])
+        task.add_children([come, pick, approach, place])
         return task
 
 

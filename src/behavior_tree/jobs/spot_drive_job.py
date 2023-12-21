@@ -33,9 +33,9 @@ class Move(object):
         subscriber here but more typically would be a service or action interface.
         """
         self._grounding_channel = "symbol_grounding" #rospy.get_param('grounding_channel')
-        
+        self._name = "drive"
         ## self._subscriber = rospy.Subscriber("/dashboard/move", std_msgs.Empty, self.incoming)
-        self._subscriber = rospy.Subscriber(self._grounding_channel, std_msgs.String, self.incoming)
+        # self._subscriber = rospy.Subscriber(self._grounding_channel, std_msgs.String, self.incoming)
         self._goal = None
         self._lock = threading.Lock()
         
@@ -44,6 +44,12 @@ class Move(object):
         ## self.object      = None
         ## self.destination = None
 
+    @property
+    def name(self):
+        return self._name
+    @name.getter
+    def name(self):
+        return self._name    
     @property
     def goal(self):
         """
@@ -128,7 +134,9 @@ class Move(object):
         wait_condition = py_trees.decorators.Condition(name="Wait"+idx, child=sync_pose_est, status=py_trees.common.Status.SUCCESS)
 
         drive.add_child(waiting1)
-        root.add_children([drive, wait_condition])
+        # root.add_children([drive, wait_condition])
+        root.add_children([drive])
+        
         # # sync_pose_est2 = WorldModel.SYNC_POSE_ESTIMATOR(name="Sync"+idx, object_dict={'target1': 'spot', 'target2': 'haetae'}, distance_criteria=1.0, smaller_than_criteria=False)
         # # wait_condition2 = py_trees.decorators.Condition(name="Wait"+idx, child=sync_pose_est2, status=py_trees.common.Status.SUCCESS)
 
