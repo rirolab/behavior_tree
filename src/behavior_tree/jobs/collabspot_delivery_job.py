@@ -35,7 +35,8 @@ class Move(object):
         self._grounding_channel = "symbol_grounding" #rospy.get_param('grounding_channel')
         
         ## self._subscriber = rospy.Subscriber("/dashboard/move", std_msgs.Empty, self.incoming)
-        self._subscriber = rospy.Subscriber(self._grounding_channel, std_msgs.String, self.incoming)
+        # self._subscriber = rospy.Subscriber(self._grounding_channel, std_msgs.String, self.incoming)
+        self._name = "collab_delivery"
         self._goal = None
         self._lock = threading.Lock()
         
@@ -50,6 +51,13 @@ class Move(object):
         ## self.object      = None
         ## self.destination = None
 
+    @property
+    def name(self):
+        return self._name
+    @name.getter
+    def name(self):
+        return self._name 
+    
     @property
     def goal(self):
         """
@@ -167,37 +175,54 @@ class Move(object):
         ticketing1 = Ticketing(child=pose_est1, idx=idx, name="Ticketing")
         s_drive1 = MoveBase.MOVEB(name="Navigate", idx=idx,
                                    action_goal={'pose': "Plan"+idx+"/parking_pose"}, destination=source)
+        
         replanning1 = Replanning(s_drive1, idx=idx, name="Replan")
         waiting1 = py_trees.composites.Parallel(name='Waiting', children=[ticketing1, replanning1])
+        approaching1 = MoveBase.TOUCHB(name="Touch", idx=idx, destination=source,
+                                      action_goal={'pose': "Plan"+idx+"/parking_pose"})
+        
 
         target = 'haetae'
 
             ## wait wether "target" arrives "destination" or not?
         sync_pose_est1 = WorldModel.SYNC_POSE_ESTIMATOR_WAIT(name="Sync"+idx, target_obj=target, placement=source)
         wait_condition1 = py_trees.decorators.Condition(name="Wait"+idx, child=sync_pose_est1, status=py_trees.common.Status.SUCCESS)
-
-        waitdrive.add_children([waiting1, wait_condition1])
+        waitdrive.add_children([waiting1, approaching1, wait_condition1])
 
         ## collabdrive
         collabdrive = py_trees.composites.Sequence(name="CollabDrive")
             ## wait wether "LOADING" is complete
         sync_pose_est2 = WorldModel.SYNC_POSE_ESTIMATOR_LOAD(name="Sync"+idx, target_obj='spot')
         wait_condition2 = py_trees.decorators.Condition(name="WaitLoad"+idx, child=sync_pose_est2, status=py_trees.common.Status.SUCCESS)
+        
+        ##########################
+        # pose_est2 = WorldModel.PARKING_POSE_ESTIMATOR(name="Plan"+idx,
+        #                                       object_dict = {'robot': robot, 'destination': destination, 'collab': True})
+        # s_drive2 = MoveBase.MOVEBCOLLAB(name="Navigate", idx=idx,
+        #                            action_goal={'pose': "Plan"+idx+"/parking_pose"}, destination=destination, source=source)
+        # collabdrive.add_children([wait_condition2, pose_est2, s_drive2, wait_condition3])
+        ##########################
         pose_est2 = WorldModel.PARKING_POSE_ESTIMATOR(name="Plan"+idx,
                                               object_dict = {'robot': robot, 'destination': destination, 'collab': True})
+        ticketing2 = Ticketing(child=pose_est2, idx=idx, name="Ticketing")
         s_drive2 = MoveBase.MOVEBCOLLAB(name="Navigate", idx=idx,
                                    action_goal={'pose': "Plan"+idx+"/parking_pose"}, destination=destination, source=source)
+        
+        replanning2 = Replanning(s_drive2, idx=idx, name="Replan")
+        waiting2 = py_trees.composites.Parallel(name='Waiting', children=[ticketing2, replanning2])
+        
+        ##########################
 
         sync_pose_est3 = WorldModel.SYNC_POSE_ESTIMATOR_DELETE(name="Sync"+idx, target_obj=obj)
         wait_condition3 = py_trees.decorators.Condition(name="WaitDelete"+idx, child=sync_pose_est3, status=py_trees.common.Status.SUCCESS)
 
-        collabdrive.add_children([wait_condition2, pose_est2, s_drive2, wait_condition3])
+        collabdrive.add_children([wait_condition2, waiting2, wait_condition3])
         
         task = py_trees.composites.Sequence(name="CollabDelivery")
         # task.add_children([bring, pick, deliver, place])
 
         # task.add_children([waitdrive])
-
+        
         task.add_children([waitdrive, collabdrive])
 
         return task

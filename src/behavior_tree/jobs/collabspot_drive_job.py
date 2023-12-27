@@ -36,6 +36,7 @@ class Move(object):
         
         ## self._subscriber = rospy.Subscriber("/dashboard/move", std_msgs.Empty, self.incoming)
         self._subscriber = rospy.Subscriber(self._grounding_channel, std_msgs.String, self.incoming)
+        self._name = ""
         self._goal = None
         self._lock = threading.Lock()
         
@@ -44,6 +45,13 @@ class Move(object):
         ## self.object      = None
         ## self.destination = None
 
+    @property
+    def name(self):
+        return self._name
+    @name.getter
+    def name(self):
+        return self._name 
+    
     @property
     def goal(self):
         """

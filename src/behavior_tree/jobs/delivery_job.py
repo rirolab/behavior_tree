@@ -145,7 +145,7 @@ class Move(object):
                                    action_goal={'pose': "Plan"+idx+"/parking_pose"})
         replanning1 = Replanning(s_drive10, idx=idx, name="Replan")
         waiting1 = py_trees.composites.Parallel(name='Waiting', children=[ticketing1, replanning1])
-        approaching1 = MoveBase.TOUCHB(name="Touch", idx=idx,
+        approaching1 = MoveBase.TOUCHB(name="Touch", idx=idx, destination=source,
                                       action_goal={'pose': "Plan"+idx+"/parking_pose"})
         bring.add_children([s_drive_pose1, waiting1, approaching1])
 
@@ -186,7 +186,7 @@ class Move(object):
                                    action_goal={'pose': "Plan"+idx+"/parking_pose"})
         replanning3 = Replanning(s_drive3, idx=idx, name="Replan")
         waiting3 = py_trees.composites.Parallel(name='Waiting', children=[ticketing3, replanning3])
-        approaching3 = MoveBase.TOUCHB(name="Touch", idx=idx,
+        approaching3 = MoveBase.TOUCHB(name="Touch", idx=idx, destination=destination,
                                       action_goal={'pose': "Plan"+idx+"/parking_pose"})
         deliver.add_children([s_drive_pose3, waiting3, approaching3])
 

@@ -35,7 +35,8 @@ class Move(object):
         self._grounding_channel = "symbol_grounding" #rospy.get_param('grounding_channel')
         
         ## self._subscriber = rospy.Subscriber("/dashboard/move", std_msgs.Empty, self.incoming)
-        self._subscriber = rospy.Subscriber(self._grounding_channel, std_msgs.String, self.incoming)
+        # self._subscriber = rospy.Subscriber(self._grounding_channel, std_msgs.String, self.incoming)
+        self._name = "collab_delivery"
         self._goal = None
         self._lock = threading.Lock()
         
@@ -49,6 +50,12 @@ class Move(object):
 
         ## self.object      = None
         ## self.destination = None
+    @property
+    def name(self):
+        return self._name
+    @name.getter
+    def name(self):
+        return self._name 
 
     @property
     def goal(self):
@@ -161,14 +168,16 @@ class Move(object):
                                   action_goal=blackboard.drive_config)
 
         pose_est1 = WorldModel.PARKING_POSE_ESTIMATOR(name="Plan"+idx,
-                                              object_dict = {'robot': robot, 'destination': source, 'collab': True})
+                                              object_dict = {'robot': robot, 'destination': source, 'collab_side': True})
 
         # ticketing1 = Ticketing(child=pose_est1, idx=idx, name="Ticketing")
         s_drive1 = MoveBase.MOVEB(name="Navigate", idx=idx,
                                    action_goal={'pose': "Plan"+idx+"/parking_pose"}, destination=source)
         # replanning1 = Replanning(s_drive1, idx=idx, name="Replan")
         # waiting1 = py_trees.composites.Parallel(name='Waiting', children=[ticketing1, replanning1])
-
+        approaching1 = MoveBase.TOUCHB(name="Touch", idx=idx,
+                                      action_goal={'pose': "Plan"+idx+"/parking_pose"}, destination=source)
+        
         target = 'spot'
 
             ## wait wether "target" arrives "destination" or not?
@@ -176,7 +185,7 @@ class Move(object):
         wait_condition1 = py_trees.decorators.Condition(name="Wait"+idx, child=sync_pose_est1, status=py_trees.common.Status.SUCCESS)
 
         # waitdrive.add_children([pose_est1, waiting1, wait_condition1])
-        waitdrive.add_children([s_drive_pose1, pose_est1, s_drive1, wait_condition1])
+        waitdrive.add_children([s_drive_pose1, pose_est1, s_drive1, approaching1, wait_condition1])
 
         ## collabload
         s_init2_1 = MoveJoint.MOVEJ(name="Init", controller_ns=controller_ns,
@@ -259,6 +268,7 @@ class Move(object):
         # task.add_children([bring, pick, deliver, place])
 
         # task.add_children([waitdrive])
-        task.add_children([waitdrive, pick, place])
+        
+        task.add_children([ waitdrive, pick, place])
 
         return task

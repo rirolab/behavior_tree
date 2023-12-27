@@ -153,7 +153,7 @@ class Move(object):
         pose_est1 = WorldModel.PARKING_POSE_ESTIMATOR(name="Plan"+idx,
                                               object_dict = {'robot':robot,'destination': destination, 'side':True})
         s_drive1 = MoveBase.MOVEB(name="Drive", idx=idx,
-                                   action_goal={'pose': "Plan"+idx+"/parking_pose"})
+                                   action_goal={'pose': "Plan"+idx+"/parking_pose"}, destination=destination)
         go_table.add_children([s_drive_pose1, pose_est1, s_drive1])
 
         go_table_or_not = PriorityParallel(name="GoTable", children=[checking1, go_table])
@@ -163,7 +163,7 @@ class Move(object):
         come = py_trees.composites.Sequence(name="Come")
         pose_est2 = WorldModel.PARKING_POSE_ESTIMATOR(name="Plan"+idx,
                                               object_dict = {'robot':robot,'destination': source, 'side':True})
-        s_drive2 = MoveBase.TOUCHB(name="Drive", idx=idx,
+        s_drive2 = MoveBase.TOUCHB(name="Drive", idx=idx, destination=source,
                                    action_goal={'pose': "Plan"+idx+"/parking_pose"})
         submission2 = Communicate.Submit(name="Come", idx=idx, action_goal={'status':1, 'task_id':f'{task_id}_come'})
 
@@ -204,7 +204,7 @@ class Move(object):
                                   action_goal=blackboard.drive_config)
         pose_est4 = WorldModel.PARKING_POSE_ESTIMATOR(name="Plan"+idx,
                                               object_dict = {'robot':robot,'destination': destination, 'side':True})
-        s_drive4 = MoveBase.TOUCHB(name="Drive", idx=idx,
+        s_drive4 = MoveBase.TOUCHB(name="Drive", idx=idx, destination=-destination,
                                    action_goal={'pose': "Plan"+idx+"/parking_pose"})
         submission4 = Communicate.Submit(name="Load", idx=idx, action_goal={'status':1, 'task_id':f'{task_id}_unload'})
         approach.add_children([s_drive_pose4, pose_est4, s_drive4, submission4])

@@ -131,20 +131,23 @@ class Move(object):
         ticketing1 = Ticketing(child=pose_est10, idx=idx, name="Ticketing")
         s_drive10 = MoveBase.MOVEB(name="Drive", idx=idx, destination=source,
                                    action_goal={'pose': "Plan"+idx+"/parking_pose"})
+        
         replanning1 = Replanning(s_drive10, idx=idx, name="Replan")
         
         task_id = f"{robot}_load_{obj}"
         hiring1 = Communicate.Hiring(name="Hiring", idx=idx, 
-                                     action_goal={'robot':robot, 'job':'help_load', 'object':obj, 'source':source, 'destination':f'{robot}_table', 'task_id':task_id})
+                                     action_goal={'robot':robot, 'job':'help_load', 'object':obj, 'source':source, 'destination':f'{robot}_table_from_gz', 'task_id':task_id})
         assign11 = Communicate.Assigning(name="Assignment_come", idx=idx, action_goal={'robot':robot, 'task_id':f'{task_id}_come'})
         assign12 = Communicate.Assigning(name="Assignment_load", idx=idx, action_goal={'robot':robot, 'task_id':f'{task_id}_load'})
         ask_help1 = py_trees.composites.Sequence(name="AskingHelp", children=[hiring1, assign11, assign12])
         run_once1 = py_trees.decorators.OneShot(name="Once", child=ask_help1)
         
         waiting1 = py_trees.composites.Parallel(name='Waiting', children=[ticketing1, replanning1, run_once1])
+        approaching1 = MoveBase.TOUCHB(name="Touch", idx=idx, destination=source, 
+                                      action_goal={'pose': "Plan"+idx+"/parking_pose"})
         arrived1 = Communicate.Submit(name="Arrived", idx=idx, action_goal={'task_id':f'{task_id}_arrived', 'status':1})
         checking1 = Communicate.Checking(name="Come?", idx=idx, action_goal={'robot':robot, 'task_id':f'{task_id}_come'})
-        bring.add_children([waiting1, arrived1, checking1])
+        bring.add_children([waiting1, approaching1, arrived1, checking1])
 
         # ----------------- Load ---------------------
         load2 = py_trees.composites.Sequence(name="Load")
@@ -162,16 +165,18 @@ class Move(object):
         
         task_id = f"{robot}_unload_{obj}"
         hiring3 = Communicate.Hiring(name="Hiring", idx=idx, 
-                                     action_goal={'robot':robot, 'job':'help_unload', 'object':obj, 'source':f'{robot}_table', 'destination':destination, 'task_id':task_id})
+                                     action_goal={'robot':robot, 'job':'help_unload', 'object':obj, 'source':f'{robot}_table_from_gz', 'destination':destination, 'task_id':task_id})
         assign31 = Communicate.Assigning(name="Assignment_come", idx=idx, action_goal={'robot':robot, 'task_id':f'{task_id}_come'})
         assign32 = Communicate.Assigning(name="Assignment_unload", idx=idx, action_goal={'robot':robot, 'task_id':f'{task_id}_unload'})
         ask_help3 = py_trees.composites.Sequence(name="AskingHelp", children=[hiring3, assign31, assign32])
         run_once3 = py_trees.decorators.OneShot(name="Once", child=ask_help3)
         
         waiting3 = py_trees.composites.Parallel(name='Waiting', children=[ticketing3, replanning3, run_once3])
+        approaching3 = MoveBase.TOUCHB(name="Touch", idx=idx, destination=destination,
+                                      action_goal={'pose': "Plan"+idx+"/parking_pose"})
         arrived3 = Communicate.Submit(name="Arrived", idx=idx, action_goal={'task_id':f'{task_id}_arrived', 'status':1})
         checking3 = Communicate.Checking(name="Come?", idx=idx, action_goal={'robot':robot, 'task_id':f'{task_id}_come'})
-        delivery.add_children([waiting3, arrived3, checking3])
+        delivery.add_children([waiting3, approaching3, arrived3, checking3])
 
         # ----------------- Load ---------------------
         unload = py_trees.composites.Sequence(name="Unload")

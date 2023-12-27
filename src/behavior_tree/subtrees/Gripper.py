@@ -34,11 +34,11 @@ class GOTO(py_trees.behaviour.Behaviour):
     def setup(self, timeout):
         rospy.loginfo(f"[Subtree] Goto({self.name}) setup() called.")
         self.feedback_message = "{}: setup".format(self.name)
-        rospy.wait_for_service("arm_client/command")
+        rospy.wait_for_service("arm_client/command", rospy.Duration(3))
         self.cmd_req = rospy.ServiceProxy("arm_client/command", String_Int)
-        rospy.wait_for_service("arm_client/status")
+        rospy.wait_for_service("arm_client/status", rospy.Duration(3))
         self.status_req = rospy.ServiceProxy("arm_client/status", None_String)   
-        rospy.wait_for_service(self._manip_status_update_srv_channel)
+        rospy.wait_for_service(self._manip_status_update_srv_channel, rospy.Duration(3))
         self.manip_status_update_req = rospy.ServiceProxy(self._manip_status_update_srv_channel, String_None)
 
         return True

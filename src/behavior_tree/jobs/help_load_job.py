@@ -151,8 +151,8 @@ class Move(object):
         pose_est1 = WorldModel.PARKING_POSE_ESTIMATOR(name="Plan"+idx,
                                               object_dict = {'robot':robot,'destination': source, 'side':True})
         s_drive1 = MoveBase.MOVEB(name="Drive", idx=idx,
-                                   action_goal={'pose': "Plan"+idx+"/parking_pose"})
-        approaching1 = MoveBase.TOUCHB(name="Touch", idx=idx,
+                                   action_goal={'pose': "Plan"+idx+"/parking_pose"}, destination=source)
+        approaching1 = MoveBase.TOUCHB(name="Touch", idx=idx, destination=source,
                                       action_goal={'pose': "Plan"+idx+"/parking_pose"})
         submission1 = Communicate.Submit(name="Come", idx=idx, action_goal={'status':1, 'task_id':f'{task_id}_come'})
 
@@ -194,7 +194,7 @@ class Move(object):
                                   action_goal=blackboard.drive_config)
         pose_est3 = WorldModel.PARKING_POSE_ESTIMATOR(name="Plan"+idx,
                                               object_dict = {'robot':robot,'destination': destination, 'side':True})
-        s_drive3 = MoveBase.TOUCHB(name="Drive", idx=idx,
+        s_drive3 = MoveBase.TOUCHB(name="Drive", idx=idx, destination=destination,
                                    action_goal={'pose': "Plan"+idx+"/parking_pose"})
         approach.add_children([s_drive_pose3, pose_est3, s_drive3])
 

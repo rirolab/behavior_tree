@@ -405,7 +405,7 @@ if __name__ == '__main__':
                 'jobs.spot_delivery_job.Move',
                 # 'jobs.wait_spot_drive_job.Move',
                 'jobs.home_job.Move',
-                'jobs.collabspot_drive_job.Move',
+                # 'jobs.collabspot_drive_job.Move',
                 'jobs.collabspot_delivery_job.Move'
                 ]
         

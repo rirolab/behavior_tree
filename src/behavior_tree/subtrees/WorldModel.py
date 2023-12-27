@@ -37,10 +37,10 @@ class REMOVE(py_trees.behaviour.Behaviour):
 
     def setup(self, timeout):
         self.feedback_message = "{}: setup".format(self.name)
-        rospy.wait_for_service("/delete_box")
+        rospy.wait_for_service("/delete_box", rospy.Duration(3))
         self.srv_req = rospy.ServiceProxy("/delete_box", String_None)
 
-        rospy.wait_for_service(self._update_load_state_srv_channel)
+        rospy.wait_for_service(self._update_load_state_srv_channel, rospy.Duration(3))
         self.update_load_req = rospy.ServiceProxy(self._update_load_state_srv_channel, String_None)
 
         return True
@@ -119,28 +119,28 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         ## rospy.wait_for_service("remove_wm_object")
         ## self.cmd_req = rospy.ServiceProxy("remove_wm_object", String_None)
 
-        rospy.wait_for_service(self._pose_srv_channel)
+        rospy.wait_for_service(self._pose_srv_channel, rospy.Duration(3))
         self.pose_srv_req = rospy.ServiceProxy(self._pose_srv_channel, String_Pose)
 
-        rospy.wait_for_service(self._grasp_pose_srv_channel)
+        rospy.wait_for_service(self._grasp_pose_srv_channel, rospy.Duration(3))
         self.grasp_pose_srv_req = rospy.ServiceProxy(self._grasp_pose_srv_channel, String_Pose)
 
-        rospy.wait_for_service(self._place_pose_srv_channel)
+        rospy.wait_for_service(self._place_pose_srv_channel, rospy.Duration(3))
         self.place_pose_srv_req = rospy.ServiceProxy(self._place_pose_srv_channel, String_Pose)
         
-        rospy.wait_for_service(self._base_pose_srv_channel)
+        rospy.wait_for_service(self._base_pose_srv_channel, rospy.Duration(3))
         self.base_pose_srv_req = rospy.ServiceProxy(self._base_pose_srv_channel, String_Pose)
         
-        rospy.wait_for_service(self._aside_pose_srv_channel)
+        rospy.wait_for_service(self._aside_pose_srv_channel, rospy.Duration(3))
         self.aside_pose_srv_req = rospy.ServiceProxy(self._aside_pose_srv_channel, String_Pose)
         
-        rospy.wait_for_service(self._height_srv_channel)
+        rospy.wait_for_service(self._height_srv_channel, rospy.Duration(3))
         self.height_srv_req = rospy.ServiceProxy(self._height_srv_channel, String_Pose)
 
-        rospy.wait_for_service(self._rnd_pose_srv_channel)
+        rospy.wait_for_service(self._rnd_pose_srv_channel, rospy.Duration(3))
         self.rnd_pose_srv_req = rospy.ServiceProxy(self._rnd_pose_srv_channel, String_Pose)
 
-        rospy.wait_for_service(self._close_pose_srv_channel)
+        rospy.wait_for_service(self._close_pose_srv_channel, rospy.Duration(3))
         self.close_pose_srv_req = rospy.ServiceProxy(self._close_pose_srv_channel, String_Pose)
 
         # rospy.wait_for_service(self._collab_pose_srv_channel)
@@ -393,7 +393,7 @@ class PARKING_POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         self._parking_side_pose_srv_channel = '/get_parking_side_pose'        
         
         self._collab_pose_srv_channel = '/get_collab_pose'
-
+        self._collab_side_pose_srv_channel = '/get_collab_side_pose'
         self._world_frame   = rospy.get_param("/world_frame", None)
         self._home_pose     = eval(rospy.get_param('home_config', str([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])))
         self._home_pose     = misc.list_rpy2list_quat(self._home_pose)
@@ -403,13 +403,16 @@ class PARKING_POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         ## rospy.wait_for_service("remove_wm_object")
         ## self.cmd_req = rospy.ServiceProxy("remove_wm_object", String_None)
         rospy.loginfo('[subtree] parking_pose_estimator: setup() called.')
-        rospy.wait_for_service(self._parking_pose_srv_channel)
+        rospy.wait_for_service(self._parking_pose_srv_channel, rospy.Duration(3))
         self.parking_pose_srv_req = rospy.ServiceProxy(self._parking_pose_srv_channel, Delivery_Ticket)
-        rospy.wait_for_service(self._parking_side_pose_srv_channel)
+        rospy.wait_for_service(self._parking_side_pose_srv_channel, rospy.Duration(3))
         self.side_pose_srv_req = rospy.ServiceProxy(self._parking_side_pose_srv_channel, Delivery_Ticket)
 
-        rospy.wait_for_service(self._collab_pose_srv_channel)
-        self.collab_pose_srv_req = rospy.ServiceProxy(self._collab_pose_srv_channel, String_Pose)
+        rospy.wait_for_service(self._collab_side_pose_srv_channel, rospy.Duration(3))
+        self.collab_side_pose_srv_req = rospy.ServiceProxy(self._collab_side_pose_srv_channel, Delivery_Ticket)
+        
+        rospy.wait_for_service(self._collab_pose_srv_channel, rospy.Duration(3))
+        self.collab_pose_srv_req = rospy.ServiceProxy(self._collab_pose_srv_channel, Delivery_Ticket)
         
         self.feedback_message = "{}: finished setting up".format(self.name)
         rospy.loginfo('[subtree] parking_pose_estimator: setup() done.')
@@ -433,22 +436,22 @@ class PARKING_POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
 
             # Request the top surface pose of an object to WM
             obj = self.object_dict['destination']
-            if 'collab' in self.object_dict.keys():
-                if self.object_dict['collab'] == True:
-                    try:
-                        obj_collab_pose = self.collab_pose_srv_req(obj).pose # obj grasping pose w.r.t. world frame
-                        ticket_order = 0
-                        self.blackboard.set(self.name +'/ticket', ticket_order)
-                        self.blackboard.set(self.name +'/parking_pose', obj_collab_pose)
+            # if 'collab' in self.object_dict.keys():
+            #     if self.object_dict['collab'] == True:
+            #         try:
+            #             obj_collab_pose = self.collab_pose_srv_req(obj).pose # obj grasping pose w.r.t. world frame
+            #             ticket_order = 0
+            #             self.blackboard.set(self.name +'/ticket', ticket_order)
+            #             self.blackboard.set(self.name +'/parking_pose', obj_collab_pose)
                         
-                        self.sent_goal        = True
-                        self.feedback_message = "WorldModel: successful parking pose estimation "
-                        return py_trees.common.Status.SUCCESS
+            #             self.sent_goal        = True
+            #             self.feedback_message = "WorldModel: successful parking pose estimation "
+            #             return py_trees.common.Status.SUCCESS
 
-                    except rospy.ServiceException as e:
-                        self.feedback_message = "Pose Srv Error"
-                        print("Pose Service is not available: %s"%e)
-                        return py_trees.common.Status.FAILURE
+            #         except rospy.ServiceException as e:
+            #             self.feedback_message = "Pose Srv Error"
+            #             print("Pose Service is not available: %s"%e)
+            #             return py_trees.common.Status.FAILURE
 
                     
 
@@ -475,7 +478,11 @@ class PARKING_POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                 req.robot = self.object_dict['robot']
                 req.destination = self.object_dict['destination']
                 if 'side' in self.object_dict.keys() and self.object_dict['side']:
-                    resp = self.side_pose_srv_req(req)    
+                    resp = self.side_pose_srv_req(req)
+                elif 'collab_side' in self.object_dict.keys() and self.object_dict['collab_side']:
+                    resp = self.collab_side_pose_srv_req(req)
+                elif 'collab' in self.object_dict.keys() and self.object_dict['collab']:
+                    resp = self.collab_pose_srv_req(req)
                 else:
                     resp = self.parking_pose_srv_req(req)
                 
@@ -530,13 +537,13 @@ class SYNC_POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         ## rospy.wait_for_service("remove_wm_object")
         ## self.cmd_req = rospy.ServiceProxy("remove_wm_object", String_None)
 
-        rospy.wait_for_service(self._pose_srv_channel)
+        rospy.wait_for_service(self._pose_srv_channel, rospy.Duration(3))
         self.pose_srv_req = rospy.ServiceProxy(self._pose_srv_channel, String_Pose)
 
         # rospy.wait_for_service(self._parking_pose_srv_channel)
         # self.parking_pose_srv_req = rospy.ServiceProxy(self._parking_pose_srv_channel, String_Pose)
 
-        rospy.wait_for_service(self._sync_pose_srv_channel)
+        rospy.wait_for_service(self._sync_pose_srv_channel, rospy.Duration(3))
         self.sync_srv_req = rospy.ServiceProxy(self._sync_pose_srv_channel, String_Pose)
 
         # get odom 2 base
@@ -976,7 +983,7 @@ class SYNC_POSE_ESTIMATOR_HAETAE2(py_trees.behaviour.Behaviour):
         self.is_drive_wait = False
         self.spot_arrival_state = False
 
-        rospy.wait_for_service(self._update_load_state_srv_channel)
+        rospy.wait_for_service(self._update_load_state_srv_channel, rospy.Duration(3))
         self.update_load_req = rospy.ServiceProxy(self._update_load_state_srv_channel, String_None)
 
         return True

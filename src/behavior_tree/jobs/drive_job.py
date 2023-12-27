@@ -132,7 +132,7 @@ class Move(object):
                                               object_dict = {'robot':robot,'destination': destination, 'side': side})
         ticketing1 = Ticketing(pose_est1, idx=idx, name="Ticketing")
         s_drive1 = MoveBase.MOVEB(name="Drive", idx=idx,
-                                   action_goal={'pose': "Plan"+idx+"/parking_pose"})
+                                   action_goal={'pose': "Plan"+idx+"/parking_pose"}, destination=destination)
         replanning1 = Replanning(s_drive1, idx=idx, name="Replan")
         waiting1 = py_trees.composites.Parallel(name='Waiting', children=[ticketing1, replanning1])
         approaching1 = MoveBase.TOUCHB(name="Touch", idx=idx,

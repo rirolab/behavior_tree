@@ -35,12 +35,12 @@ class MOVEJ(py_trees.behaviour.Behaviour):
         ## self.publisher = rospy.Publisher(self.topic_name, std_msgs.String, queue_size=10, latch=True)
         self.feedback_message = "{}: setup".format(self.name)
         rospy.loginfo('[subtree] MOVEJOINT: setup() called.')
-        rospy.wait_for_service("arm_client/command")
+        rospy.wait_for_service("arm_client/command", rospy.Duration(3))
         self.cmd_req = rospy.ServiceProxy("arm_client/command", String_Int)
-        rospy.wait_for_service("arm_client/status")
+        rospy.wait_for_service("arm_client/status", rospy.Duration(3))
         self.status_req = rospy.ServiceProxy("arm_client/status", None_String)
         rospy.loginfo('[subtree] MOVEJOINT: setup() done.')
-        rospy.wait_for_service(self._manip_status_update_srv_channel)
+        rospy.wait_for_service(self._manip_status_update_srv_channel, rospy.Duration(3))
         self.manip_status_update_req = rospy.ServiceProxy(self._manip_status_update_srv_channel, String_None)
         return True
 
@@ -146,9 +146,9 @@ class MOVEA(py_trees.behaviour.Behaviour):
     def setup(self, timeout):
         ## self.publisher = rospy.Publisher(self.topic_name, std_msgs.String, queue_size=10, latch=True)
         self.feedback_message = "{}: setup".format(self.name)
-        rospy.wait_for_service("arm_client/command")
+        rospy.wait_for_service("arm_client/command", rospy.Duration(3))
         self.cmd_req = rospy.ServiceProxy("arm_client/command", String_Int)
-        rospy.wait_for_service("arm_client/status")
+        rospy.wait_for_service("arm_client/status", rospy.Duration(3))
         self.status_req = rospy.ServiceProxy("arm_client/status", None_String)
         return True
 

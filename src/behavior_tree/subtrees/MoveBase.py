@@ -53,18 +53,18 @@ class MOVEB(py_trees.behaviour.Behaviour):
     def setup(self, timeout):
         rospy.loginfo('[subtree] movebase: setup() called.')
         self.feedback_message = "{}: setup".format(self.name)
-        rospy.wait_for_service("move_base_client/command")
+        rospy.wait_for_service("move_base_client/command", rospy.Duration(3))
         self.cmd_req = rospy.ServiceProxy("move_base_client/command", String_Int)
-        rospy.wait_for_service("move_base_client/status")
+        rospy.wait_for_service("move_base_client/status", rospy.Duration(3))
         self.status_req = rospy.ServiceProxy("move_base_client/status", None_String)
         rospy.loginfo('[subtree] movebase: setup() done.')
-        rospy.wait_for_service(self._drive_status_update_srv_channel)
+        rospy.wait_for_service(self._drive_status_update_srv_channel, rospy.Duration(3))
         self.drive_status_update_req = rospy.ServiceProxy(self._drive_status_update_srv_channel, String_None)
 
-        rospy.wait_for_service(self._arrival_state_udpate_srv_channel)
+        rospy.wait_for_service(self._arrival_state_udpate_srv_channel, rospy.Duration(3))
         self.arrival_status_update_req = rospy.ServiceProxy(self._arrival_state_udpate_srv_channel, String_Dup_None)
 
-        rospy.wait_for_service(self._arrival_state_delete_srv_channel)
+        rospy.wait_for_service(self._arrival_state_delete_srv_channel, rospy.Duration(3))
         self.arrival_status_delete_req = rospy.ServiceProxy(self._arrival_state_delete_srv_channel, String_None)
 
         blackboard = py_trees.Blackboard()
@@ -162,9 +162,9 @@ class MOVEB(py_trees.behaviour.Behaviour):
             req_data = String_Dup_NoneRequest()
             req_data.data1 = self.destination
             req_data.data2 = blackboard.robot_name
-            # print("#####################################\n\n\n\n\n", req_data)
-            self.arrival_status_update_req(req_data)
-
+            print("#####################################\n\n\n\n\n", req_data, req_data.data1 ,req_data.data2)
+            # self.arrival_status_update_req(req_data)
+            print("^^^^^^^^^^^^^^DONE^^^^^^^^^^^^^")
 
             return py_trees.common.Status.SUCCESS
         else:
@@ -177,7 +177,7 @@ class MOVEB(py_trees.behaviour.Behaviour):
         if d['state'] == GoalStatus.ACTIVE:
             self.cmd_req( json.dumps({'action_type': 'cancel_goal'}) )
         
-        # blackboard = py_trees.Blackboard()
+        blackboard = py_trees.Blackboard()
         # self.drive_status_update_req(blackboard.robot_name)
         return
 
@@ -225,19 +225,19 @@ class MOVEBCOLLAB(py_trees.behaviour.Behaviour):
 
     def setup(self, timeout):
         self.feedback_message = "{}: setup".format(self.name)
-        rospy.wait_for_service("move_base_client/command")
+        rospy.wait_for_service("move_base_client/command", rospy.Duration(3))
         self.cmd_req = rospy.ServiceProxy("move_base_client/command", String_Int)
-        rospy.wait_for_service("move_base_client/status")
+        rospy.wait_for_service("move_base_client/status", rospy.Duration(3))
         self.status_req = rospy.ServiceProxy("move_base_client/status", None_String)
 
-        rospy.wait_for_service(self._drive_status_update_srv_channel)
+        rospy.wait_for_service(self._drive_status_update_srv_channel, rospy.Duration(3))
         self.drive_status_update_req = rospy.ServiceProxy(self._drive_status_update_srv_channel, String_None)
 
-        rospy.wait_for_service(self._arrival_state_udpate_srv_channel)
+        rospy.wait_for_service(self._arrival_state_udpate_srv_channel, rospy.Duration(3))
         self.arrival_status_update_req = rospy.ServiceProxy(self._arrival_state_udpate_srv_channel, String_Dup_None)
         # self.arrival_status_update_req = rospy.ServiceProxy(self._arrival_state_udpate_srv_channel, String_None)
 
-        rospy.wait_for_service(self._arrival_state_delete_srv_channel)
+        rospy.wait_for_service(self._arrival_state_delete_srv_channel, rospy.Duration(3))
         self.arrival_status_delete_req = rospy.ServiceProxy(self._arrival_state_delete_srv_channel, String_None)
 
         self.reconfigure_req_srv = rospy.ServiceProxy(f"move_base/{self._local_planner}/set_parameters", Reconfigure)
@@ -255,7 +255,7 @@ class MOVEBCOLLAB(py_trees.behaviour.Behaviour):
         self.spot2haetae_cmd_vel_pub = rospy.Publisher(self._spot2haetae_cmd_vel, Twist, queue_size=10)
 
         # self.k_constant = 0.9
-        self.k_constant = 1.5
+        self.k_constant = 3.0 #1.5
 
         self.spot_theta_cmd_vel = 0.0
 
@@ -349,7 +349,7 @@ class MOVEBCOLLAB(py_trees.behaviour.Behaviour):
         self.spot_haetae_x_diff = spot_init_pose[0] - haeate_init_pose[0]
         self.spot_haetae_y_diff = spot_init_pose[1] - haeate_init_pose[1]
 
-        self._prev_params = {"max_vel_theta": None, "acc_lim_theta": None, "penalty_epsilon": None, "yaw_goal_tolerance": None }
+        self._prev_params = {"max_vel_theta": None, "acc_lim_theta": None, "penalty_epsilon": None, "yaw_goal_tolerance": None, "xy_goal_tolerance": None, "min_obstacle_dist": None }
         sssss = rospy.get_param(f'move_base/{self._local_planner}/footprint_model/vertices')
         # print("!!!!!!!!!!!!!!!!!!#@@@@@###$$$$$$$$$$$$$$$$$\n\n\n\n\n\n\n\n\n\n", sssss, type(sssss))/
         for k in self._prev_params.keys():
@@ -376,13 +376,13 @@ class MOVEBCOLLAB(py_trees.behaviour.Behaviour):
             for k in self._prev_params.keys():
                 if k  == "yaw_goal_tolerance":
                     reconfigure_req.config.doubles.append(DoubleParameter(k, 3.0))
-                # elif k == "footprint_model/vertices":
-                #     reconfigure_req.config.
+                elif k  == "xy_goal_tolerance":
+                    reconfigure_req.config.doubles.append(DoubleParameter(k, 0.05))
                 else:
                     reconfigure_req.config.doubles.append(DoubleParameter(k, 0.000))
 
             rospy.loginfo(f"[SUBTREE] MOVEBCOLLAB : wait for service (move_base/{self._local_planner}/set_parameters)")
-            rospy.wait_for_service(f"move_base/{self._local_planner}/set_parameters")
+            rospy.wait_for_service(f"move_base/{self._local_planner}/set_parameters", rospy.Duration(3))
             self.reconfigure_req_srv(reconfigure_req)
 
             if type(self.action_goal['pose']) is geometry_msgs.msg._Pose.Pose:
@@ -433,10 +433,10 @@ class MOVEBCOLLAB(py_trees.behaviour.Behaviour):
             self.logger.debug("%s.update()[%s->%s][%s]" % (self.__class__.__name__, self.status, py_trees.common.Status.FAILURE, self.feedback_message))
             # self.drive_status_update_req(blackboard.robot_name)
             
-            reconfigure_req = ReconfigureRequest()
-            for k in self._prev_params.keys():
-                reconfigure_req.config.doubles.append(DoubleParameter(k, self._prev_params[k]))
-            self.reconfigure_req_srv(reconfigure_req)
+            # reconfigure_req = ReconfigureRequest()
+            # for k in self._prev_params.keys():
+            #     reconfigure_req.config.doubles.append(DoubleParameter(k, self._prev_params[k]))
+            # self.reconfigure_req_srv(reconfigure_req)
 
             return py_trees.common.Status.FAILURE
 
@@ -458,10 +458,10 @@ class MOVEBCOLLAB(py_trees.behaviour.Behaviour):
             req_data2.data1 = self.destination
             req_data2.data2 = "haetae"
 
-            reconfigure_req = ReconfigureRequest()
-            for k in self._prev_params.keys():
-                reconfigure_req.config.doubles.append(DoubleParameter(k, self._prev_params[k]))
-            self.reconfigure_req_srv(reconfigure_req)
+            # reconfigure_req = ReconfigureRequest()
+            # for k in self._prev_params.keys():
+            #     reconfigure_req.config.doubles.append(DoubleParameter(k, self._prev_params[k]))
+            # self.reconfigure_req_srv(reconfigure_req)
 
             self.arrival_status_update_req(req_data2)
 
@@ -489,6 +489,12 @@ class MOVEBCOLLAB(py_trees.behaviour.Behaviour):
             send_data.angular.y = 0.0
             send_data.angular.z = 0.0
             self.spot2haetae_cmd_vel_pub.publish(send_data)
+        
+        reconfigure_req = ReconfigureRequest()
+        for k in self._prev_params.keys():
+            print("@@@@@@@@@@@@@@@@@2\n\n\n\n\n\n\n", k, self._prev_params[k])
+            reconfigure_req.config.doubles.append(DoubleParameter(k, self._prev_params[k]))
+        self.reconfigure_req_srv(reconfigure_req)
 
         return
 
@@ -513,9 +519,9 @@ class MOVEBR(py_trees.behaviour.Behaviour):
 
     def setup(self, timeout):
         self.feedback_message = "{}: setup".format(self.name)
-        rospy.wait_for_service("move_base_client/command")
+        rospy.wait_for_service("move_base_client/command", rospy.Duration(3))
         self.cmd_req = rospy.ServiceProxy("move_base_client/command", String_Int)
-        rospy.wait_for_service("move_base_client/status")
+        rospy.wait_for_service("move_base_client/status", rospy.Duration(3))
         self.status_req = rospy.ServiceProxy("move_base_client/status", None_String)
         
         return True
@@ -688,7 +694,7 @@ class TOUCHB(py_trees.behaviour.Behaviour):
     priority behaviour.
     """
 
-    def __init__(self, name, idx='', action_goal=None):
+    def __init__(self, name, destination, idx='', action_goal=None):
         super(TOUCHB, self).__init__(name=name)
 
         # self.topic_name = topic_name
@@ -700,18 +706,32 @@ class TOUCHB(py_trees.behaviour.Behaviour):
         self._prev_params = dict()
         self.cmd_req     = None
         self.idx = idx
+
+        self.destination = destination
+        self._drive_status_update_srv_channel = "/update_robot_drive_state"
+        self._arrival_state_udpate_srv_channel = "/update_arrival_state"
+        self._arrival_state_delete_srv_channel = '/delete_arrival_state'
+
         rospy.loginfo(f'{self.__class__.__name__}.__init__() called')
 
     def setup(self, timeout):
         rospy.loginfo('[subtree] TouchBase: setup() called.')
         self.feedback_message = "{}: setup".format(self.name)
-        rospy.wait_for_service("move_base_client/command")
+        rospy.wait_for_service("move_base_client/command", rospy.Duration(3))
         self.cmd_req = rospy.ServiceProxy("move_base_client/command", String_Int)
-        rospy.wait_for_service("move_base_client/status")
+        rospy.wait_for_service("move_base_client/status", rospy.Duration(3))
         self.status_req = rospy.ServiceProxy("move_base_client/status", None_String)
         # rospy.wait_for_service(f"{self._local_planner}/set_parameters", timeout=20.0)
         self.reconfigure_req_srv = rospy.ServiceProxy(f"move_base/{self._local_planner}/set_parameters", Reconfigure)
         rospy.loginfo('[subtree] TouchBase: setup() done.')
+        rospy.wait_for_service(self._drive_status_update_srv_channel, rospy.Duration(3))
+        self.drive_status_update_req = rospy.ServiceProxy(self._drive_status_update_srv_channel, String_None)
+
+        rospy.wait_for_service(self._arrival_state_udpate_srv_channel, rospy.Duration(3))
+        self.arrival_status_update_req = rospy.ServiceProxy(self._arrival_state_udpate_srv_channel, String_Dup_None)
+
+        rospy.wait_for_service(self._arrival_state_delete_srv_channel, rospy.Duration(3))
+        self.arrival_status_delete_req = rospy.ServiceProxy(self._arrival_state_delete_srv_channel, String_None)
 
         self.blackboard = py_trees.Blackboard()
         return True
@@ -732,8 +752,12 @@ class TOUCHB(py_trees.behaviour.Behaviour):
             raise NotImplementedError("Only TEB, Trajectory LocalPlanner is available")
         for k in self._prev_params.keys():
             self._prev_params[k] = rospy.get_param(f'move_base/{self._local_planner}/{k}')
+        blackboard = py_trees.Blackboard()
+        # self.drive_status_update_req(blackboard.robot_name)
+        # self.arrival_status_delete_req(blackboard.robot_name)
 
     def update(self):
+        blackboard = py_trees.Blackboard()
         rospy.loginfo('[subtree] Touchbase: update() called.')
         if self._local_planner == "TrajectoryPlannerROS" or self._local_planner == "DWAPlannerROS":
             return py_trees.Status.SUCCESS
@@ -752,9 +776,22 @@ class TOUCHB(py_trees.behaviour.Behaviour):
         if not self.sent_goal:
             reconfigure_req = ReconfigureRequest()
             for k in self._prev_params.keys():
-                reconfigure_req.config.doubles.append(DoubleParameter(k, 0.05))
+                # if self.robot_name == "spot":
+
+                if k == "xy_goal_tolerance":
+                    reconfigure_req.config.doubles.append(DoubleParameter(k, 0.05))
+                elif k == "yaw_goal_tolerance":
+                    reconfigure_req.config.doubles.append(DoubleParameter(k, 0.05))
+
+                # if 'tolerance' in k:
+                #     reconfigure_req.config.doubles.append(DoubleParameter(k, 0.01))
+                else:
+                    reconfigure_req.config.doubles.append(DoubleParameter(k, 0.05))
+                # reconfigure_req.config.doubles.append(DoubleParameter(k, 0.03))
+
+                # else: reconfigure_req.config.doubles.append(DoubleParameter(k, 0.05))
             rospy.loginfo(f"[SUBTREE] TOUCHB : wait for service (move_base/{self._local_planner}/set_parameters)")
-            rospy.wait_for_service(f"move_base/{self._local_planner}/set_parameters")
+            rospy.wait_for_service(f"move_base/{self._local_planner}/set_parameters", rospy.Duration(3))
             self.reconfigure_req_srv(reconfigure_req)
 
             if type(self.action_goal['pose']) is geometry_msgs.msg._Pose.Pose:
@@ -766,7 +803,6 @@ class TOUCHB(py_trees.behaviour.Behaviour):
                         'qz': self.action_goal['pose'].orientation.z,
                         'qw': self.action_goal['pose'].orientation.w,}
             else:
-                blackboard = py_trees.Blackboard()
                 ps = blackboard.get(self.action_goal['pose'])
                 goal = {'x': ps.position.x,
                         'y': ps.position.y,
@@ -788,7 +824,7 @@ class TOUCHB(py_trees.behaviour.Behaviour):
             if ret.data==GoalStatus.REJECTED or ret.data==GoalStatus.ABORTED:
                 self.feedback_message = "failed to execute"
                 self.logger.debug("%s.update()[%s]" % (self.__class__.__name__, self.feedback_message))
-                # self.drive_status_update_req(blackboard.robot_name)
+                self.drive_status_update_req(blackboard.robot_name)
                 return py_trees.common.Status.FAILURE
             
             self.sent_goal        = True
@@ -815,6 +851,13 @@ class TOUCHB(py_trees.behaviour.Behaviour):
             for k in self._prev_params.keys():
                 reconfigure_req.config.doubles.append(DoubleParameter(k, self._prev_params[k]))
             self.reconfigure_req_srv(reconfigure_req)
+            req_data = String_Dup_NoneRequest()
+            req_data.data1 = self.destination
+            req_data.data2 = blackboard.robot_name
+            print("#####################################\n\n\n\n\n", req_data, req_data.data1 ,req_data.data2)
+            self.arrival_status_update_req(req_data)
+            print("^^^^^^^^^^^^^^DONE^^^^^^^^^^^^^")
+
             return py_trees.common.Status.SUCCESS
         else:
             return py_trees.common.Status.RUNNING
@@ -826,6 +869,76 @@ class TOUCHB(py_trees.behaviour.Behaviour):
         if d['state'] == GoalStatus.ACTIVE:
             self.cmd_req( json.dumps({'action_type': 'cancel_goal'}) )
         
+        blackboard = py_trees.Blackboard()
+        self.drive_status_update_req(blackboard.robot_name)
+        return
+
+
+class TOUCHCOLLAB(py_trees.behaviour.Behaviour):
+    """
+    Move Base
+    
+    Note that this behaviour will return with
+    :attr:`~py_trees.common.Status.SUCCESS`. It will also send a clearing
+    command to the robot if it is cancelled or interrupted by a higher
+    priority behaviour.
+    """
+
+    def __init__(self, name, idx='', action_goal=None):
+        super(TOUCHCOLLAB, self).__init__(name=name)
+
+        # self.topic_name = topic_name
+        # self.controller_ns = controller_ns
+        self.mode = action_goal['mode']
+        self.sent_goal   = False
+        self._local_planner = rospy.get_param("local_planner", "sibals")
+        self._start_params = {'xy_goal_tolerance':0.01, 'yaw_goal_tolerance':0.01,'min_obstacle_dist':0.01}
+        self._end_params = {'xy_goal_tolerance':0.3, 'yaw_goal_tolerance':0.2,'min_obstacle_dist':0.2}
+        self.idx = idx
+        rospy.loginfo(f'{self.__class__.__name__}.__init__() called')
+
+    def setup(self, timeout):
+        rospy.loginfo('[subtree] TouchCollab: setup() called.')
+        self.feedback_message = "{}: setup".format(self.name)
+        self.reconfigure_req_srv = rospy.ServiceProxy(f"move_base/{self._local_planner}/set_parameters", Reconfigure)
+        rospy.loginfo('[subtree] TouchCollab: setup() done.')
+        self.blackboard = py_trees.Blackboard()
+        return True
+
+    def initialise(self):
+        rospy.loginfo('[subtree] TouchBase: initialise() called.')
+        self.logger.debug("{0}.initialise()".format(self.__class__.__name__))
+        self.sent_goal = False
+        rospy.loginfo(f"{self.__class__.__name__}.intialise() called")
+
+
+    def update(self):
+        rospy.loginfo('[subtree] TouchCollab: update() called.')
+        if self._local_planner == "TrajectoryPlannerROS" or self._local_planner == "DWAPlannerROS":
+            return py_trees.Status.SUCCESS
+        self.logger.debug("%s.update()" % self.__class__.__name__)
+        rospy.loginfo(f'{self.__class__.__name__}.update() called')
+
+        if not self.sent_goal:
+            reconfigure_req = ReconfigureRequest()
+            params = None
+            if self.mode == 'start':
+                params = self._start_params
+            elif self.mode == 'end':
+                params = self._end_params
+            for k,v in params.items():
+                reconfigure_req.config.doubles.append(DoubleParameter(k, v))
+            rospy.loginfo(f"[SUBTREE] TOUCHB : wait for service (move_base/{self._local_planner}/set_parameters)")
+            rospy.wait_for_service(f"move_base/{self._local_planner}/set_parameters", rospy.Duration(3))
+            self.reconfigure_req_srv(reconfigure_req)
+            self.sent_goal        = True
+            self.feedback_message = "Change move_base parameters"
+            return py_trees.common.Status.SUCCESS
+
+        return py_trees.common.Status.SUCCESS
+
+        
+    def terminate(self, new_status):
         # blackboard = py_trees.Blackboard()
         # self.drive_status_update_req(blackboard.robot_name)
         return

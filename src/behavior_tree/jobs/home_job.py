@@ -107,7 +107,7 @@ class Move(object):
         pose_est10 = WorldModel.PARKING_POSE_ESTIMATOR(name="Plan"+idx,
                                               object_dict = {'destination': destination})
         s_drive10 = MoveBase.MOVEB(name="GoHome", 
-                                   action_goal={'pose': "Plan"+idx+"/home_pose"})
+                                   action_goal={'pose': "Plan"+idx+"/home_pose"}, destination=destination)
 
         root.add_children([s_drive_pose, pose_est10, s_drive10])
         print("[JOB] Home: create root DONE")
