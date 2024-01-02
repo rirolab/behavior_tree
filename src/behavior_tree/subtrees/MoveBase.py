@@ -219,7 +219,25 @@ class MOVEBCOLLAB(py_trees.behaviour.Behaviour):
 
         # self._local_planner = rospy.get_param("local_planner", "sibals")
         self._local_planner = "TebLocalPlannerROS"
-        self._prev_params = dict()
+        self._prev_params = None
+
+        self._prev_dict = {
+            "max_vel_theta" : 0.3,
+            "acc_lim_theta" : 0.1,
+            "penalty_epsilon" : 0.3,
+            "yaw_goal_tolerance" : 0.05,
+            "xy_goal_tolerance" : 0.3,
+            "min_obstacle_dist" : 0.2
+        }
+
+        if source == "picking_station2":
+            self.spot_haetae_x_diff = -0.00706
+            self.spot_haetae_y_diff = 0.82705
+        elif source == "picking_station1":
+            self.spot_haetae_x_diff = 0.003126
+            self.spot_haetae_y_diff = -0.8100396
+        else:
+            raise NotImplementedError()
 
         self._lock = threading.Lock()
 
@@ -322,6 +340,13 @@ class MOVEBCOLLAB(py_trees.behaviour.Behaviour):
             y_vel = y_vel * -1
             x_vel = x_vel * -1
 
+        if self.source == "picking_station2":
+            if x_vel < 0:
+                x_vel = 0
+        elif self.source == "picking_station1":
+            if x_vel > 0:
+                x_vel = 0
+        
         send_data = Twist()
         send_data.linear.x = y_vel
         send_data.linear.y = x_vel
@@ -346,14 +371,18 @@ class MOVEBCOLLAB(py_trees.behaviour.Behaviour):
 
         spot_init_pose = self.get_obj_pose_from_wm("spot")
         haeate_init_pose = self.get_obj_pose_from_wm("haetae")
-        self.spot_haetae_x_diff = spot_init_pose[0] - haeate_init_pose[0]
-        self.spot_haetae_y_diff = spot_init_pose[1] - haeate_init_pose[1]
+        # self.spot_haetae_x_diff = spot_init_pose[0] - haeate_init_pose[0]
+        # self.spot_haetae_y_diff = spot_init_pose[1] - haeate_init_pose[1]
 
-        self._prev_params = {"max_vel_theta": None, "acc_lim_theta": None, "penalty_epsilon": None, "yaw_goal_tolerance": None, "xy_goal_tolerance": None, "min_obstacle_dist": None }
-        sssss = rospy.get_param(f'move_base/{self._local_planner}/footprint_model/vertices')
-        # print("!!!!!!!!!!!!!!!!!!#@@@@@###$$$$$$$$$$$$$$$$$\n\n\n\n\n\n\n\n\n\n", sssss, type(sssss))/
-        for k in self._prev_params.keys():
-            self._prev_params[k] = rospy.get_param(f'move_base/{self._local_planner}/{k}')
+        # print("SSSSSSSSSSSSSSSSS$EEEEEEEEE\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n", self.spot_haetae_x_diff, self.spot_haetae_y_diff)
+        # raise NotImplementedError()
+
+        if self._prev_params is None:
+            self._prev_params = {"max_vel_theta": None, "acc_lim_theta": None, "penalty_epsilon": None, "yaw_goal_tolerance": None, "xy_goal_tolerance": None, "min_obstacle_dist": None }
+            sssss = rospy.get_param(f'move_base/{self._local_planner}/footprint_model/vertices')
+            # print("!!!!!!!!!!!!!!!!!!#@@@@@###$$$$$$$$$$$$$$$$$\n\n\n\n\n\n\n\n\n\n", sssss, type(sssss))/
+            for k in self._prev_params.keys():
+                self._prev_params[k] = rospy.get_param(f'move_base/{self._local_planner}/{k}')
 
     def update(self):
 
@@ -492,8 +521,8 @@ class MOVEBCOLLAB(py_trees.behaviour.Behaviour):
         
         reconfigure_req = ReconfigureRequest()
         for k in self._prev_params.keys():
-            print("@@@@@@@@@@@@@@@@@2\n\n\n\n\n\n\n", k, self._prev_params[k])
-            reconfigure_req.config.doubles.append(DoubleParameter(k, self._prev_params[k]))
+            # print("@@@@@@@@@@@@@@@@@2\n\n\n\n\n\n\n", k, self._prev_params[k])
+            reconfigure_req.config.doubles.append(DoubleParameter(k, self._prev_dict[k]))
         self.reconfigure_req_srv(reconfigure_req)
 
         return
@@ -513,7 +542,7 @@ class MOVEBR(py_trees.behaviour.Behaviour):
         self.idx = idx
         self.action_goal = action_goal
         self.sent_goal   = False
-        self._frame_id = rospy.get_param("torso_frame", 'base_link')
+        self._frame_id = rospy.get_param("footprint_frame", 'base_link')
         self.cmd_req     = None
 
 
@@ -534,9 +563,9 @@ class MOVEBR(py_trees.behaviour.Behaviour):
 
     def update(self):
         blackboard = py_trees.Blackboard()
-        ticket = blackboard.get('Plan'+self.idx+'/ticket')
-        print(f"(MOVEBASE update) ticket: {ticket}")
-        docking = (ticket == 0)
+        # ticket = blackboard.get('Plan'+self.idx+'/ticket')
+        # print(f"(MOVEBASE update) ticket: {ticket}")
+        # docking = (ticket == 0)
         self.logger.debug("%s.update()" % self.__class__.__name__)
 
         if self.cmd_req is None:
@@ -786,7 +815,7 @@ class TOUCHB(py_trees.behaviour.Behaviour):
                 # if 'tolerance' in k:
                 #     reconfigure_req.config.doubles.append(DoubleParameter(k, 0.01))
                 else:
-                    reconfigure_req.config.doubles.append(DoubleParameter(k, 0.05))
+                    reconfigure_req.config.doubles.append(DoubleParameter(k, 0.01))
                 # reconfigure_req.config.doubles.append(DoubleParameter(k, 0.03))
 
                 # else: reconfigure_req.config.doubles.append(DoubleParameter(k, 0.05))

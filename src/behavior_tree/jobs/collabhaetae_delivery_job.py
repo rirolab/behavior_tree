@@ -14,8 +14,8 @@ from complex_action_client import misc
 
 #sys.path.insert(0,'..')
 from behavior_tree.subtrees import MoveJoint, MovePose, MoveBase, Gripper, Stop, WorldModel
-from behavior_tree.decorators import Ticketing, Replanning
-
+from behavior_tree.decorators import Ticketing, Replanning, Reconfiguring
+from geometry_msgs.msg import Pose, Point, Quaternion
 ##############################################################################
 # Behaviours
 ##############################################################################
@@ -213,8 +213,9 @@ class Move(object):
 
         place = py_trees.composites.Sequence(name="CollabUNLoad")
         # print("!!!!!!!!!!!!!!!!!!!djfdodododod\n\n\n\n\n\n\n\n\n\n\n", destination, idx, type(idx), obj)
-
+        offset = 0
         if source == "picking_station1":
+            offset = -0.5
             if destination == "placing_shelf1":
                 unload_destination = "ps1_unload_target"
             elif destination == "placing_shelf2":
@@ -222,6 +223,7 @@ class Move(object):
             else:
                 raise NotImplementedError()
         elif source == "picking_station2":
+            offset = 0.5
             if destination == "placing_shelf1":
                 unload_destination = "ps1_unload_target2"
             elif destination == "placing_shelf2":
@@ -230,13 +232,22 @@ class Move(object):
                 raise NotImplementedError()
 
         ## collabunload
-        pose_est3_1 = WorldModel.POSE_ESTIMATOR(name="Plan222"+idx,
-                                              object_dict = {'target': obj,
-                                                             'destination': unload_destination})
 
         sync_pose_est3 = WorldModel.SYNC_POSE_ESTIMATOR_HAETAE2(name="Sync"+idx, destination=destination) ## spot이 destination에 도착할 때 까지.
  
         wait_condition3 = py_trees.decorators.Condition(name="Wait"+idx, child=sync_pose_est3, status=py_trees.common.Status.SUCCESS)
+        
+        drive_offset3 = MoveBase.MOVEBR(name="Unload", idx=idx,
+                                        action_goal={'pose':Pose(Point(0.0, offset, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0))})
+        reconfigure3 = Reconfiguring(drive_offset3, idx=idx, action_goal={'srv_name': 'move_base/TebLocalPlannerROS/set_parameters',
+                                                                        'params': {'move_base/TebLocalPlannerROS/min_obstacle_dist':0.0,
+                                                                                   'move_base/TebLocalPlannerROS/inflation_dist':0.0,
+                                                                                   'move_base/TebLocalPlannerROS/max_vel_x':0.01,
+                                                                                   'move_base/TebLocalPlannerROS/max_vel_theta':0.01,
+                                                                                   }})
+        pose_est3_1 = WorldModel.POSE_ESTIMATOR(name="Plan222"+idx,
+                                              object_dict = {'target': obj,
+                                                             'destination': unload_destination})
         s_move3_20 = MovePose.MOVEPROOT(name="Top", controller_ns=controller_ns,
                                  action_goal={'pose': "Plan222"+idx+"/place_top_pose"})
         s_move3_21 = MovePose.MOVEP(name="Top", controller_ns=controller_ns,
@@ -246,29 +257,25 @@ class Move(object):
         s_move3_23 = Gripper.GOTO(name="Open", controller_ns=controller_ns,
                                action_goal=blackboard.gripper_open_pos,
                                force=blackboard.gripper_open_force)        
+        
         s_move3_24 = MovePose.MOVEP(name="Top", controller_ns=controller_ns,
                                  action_goal={'pose': "Plan222"+idx+"/place_top_pose"})
+        s_init_pose41 = MoveJoint.MOVEJ(name="Init", controller_ns=controller_ns,
+                                  action_goal=blackboard.init_config)
         ############################
 
         s_move3_25 = WorldModel.REMOVE(name="Remove", target=obj, unload='spot')
 
-        s_init_pose41 = MoveJoint.MOVEJ(name="Init", controller_ns=controller_ns,
-                                  action_goal=blackboard.init_config)
 
         # pick.add_children([pose_est1, s_init1, s_move10, s_move11, s_move12, s_move13, s_move14, s_move15, s_init2])
         # pick.add_children([pose_est1, s_init1, s_move10, s_move11, s_move13, s_move14, s_move15])
 
         # pick.add_children([pose_est1, s_init1, s_move10, s_move11, s_move13, s_move14, s_move15, pose_est2, s_move20, s_move21, s_move22, s_move23, s_move24, s_init2])
-        place.add_children([wait_condition3, pose_est3_1, s_move3_20, s_move3_21, s_move3_22,s_move3_23,s_move3_24, s_move3_25, s_init_pose41])
+        place.add_children([wait_condition3, pose_est3_1, s_move3_20, s_move3_21, s_move3_22,s_move3_23,s_move3_24, s_move3_25, s_init_pose41])    
+        # place.add_children([wait_condition3, reconfigure3, s_move3_23, s_init_pose41, s_move3_25])
     
-
-
-
         task = py_trees.composites.Sequence(name="CollabDelivery")
-        # task.add_children([bring, pick, deliver, place])
 
-        # task.add_children([waitdrive])
-        
         task.add_children([ waitdrive, pick, place])
 
         return task

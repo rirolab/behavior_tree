@@ -2,6 +2,8 @@ import time
 import py_trees
 from py_trees.decorators import *
 import rospy
+from dynamic_reconfigure.srv import Reconfigure, ReconfigureRequest
+from dynamic_reconfigure.msg import DoubleParameter
 
 class Loop(Decorator):
     """
@@ -186,3 +188,69 @@ class Replanning(Decorator):
         
         rospy.loginfo(f"[Replanning] moving to somewhere ticket={self.ticket}")
         return common.Status.RUNNING
+
+
+class Reconfiguring(Decorator):
+    """
+    A decorator that loops the node or branch a number of times, or infinitely.
+    """
+    def __init__(self, child, idx, action_goal, name=common.Name.AUTO_GENERATED):
+        """
+        Init with the decorated child.
+        
+        Args:
+        child (:class:`~py_trees.behaviour.Behaviour`): behaviour to time
+        action_goal (:dict:): reconfiguration_parameters # ex: {'srv_name':'move_base/TebLocalPlannerROS/set_parameters,
+                                                                'params': {'move_base/TebLocalPlannerROS/xy_goal_tolerance' : 0.05, ...}}
+        name (:obj:`str`): the decorator name
+        """
+        super(Reconfiguring, self).__init__(name=name, child=child)
+        self.idx = idx
+        self.action_goal = action_goal
+        self.prev_prams = None
+        self.sent_goal = False
+        rospy.loginfo("(Reconfigure) decorator initialized.")
+
+    def setup(self,timeout):
+        rospy.loginfo("(Reconfigure) decorator setup function called.")
+        self.reconfigure_srv_req = rospy.ServiceProxy(self.action_goal['srv_name'], Reconfigure)
+        return super(Reconfiguring, self).setup(timeout)
+    
+    def initialise(self):
+        """
+        Reset the feedback message and finish time on behaviour entry.
+        """
+        self.blackboard = py_trees.Blackboard()
+        self.feedback_message = "[(Decorator) Reconfigure]."
+        if self.prev_prams is None:
+            self.prev_prams = dict()
+            for k in self.action_goal['params'].keys():
+                self.prev_prams[k] = rospy.get_param(k)
+        rospy.loginfo("(Reconfigure) decorator initialize function called.")
+        
+    def update(self):
+        """
+        Flip :data:`~py_trees.common.Status.FAILURE` and
+        :data:`~py_trees.common.Status.SUCCESS`
+        
+        Returns:
+        :class:`~py_trees.common.Status`: the behaviour's new status :class:`~py_trees.common.Status`
+        """
+        rospy.loginfo(f'[Reconfiguring] updated called')
+        if not self.sent_goal:
+            reconfigure_req = ReconfigureRequest()
+            for k,v in self.action_goal['params'].items():
+                reconfigure_req.config.doubles.append(DoubleParameter(k, v))
+            self.reconfigure_srv_req(reconfigure_req)
+            self.sent_goal = True
+            return common.Status.RUNNING
+        if self.decorated.status == common.Status.SUCCESS:
+            return common.Status.SUCCESS
+        return common.Status.RUNNING
+    
+    def terminate(self, new_status):
+        reconfigure_req = ReconfigureRequest()
+        for k,v in self.prev_prams.items():
+            reconfigure_req.config.doubles.append(DoubleParameter(k, v))
+        self.reconfigure_srv_req(reconfigure_req)
+        return super().terminate(new_status)

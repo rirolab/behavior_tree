@@ -204,7 +204,7 @@ class Move(object):
                                   action_goal=blackboard.drive_config)
         pose_est4 = WorldModel.PARKING_POSE_ESTIMATOR(name="Plan"+idx,
                                               object_dict = {'robot':robot,'destination': destination, 'side':True})
-        s_drive4 = MoveBase.TOUCHB(name="Drive", idx=idx, destination=-destination,
+        s_drive4 = MoveBase.TOUCHB(name="Drive", idx=idx, destination=destination,
                                    action_goal={'pose': "Plan"+idx+"/parking_pose"})
         submission4 = Communicate.Submit(name="Load", idx=idx, action_goal={'status':1, 'task_id':f'{task_id}_unload'})
         approach.add_children([s_drive_pose4, pose_est4, s_drive4, submission4])
