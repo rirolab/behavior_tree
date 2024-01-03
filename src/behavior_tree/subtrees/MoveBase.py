@@ -222,11 +222,11 @@ class MOVEBCOLLAB(py_trees.behaviour.Behaviour):
         self._prev_params = None
 
         self._prev_dict = {
-            "max_vel_theta" : 0.3,
-            "acc_lim_theta" : 0.1,
-            "penalty_epsilon" : 0.3,
+            "max_vel_theta" : 0.15,
+            "acc_lim_theta" : 0.05,
+            # "penalty_epsilon" : 0.05,
             "yaw_goal_tolerance" : 0.05,
-            "xy_goal_tolerance" : 0.3,
+            "xy_goal_tolerance" : 0.05,
             "min_obstacle_dist" : 0.2
         }
 
@@ -378,7 +378,10 @@ class MOVEBCOLLAB(py_trees.behaviour.Behaviour):
         # raise NotImplementedError()
 
         if self._prev_params is None:
-            self._prev_params = {"max_vel_theta": None, "acc_lim_theta": None, "penalty_epsilon": None, "yaw_goal_tolerance": None, "xy_goal_tolerance": None, "min_obstacle_dist": None }
+            self._prev_params = {"max_vel_theta": None, \
+                                 "acc_lim_theta": None, 
+                                 "yaw_goal_tolerance": None, 
+                                 "xy_goal_tolerance": None, "min_obstacle_dist": None }
             sssss = rospy.get_param(f'move_base/{self._local_planner}/footprint_model/vertices')
             # print("!!!!!!!!!!!!!!!!!!#@@@@@###$$$$$$$$$$$$$$$$$\n\n\n\n\n\n\n\n\n\n", sssss, type(sssss))/
             for k in self._prev_params.keys():
@@ -404,7 +407,7 @@ class MOVEBCOLLAB(py_trees.behaviour.Behaviour):
             reconfigure_req = ReconfigureRequest()
             for k in self._prev_params.keys():
                 if k  == "yaw_goal_tolerance":
-                    reconfigure_req.config.doubles.append(DoubleParameter(k, 3.0))
+                    reconfigure_req.config.doubles.append(DoubleParameter(k, 0.1))
                 elif k  == "xy_goal_tolerance":
                     reconfigure_req.config.doubles.append(DoubleParameter(k, 0.05))
                 else:
@@ -476,23 +479,24 @@ class MOVEBCOLLAB(py_trees.behaviour.Behaviour):
             self.feedback_message = "SUCCESSFUL"
             self.logger.debug("%s.update()[%s->%s][%s]" % (self.__class__.__name__, self.status, py_trees.common.Status.SUCCESS, self.feedback_message))
             
-            req_data = String_Dup_NoneRequest()
-            req_data.data1 = self.destination
-            req_data.data2 = blackboard.robot_name
-        
-            self.arrival_status_update_req(req_data)
+            if ticket == 0:
+                req_data = String_Dup_NoneRequest()
+                req_data.data1 = self.destination
+                req_data.data2 = blackboard.robot_name
+            
+                self.arrival_status_update_req(req_data)
 
 
-            req_data2 = String_Dup_NoneRequest()
-            req_data2.data1 = self.destination
-            req_data2.data2 = "haetae"
+                req_data2 = String_Dup_NoneRequest()
+                req_data2.data1 = self.destination
+                req_data2.data2 = "haetae"
 
-            # reconfigure_req = ReconfigureRequest()
-            # for k in self._prev_params.keys():
-            #     reconfigure_req.config.doubles.append(DoubleParameter(k, self._prev_params[k]))
-            # self.reconfigure_req_srv(reconfigure_req)
+                # reconfigure_req = ReconfigureRequest()
+                # for k in self._prev_params.keys():
+                #     reconfigure_req.config.doubles.append(DoubleParameter(k, self._prev_params[k]))
+                # self.reconfigure_req_srv(reconfigure_req)
 
-            self.arrival_status_update_req(req_data2)
+                self.arrival_status_update_req(req_data2)
 
             return py_trees.common.Status.SUCCESS
         else:
@@ -723,13 +727,14 @@ class TOUCHB(py_trees.behaviour.Behaviour):
     priority behaviour.
     """
 
-    def __init__(self, name, destination, idx='', action_goal=None):
+    def __init__(self, name, destination, idx='', action_goal=None, collab=False):
         super(TOUCHB, self).__init__(name=name)
 
         # self.topic_name = topic_name
         # self.controller_ns = controller_ns
         self.action_goal = action_goal
         self.sent_goal   = False
+        self.collab = collab
         self._world_frame_id = rospy.get_param("/world_frame", 'map')
         self._local_planner = rospy.get_param("local_planner", "sibals")
         self._prev_params = dict()
@@ -848,13 +853,14 @@ class TOUCHB(py_trees.behaviour.Behaviour):
                                   'no_wait': True,
                                   'docking':docking})
 
-            ret = self.cmd_req(cmd_str)
-            print("(MOVEBASE update) goal: ", goal)
-            if ret.data==GoalStatus.REJECTED or ret.data==GoalStatus.ABORTED:
-                self.feedback_message = "failed to execute"
-                self.logger.debug("%s.update()[%s]" % (self.__class__.__name__, self.feedback_message))
-                self.drive_status_update_req(blackboard.robot_name)
-                return py_trees.common.Status.FAILURE
+            if not self.collab:
+                ret = self.cmd_req(cmd_str)
+                print("(MOVEBASE update) goal: ", goal)
+                if ret.data==GoalStatus.REJECTED or ret.data==GoalStatus.ABORTED:
+                    self.feedback_message = "failed to execute"
+                    self.logger.debug("%s.update()[%s]" % (self.__class__.__name__, self.feedback_message))
+                    self.drive_status_update_req(blackboard.robot_name)
+                    return py_trees.common.Status.FAILURE
             
             self.sent_goal        = True
             self.feedback_message = "Sending a navigation goal"
@@ -879,7 +885,7 @@ class TOUCHB(py_trees.behaviour.Behaviour):
             reconfigure_req = ReconfigureRequest()
             for k in self._prev_params.keys():
                 reconfigure_req.config.doubles.append(DoubleParameter(k, self._prev_params[k]))
-            self.reconfigure_req_srv(reconfigure_req)
+            if not self.collab: self.reconfigure_req_srv(reconfigure_req)
             req_data = String_Dup_NoneRequest()
             req_data.data1 = self.destination
             req_data.data2 = blackboard.robot_name

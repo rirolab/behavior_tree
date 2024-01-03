@@ -228,3 +228,42 @@ class Submit(py_trees.behaviour.Behaviour):
     def terminate(self, new_status):
         return
 
+
+class SpotLeave(py_trees.behaviour.Behaviour):
+    """
+    Note that this behaviour will return with
+    :attr:`~py_trees.common.Status.SUCCESS`. It will also send a clearing
+    command to the robot if it is cancelled or interrupted by a higher
+    priority behaviour.
+    """
+
+    def __init__(self, name, unload=None):
+        super(SpotLeave, self).__init__(name=name)
+        if unload is None:
+            self.unload = None
+            self.is_unload = False
+        else:
+            self.unload = unload
+            self.is_unload = True
+
+        self._update_load_state_srv_channel = "/update_load_state"
+
+
+    def setup(self, timeout):
+        self.feedback_message = "{}: setup".format(self.name)
+        rospy.wait_for_service(self._update_load_state_srv_channel, rospy.Duration(3))
+        self.update_load_req = rospy.ServiceProxy(self._update_load_state_srv_channel, String_None)
+        return True
+
+
+    def initialise(self):
+        self.logger.debug("{0}.initialise()".format(self.__class__.__name__))
+
+    def update(self):
+        self.logger.debug("%s.update()" % self.__class__.__name__)
+        self.update_load_req(self.unload)
+        return py_trees.common.Status.SUCCESS
+            
+    
+    def terminate(self, new_status):
+        return

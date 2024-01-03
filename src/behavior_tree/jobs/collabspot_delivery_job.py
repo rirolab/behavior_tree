@@ -179,7 +179,7 @@ class Move(object):
         replanning1 = Replanning(s_drive1, idx=idx, name="Replan")
         waiting1 = py_trees.composites.Parallel(name='Waiting', children=[ticketing1, replanning1])
         approaching1 = MoveBase.TOUCHB(name="Touch", idx=idx, destination=source,
-                                      action_goal={'pose': "Plan"+idx+"/parking_pose"})
+                                      action_goal={'pose': "Plan"+idx+"/parking_pose"}, collab=True)
         
 
         target = 'haetae'

@@ -25,14 +25,6 @@ class REMOVE(py_trees.behaviour.Behaviour):
         self.target        = target
         self.sent_goal     = False
         self.srv_req       = None
-        if unload is None:
-            self.unload = None
-            self.is_unload = False
-        else:
-            self.unload = unload
-            self.is_unload = True
-
-        self._update_load_state_srv_channel = "/update_load_state"
 
 
     def setup(self, timeout):
@@ -40,17 +32,12 @@ class REMOVE(py_trees.behaviour.Behaviour):
         rospy.wait_for_service("/delete_box", rospy.Duration(3))
         self.srv_req = rospy.ServiceProxy("/delete_box", String_None)
 
-        rospy.wait_for_service(self._update_load_state_srv_channel, rospy.Duration(3))
-        self.update_load_req = rospy.ServiceProxy(self._update_load_state_srv_channel, String_None)
-
         return True
 
 
     def initialise(self):
         self.logger.debug("{0}.initialise()".format(self.__class__.__name__))
         self.sent_goal = False
-
-        self.update_load_req(self.unload)
 
     def update(self):
         self.logger.debug("%s.update()" % self.__class__.__name__)

@@ -13,8 +13,9 @@ import std_msgs.msg as std_msgs
 from complex_action_client import misc
 
 #sys.path.insert(0,'..')
-from behavior_tree.subtrees import MoveJoint, MovePose, MoveBase, Gripper, Stop, WorldModel
+from behavior_tree.subtrees import MoveJoint, MovePose, MoveBase, Gripper, Stop, WorldModel, Communicate
 from behavior_tree.decorators import Ticketing, Replanning, Reconfiguring
+
 from geometry_msgs.msg import Pose, Point, Quaternion
 ##############################################################################
 # Behaviours
@@ -45,8 +46,8 @@ class Move(object):
         self.blackboard.gripper_close_pos = rospy.get_param("gripper_close_pos")
         self.blackboard.gripper_open_force = rospy.get_param("gripper_open_force")
         self.blackboard.gripper_close_force = rospy.get_param("gripper_close_force")
-        self.blackboard.init_config = eval(rospy.get_param("init_config", [0, -np.pi/2., np.pi/2., -np.pi/2., -np.pi/2., np.pi/4.]))
-        self.blackboard.drive_config = [np.pi/2, -2.4, 2.4, -np.pi/2., -np.pi/2., 0]
+        self.blackboard.init_config = eval(rospy.get_param("init_config", "[0, -np.pi/2., np.pi/2., -np.pi/2., -np.pi/2., np.pi/4.]"))
+        self.blackboard.drive_config = eval(rospy.get_param("drive_config", "[0, 0, 0, 0., 0., 0]"))
 
         ## self.object      = None
         ## self.destination = None
@@ -132,26 +133,6 @@ class Move(object):
         else:
             return None
 
-        print("HAETAE!!!!!!\n\n\n\n\n\n\n\n", robot, obj, source, destination)
-
-        real_source = None
-        real_destination = None
-
-        # if source == "picking_station1":
-        #     real_source = "picking_station1_collab_haetae_parking_target"
-        # elif source == "picking_station2":
-        #     real_source = "picking_station2_collab_haetae_parking_target"
-        # else:
-        #     raise NotImplementedError()
-
-        # if destination == "placing_shelf1":
-        #     real_destination = "placing_shelf1_collab_haetae_parking_target"
-        # elif destination == "placing_shelf2":
-        #     real_destination = "placing_shelf2_collab_haetae_parking_target"
-        # else:
-        #     raise NotImplementedError()
-        
-        # plate_position = "spot_table"
         plate_position = "spot_table_from_gz"
         # plate_position = "spot_table_for_boxl"
 
@@ -212,10 +193,7 @@ class Move(object):
 
 
         place = py_trees.composites.Sequence(name="CollabUNLoad")
-        # print("!!!!!!!!!!!!!!!!!!!djfdodododod\n\n\n\n\n\n\n\n\n\n\n", destination, idx, type(idx), obj)
-        offset = 0
         if source == "picking_station1":
-            offset = -0.5
             if destination == "placing_shelf1":
                 unload_destination = "ps1_unload_target"
             elif destination == "placing_shelf2":
@@ -223,7 +201,6 @@ class Move(object):
             else:
                 raise NotImplementedError()
         elif source == "picking_station2":
-            offset = 0.5
             if destination == "placing_shelf1":
                 unload_destination = "ps1_unload_target2"
             elif destination == "placing_shelf2":
@@ -237,14 +214,6 @@ class Move(object):
  
         wait_condition3 = py_trees.decorators.Condition(name="Wait"+idx, child=sync_pose_est3, status=py_trees.common.Status.SUCCESS)
         
-        drive_offset3 = MoveBase.MOVEBR(name="Unload", idx=idx,
-                                        action_goal={'pose':Pose(Point(0.0, offset, 0.0), Quaternion(0.0, 0.0, 0.0, 1.0))})
-        reconfigure3 = Reconfiguring(drive_offset3, idx=idx, action_goal={'srv_name': 'move_base/TebLocalPlannerROS/set_parameters',
-                                                                        'params': {'move_base/TebLocalPlannerROS/min_obstacle_dist':0.0,
-                                                                                   'move_base/TebLocalPlannerROS/inflation_dist':0.0,
-                                                                                   'move_base/TebLocalPlannerROS/max_vel_x':0.01,
-                                                                                   'move_base/TebLocalPlannerROS/max_vel_theta':0.01,
-                                                                                   }})
         pose_est3_1 = WorldModel.POSE_ESTIMATOR(name="Plan222"+idx,
                                               object_dict = {'target': obj,
                                                              'destination': unload_destination})
@@ -254,6 +223,8 @@ class Move(object):
                                  action_goal={'pose': "Plan222"+idx+"/place_top_pose"})
         s_move3_22 = MovePose.MOVEP(name="Approach", controller_ns=controller_ns,
                                  action_goal={'pose': "Plan222"+idx+"/place_pose"})
+        
+        spot_leave = Communicate.SpotLeave(name="SpotGO", unload='spot')
         s_move3_23 = Gripper.GOTO(name="Open", controller_ns=controller_ns,
                                action_goal=blackboard.gripper_open_pos,
                                force=blackboard.gripper_open_force)        
@@ -262,20 +233,15 @@ class Move(object):
                                  action_goal={'pose': "Plan222"+idx+"/place_top_pose"})
         s_init_pose41 = MoveJoint.MOVEJ(name="Init", controller_ns=controller_ns,
                                   action_goal=blackboard.init_config)
+        # s_init_pose42 = MoveJoint.MOVEJ(name="DrivePose", controller_ns=controller_ns,
+        #                           action_goal=blackboard.drive_config)
         ############################
 
-        s_move3_25 = WorldModel.REMOVE(name="Remove", target=obj, unload='spot')
+        s_move3_25 = WorldModel.REMOVE(name="Remove", target=obj)
 
-
-        # pick.add_children([pose_est1, s_init1, s_move10, s_move11, s_move12, s_move13, s_move14, s_move15, s_init2])
-        # pick.add_children([pose_est1, s_init1, s_move10, s_move11, s_move13, s_move14, s_move15])
-
-        # pick.add_children([pose_est1, s_init1, s_move10, s_move11, s_move13, s_move14, s_move15, pose_est2, s_move20, s_move21, s_move22, s_move23, s_move24, s_init2])
-        place.add_children([wait_condition3, pose_est3_1, s_move3_20, s_move3_21, s_move3_22,s_move3_23,s_move3_24, s_move3_25, s_init_pose41])    
-        # place.add_children([wait_condition3, reconfigure3, s_move3_23, s_init_pose41, s_move3_25])
-    
+        # place.add_children([wait_condition3, pose_est3_1, s_move3_20, s_move3_21, s_move3_22,s_move3_23,s_move3_24, s_move3_25, s_init_pose41, s_init_pose42])
+        place.add_children([wait_condition3, pose_est3_1, s_move3_20, s_move3_21, s_move3_22, spot_leave, s_move3_23,s_move3_24, s_move3_25, s_init_pose41])
         task = py_trees.composites.Sequence(name="CollabDelivery")
-
         task.add_children([ waitdrive, pick, place])
 
         return task
