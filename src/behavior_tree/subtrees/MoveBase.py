@@ -379,7 +379,7 @@ class MOVEBCOLLAB(py_trees.behaviour.Behaviour):
 
         if self._prev_params is None:
             self._prev_params = {"max_vel_theta": None, \
-                                 "acc_lim_theta": None, 
+                                #  "acc_lim_theta": None, 
                                  "yaw_goal_tolerance": None, 
                                  "xy_goal_tolerance": None, "min_obstacle_dist": None }
             sssss = rospy.get_param(f'move_base/{self._local_planner}/footprint_model/vertices')
@@ -409,6 +409,8 @@ class MOVEBCOLLAB(py_trees.behaviour.Behaviour):
                 if k  == "yaw_goal_tolerance":
                     reconfigure_req.config.doubles.append(DoubleParameter(k, 0.1))
                 elif k  == "xy_goal_tolerance":
+                    reconfigure_req.config.doubles.append(DoubleParameter(k, 0.05))
+                elif k  == "max_vel_theta" or k  == "acc_lim_theta":
                     reconfigure_req.config.doubles.append(DoubleParameter(k, 0.05))
                 else:
                     reconfigure_req.config.doubles.append(DoubleParameter(k, 0.000))
