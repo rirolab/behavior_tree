@@ -18,7 +18,7 @@ from tf2_ros import TransformException
 
 from geometry_msgs.msg import Pose
 from complex_action_client import misc
-from riro_srvs.srv import StringInt, StringPose
+from riro_srvs.srv import StringInt, StringPose, NoneString
 
 
 class REMOVE(py_trees.behaviour.Behaviour):
@@ -84,6 +84,56 @@ class REMOVE(py_trees.behaviour.Behaviour):
     def terminate(self, new_status):
         return
 
+class CAPTURE_JUKJAEHAM(py_trees.behaviour.Behaviour):
+    def __init__(self, name):
+        super(CAPTURE_JUKJAEHAM, self).__init__(name=name)
+
+        self.sent_goal     = False
+        self.cmd_req       = None
+
+
+    def setup(self,
+              node: typing.Optional[rclpy.node.Node]=None,
+              timeout: float=py_trees.common.Duration.INFINITE):
+        self.node = node
+        self.feedback_message = "{}: setup".format(self.name)
+        self.cmd_req = self.node.create_client(NoneString, '/jukjaeham/empty_capture', qos_profile=rclpy.qos.qos_profile_services_default)
+        if not self.cmd_req.wait_for_service(timeout_sec=3.0):
+            raise exceptions.TimedOutError('remove wm service not available, waiting again...')
+        return True
+
+    def initialise(self):
+        self.logger.debug("{0}.initialise()".format(self.__class__.__name__))
+        self.sent_goal = False
+
+    def update(self):
+        self.logger.debug("%s.update()" % self.__class__.__name__)
+
+        if self.cmd_req is None:
+            self.feedback_message = \
+              "no action client, did you call setup() on your tree?"
+            return py_trees.Status.FAILURE
+
+        if not self.sent_goal:
+            req = NoneString.Request()
+            future = self.cmd_req.call_async(req)
+
+            while rclpy.ok():
+                if future.done():
+                    break
+                rclpy.spin_once(self.node, timeout_sec=0)
+                time.sleep(0.05)
+            print("SSSSS\n\n\n\n", future.result())
+            self.sent_goal = True
+            self.feedback_message = "Sending a world_model command"
+            return py_trees.common.Status.RUNNING
+
+        return py_trees.common.Status.SUCCESS
+    
+    def terminate(self, new_status):
+        return
+
+
 
 class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
     """
@@ -95,7 +145,7 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
     priority behaviour.
     """
 
-    def __init__(self, name, object_dict=None, en_random=False, en_close_pose=False,
+    def __init__(self, name, object_dict=None, en_random=False, en_close_pose=False, find_empty=False,
                     **kwargs):
         super(POSE_ESTIMATOR, self).__init__(name=name)
 
@@ -107,6 +157,7 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         self.callback_group = ReentrantCallbackGroup()
         self.tf_buffer     = kwargs['tf_buffer']
 
+        self.find_empty = find_empty
 
     def setup(self,
               node: typing.Optional[rclpy.node.Node]=None,
@@ -121,6 +172,8 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         self._rnd_pose_srv_channel   = self.node.get_parameter("rnd_pose_srv_channel").get_parameter_value().string_value
         self._close_pose_srv_channel = self.node.get_parameter("close_pose_srv_channel").get_parameter_value().string_value
         
+        self._jukjaeham_empty_pose_channel = "/get_jukjaeham_pose"
+
         self._world_frame    = self.node.get_parameter("world_frame").get_parameter_value().string_value
         self._arm_base_frame = self.node.get_parameter("arm_base_frame").get_parameter_value().string_value
 
@@ -161,6 +214,13 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                                             qos_profile=rclpy.qos.qos_profile_services_default)
         if not self.close_pose_srv_req.wait_for_service(timeout_sec=3.0):
             raise exceptions.TimedOutError('[{}] service not available, waiting again...'.format(self._close_pose_srv_channel))
+
+        self.jukjaeham_pose_srv_req = self.node.create_client(StringPose, \
+                                            self._jukjaeham_empty_pose_channel,
+                                            callback_group=self.callback_group,
+                                            qos_profile=rclpy.qos.qos_profile_services_default)
+        if not self.jukjaeham_pose_srv_req.wait_for_service(timeout_sec=3.0):
+            raise exceptions.TimedOutError('[{}] service not available, waiting again...'.format(self._jukjaeham_empty_pose_channel))
 
         ## # get odom 2 base
         ## qos_profile = QoSProfile(
@@ -207,19 +267,35 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
             obj = self.object_dict['target']
             req = StringPose.Request(data=obj)
             
-            try:
-                future = self.grasp_pose_srv_req.call_async(req)
 
-                while rclpy.ok():
-                    if future.done():
-                        break
-                    rclpy.spin_once(self.node, timeout_sec=0.05)
-                    ## time.sleep(0.05)
-                
-                obj_pose = future.result().pose
-            except Exception as e:
-                self.feedback_message = "Pose Service is not available: %s"%e
-                return py_trees.common.Status.FAILURE
+            if self.find_empty == True:
+                try:
+                    future = self.jukjaeham_pose_srv_req.call_async(req)
+
+                    while rclpy.ok():
+                        if future.done():
+                            break
+                        rclpy.spin_once(self.node, timeout_sec=0.05)
+                        ## time.sleep(0.05)
+                    
+                    obj_pose = future.result().pose
+                except Exception as e:
+                    self.feedback_message = "Pose Service is not available2: %s"%e
+                    return py_trees.common.Status.FAILURE
+            else:
+                try:
+                    future = self.grasp_pose_srv_req.call_async(req)
+
+                    while rclpy.ok():
+                        if future.done():
+                            break
+                        rclpy.spin_once(self.node, timeout_sec=0.05)
+                        ## time.sleep(0.05)
+                    
+                    obj_pose = future.result().pose
+                except Exception as e:
+                    self.feedback_message = "Pose Service is not available1: %s"%e
+                    return py_trees.common.Status.FAILURE
 
             try:
                 future = self.height_srv_req.call_async(req)

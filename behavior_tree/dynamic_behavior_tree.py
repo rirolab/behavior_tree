@@ -49,6 +49,7 @@ def create_root():
     # ---------------- Root->Blackboard ------------------------
     grnd2bb = Grnd2Blackboard.ToBlackboard(name="Grnd2BB",
                                            topic_name="symbol_grounding")
+    # wm2bb = WM2Blackboard.ToBlackboard(name="WM2BB", topic_name="/world_model")
     status2bb = ToBlackboard(name="Status2BB",
                              topic_name="arm_client/goal_status",
                              topic_type=GoalStatus,
@@ -99,6 +100,7 @@ class SplinteredReality(Node):
                 ("gripper_open_force", Parameter.Type.DOUBLE),
                 ("gripper_close_force", Parameter.Type.DOUBLE),
                 ("init_config", Parameter.Type.DOUBLE_ARRAY),
+                ("observe_config", Parameter.Type.DOUBLE_ARRAY),\
                 ("pose_srv_channel", Parameter.Type.STRING),
                 ("grasp_pose_srv_channel", Parameter.Type.STRING),
                 ("height_srv_channel", Parameter.Type.STRING),
@@ -434,6 +436,8 @@ def main(args=None):
                                                  ## ## 'jobs.handover_job.Move',
                                                  ## ## 'jobs.jog_job.Move',
                                                  'jobs.gripper_job.Move',
+                                                 'jobs.observe_job.Move',
+                                                 'jobs.ssdmove_job.Move',
                                                  ## ## 'jobs.slide_job.Move',
                                                  ## ## 'jobs.attach_job.Move',
                                                  ## ## 'jobs.touch_job.Move'

@@ -54,7 +54,7 @@ class Move(base_job.BaseJob):
         else:
             grounding = json.loads(msg.data)['params']
             for i in range( len(grounding.keys()) ):
-                if grounding[str(i+1)]['primitive_action'] in ['move']:
+                if grounding[str(i+1)]['primitive_action'] in ['ssdmove']:
                     self.goal = grounding #[str(i+1)] )
                     break
                 
@@ -71,7 +71,7 @@ class Move(base_job.BaseJob):
            :class:`~py_trees.behaviour.Behaviour`: subtree root
         """
         # beahviors
-        root = py_trees.composites.Sequence(name="Move", memory=True)
+        root = py_trees.composites.Sequence(name="SSDMove", memory=True)
         blackboard = py_trees.blackboard.Client()
         blackboard.register_key(key="gripper_open_pos", access=py_trees.common.Access.READ)
         blackboard.register_key(key="gripper_close_pos", access=py_trees.common.Access.READ)
@@ -79,7 +79,7 @@ class Move(base_job.BaseJob):
         blackboard.register_key(key="gripper_close_force", access=py_trees.common.Access.READ)
         blackboard.register_key(key="init_config", access=py_trees.common.Access.READ)
         
-        if goal[idx]["primitive_action"] in ['move']:
+        if goal[idx]["primitive_action"] in ['ssdmove']:
             obj         = goal[idx]['object']
             destination = goal[idx]['destination']
         else:
@@ -93,14 +93,11 @@ class Move(base_job.BaseJob):
         # ----------------- Move Task ----------------        
         s_init2 = MoveJoint.MOVEJ(name="Init", action_client=action_client,
                                   action_goal=blackboard.init_config)
-
         s_init3 = MoveJoint.MOVEJ(name="Init", action_client=action_client,
                                   action_goal=blackboard.init_config)
 
         # ----------------- Pick ---------------------
-        pose_est1 = WorldModel.POSE_ESTIMATOR(name="Plan"+idx,
-                                              object_dict = {'target': obj},
-                                              tf_buffer=kwargs['tf_buffer'])
+        pose_est1 = WorldModel.POSE_ESTIMATOR(name="Plan"+idx, object_dict = {'target': obj}, find_empty=True, tf_buffer=kwargs['tf_buffer'])
         s_move10 = MovePose.MOVEPROOT(name="Top1",
                                       action_client=action_client,
                                       action_goal={'pose': "Plan"+idx+"/grasp_top_pose"})
@@ -124,8 +121,9 @@ class Move(base_job.BaseJob):
                                   action_client=action_client,
                                   action_goal={'pose': "Plan"+idx+"/grasp_top_pose"})
 
-        pick = py_trees.composites.Sequence(name="MovePick", memory=True)
+        pick = py_trees.composites.Sequence(name="SSDMovePick", memory=True)
         pick.add_children([s_init2, pose_est1, s_move10, s_move11, s_move12, s_move13, s_move14, s_move15])
+        # pick.add_children([pose_est1, s_move10, s_move11, s_move12, s_move13, s_move14, s_move15])
 
 
         # ----------------- Place ---------------------
@@ -148,9 +146,11 @@ class Move(base_job.BaseJob):
                                  action_goal={'pose': "Plan"+idx+"/place_top_pose"})
         
         place = py_trees.composites.Sequence(name="MovePlace", memory=True)
-        place.add_children([pose_est2, s_move20, s_move21, s_move22, s_move23, s_move24, s_init3])
-        
-        task = py_trees.composites.Sequence(name="Move", memory=True)
+        # place.add_children([pose_est2, s_move20, s_move21, s_move22, s_move23, s_move24, s_init3])
+        place.add_children([pose_est2, s_move20,  s_move23,  s_init3])
+
+
+        task = py_trees.composites.Sequence(name="SSDMove", memory=True)
         task.add_children([pick, place])
         return task
 
