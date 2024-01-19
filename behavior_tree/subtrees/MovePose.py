@@ -33,7 +33,7 @@ class MOVEP(Move.MOVE):
 
         self.blackboard.register_key(key=self.action_goal['pose'], \
                                      access=py_trees.common.Access.READ)
-
+        self.name = name
 
     def update(self):
         self.logger.debug("%s.update()" % self.__class__.__name__)
@@ -61,7 +61,7 @@ class MOVEP(Move.MOVE):
                         'qy': ps.orientation.y,
                         'qz': ps.orientation.z,
                         'qw': ps.orientation.w,}
-
+                print("MOVEPOSE!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n", self.name, goal)
             self.goal_uuid_des = np.random.randint(0, 255, size=16,
                                             dtype=np.uint8)
                     

@@ -9,6 +9,7 @@ import std_msgs.msg as std_msgs
 from . import base_job
 from behavior_tree.subtrees import MoveJoint, MovePose, Gripper, WorldModel
 
+import numpy as np
 
 ##############################################################################
 # Behaviours
@@ -88,13 +89,20 @@ class Move(base_job.BaseJob):
 
         # print("TTTTTTT&&&&\n\n\n\n\n\n\n", blackboard.init_config) ## [0.0, -1.570796, 1.570796, -1.570796, -1.570796, 0.785]
         # raise NotImplementedError()
+        intermediate_config = [-1.5707963267948966, -1.5707963267948966, 1.5707963267948966, -3.141592653589793, -1.5707963267948966, 0.]
 
+        intermediate_config2 = [-57, -76, 97, -198, -123, -89]
+        intermediate_config2 = [x * np.pi/180 for x in intermediate_config2]
 
         # ----------------- Move Task ----------------        
         s_init2 = MoveJoint.MOVEJ(name="Init", action_client=action_client,
                                   action_goal=blackboard.init_config)
         s_init3 = MoveJoint.MOVEJ(name="Init", action_client=action_client,
                                   action_goal=blackboard.init_config)
+
+        s_init4 = MoveJoint.MOVEJ(name="Init", action_client=action_client,
+                                  action_goal=intermediate_config2)
+
 
         # ----------------- Pick ---------------------
         pose_est1 = WorldModel.POSE_ESTIMATOR(name="Plan"+idx, object_dict = {'target': obj}, find_empty=True, tf_buffer=kwargs['tf_buffer'])
@@ -126,32 +134,60 @@ class Move(base_job.BaseJob):
         # pick.add_children([pose_est1, s_move10, s_move11, s_move12, s_move13, s_move14, s_move15])
 
 
+        # # ----------------- Place ---------------------
+        # pose_est2 = WorldModel.POSE_ESTIMATOR(name="Plan"+idx,
+        #                                       object_dict = {'target': obj,
+        #                                                      'destination': destination},
+        #                                       tf_buffer=kwargs['tf_buffer'])
+        # s_move20 = MovePose.MOVEPROOT(name="Top1",
+        #                               action_client=action_client,
+        #                               action_goal={'pose': "Plan"+idx+"/place_top_pose"})
+        # # s_move21 = MovePose.MOVEP(name="Top2", action_client=action_client,
+        # #                          action_goal={'pose': "Plan"+idx+"/place_top_pose"})
+        # # s_move22 = MovePose.MOVEP(name="Approach", action_client=action_client,
+        # #                          action_goal={'pose': "Plan"+idx+"/place_pose"})
+        # s_move23 = Gripper.GOTO(name="Open", action_client=action_client,
+        #                         action_goal=blackboard.gripper_open_pos,
+        #                         force=blackboard.gripper_open_force,
+        #                         timeout=1)        
+        # # s_move24 = MovePose.MOVEP(name="Top", action_client=action_client,
+        # #                          action_goal={'pose': "Plan"+idx+"/place_top_pose"})
+
+        # place = py_trees.composites.Sequence(name="MovePlace", memory=True)
+        # # place.add_children([pose_est2, s_move20, s_move21, s_move22, s_move23, s_move24, s_init3])
+        # place.add_children([pose_est2, s_move20,  s_move23,  s_init3])
+
+
         # ----------------- Place ---------------------
         pose_est2 = WorldModel.POSE_ESTIMATOR(name="Plan"+idx,
                                               object_dict = {'target': obj,
-                                                             'destination': destination},
+                                                             'destination': destination}, find_empty_loader=True, insertion=True,
                                               tf_buffer=kwargs['tf_buffer'])
         s_move20 = MovePose.MOVEPROOT(name="Top1",
                                       action_client=action_client,
-                                      action_goal={'pose': "Plan"+idx+"/place_top_pose"})
-        s_move21 = MovePose.MOVEP(name="Top2", action_client=action_client,
-                                 action_goal={'pose': "Plan"+idx+"/place_top_pose"})
+                                      action_goal={'pose': "Plan"+idx+"/pre_insertion_pose"})
+        # s_move21 = MovePose.MOVEP(name="Top2", action_client=action_client,
+        #                          action_goal={'pose': "Plan"+idx+"/place_top_pose"})
         s_move22 = MovePose.MOVEP(name="Approach", action_client=action_client,
-                                 action_goal={'pose': "Plan"+idx+"/place_pose"})
-        s_move23 = Gripper.GOTO(name="Open", action_client=action_client,
-                                action_goal=blackboard.gripper_open_pos,
-                                force=blackboard.gripper_open_force,
-                                timeout=1)        
-        s_move24 = MovePose.MOVEP(name="Top", action_client=action_client,
-                                 action_goal={'pose': "Plan"+idx+"/place_top_pose"})
-        
+                                 action_goal={'pose': "Plan"+idx+"/pre_insertion_pose"})
+        # s_move23 = Gripper.GOTO(name="Open", action_client=action_client,
+        #                         action_goal=blackboard.gripper_open_pos,
+        #                         force=blackboard.gripper_open_force,
+        #                         timeout=1)        
+        # s_move24 = MovePose.MOVEP(name="Top", action_client=action_client,
+        #                          action_goal={'pose': "Plan"+idx+"/place_top_pose"})
+
+
         place = py_trees.composites.Sequence(name="MovePlace", memory=True)
         # place.add_children([pose_est2, s_move20, s_move21, s_move22, s_move23, s_move24, s_init3])
-        place.add_children([pose_est2, s_move20,  s_move23,  s_init3])
+        place.add_children([s_init4, pose_est2, s_move20,  s_move22])
 
 
         task = py_trees.composites.Sequence(name="SSDMove", memory=True)
-        task.add_children([pick, place])
+        # task.add_children([pick, place])
+        task.add_children([place])
+
         return task
+
 
 

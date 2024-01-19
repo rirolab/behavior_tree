@@ -18,7 +18,7 @@ from tf2_ros import TransformException
 
 from geometry_msgs.msg import Pose
 from complex_action_client import misc
-from riro_srvs.srv import StringInt, StringPose, NoneString
+from riro_srvs.srv import StringInt, StringPose, NoneString, NonePose
 
 
 class REMOVE(py_trees.behaviour.Behaviour):
@@ -145,7 +145,7 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
     priority behaviour.
     """
 
-    def __init__(self, name, object_dict=None, en_random=False, en_close_pose=False, find_empty=False,
+    def __init__(self, name, object_dict=None, en_random=False, en_close_pose=False, find_empty=False, find_empty_loader=False, insertion=False,
                     **kwargs):
         super(POSE_ESTIMATOR, self).__init__(name=name)
 
@@ -158,6 +158,8 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         self.tf_buffer     = kwargs['tf_buffer']
 
         self.find_empty = find_empty
+        self.find_empty_loader = find_empty_loader
+        self.insertion = insertion
 
     def setup(self,
               node: typing.Optional[rclpy.node.Node]=None,
@@ -173,12 +175,15 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         self._close_pose_srv_channel = self.node.get_parameter("close_pose_srv_channel").get_parameter_value().string_value
         
         self._jukjaeham_empty_pose_channel = "/get_jukjaeham_pose"
+        self._loader_empty_pose_channel = "/get_loader_empty_pose"
 
         self._world_frame    = self.node.get_parameter("world_frame").get_parameter_value().string_value
         self._arm_base_frame = self.node.get_parameter("arm_base_frame").get_parameter_value().string_value
 
         self.grasp_offset_z = self.node.get_parameter_or("grasp_offset_z", 0.02).get_parameter_value().double_value
         self.top_offset_z   = self.node.get_parameter_or("top_offset_z", 0.15).get_parameter_value().double_value
+
+        self.insertion_offset_y = 0.2
 
         self.pose_srv_req = self.node.create_client(StringPose, \
                                 self._pose_srv_channel,
@@ -222,6 +227,16 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         if not self.jukjaeham_pose_srv_req.wait_for_service(timeout_sec=3.0):
             raise exceptions.TimedOutError('[{}] service not available, waiting again...'.format(self._jukjaeham_empty_pose_channel))
 
+        self.loader_pose_srv_req = self.node.create_client(NonePose, \
+                                            self._loader_empty_pose_channel,
+                                            callback_group=self.callback_group,
+                                            qos_profile=rclpy.qos.qos_profile_services_default)
+        if not self.loader_pose_srv_req.wait_for_service(timeout_sec=10.0):
+            raise exceptions.TimedOutError('[{}] service not available, waiting again...'.format(self._loader_empty_pose_channel))
+
+        # print("&&&&&&&&&&&&&&&&&&777&&&&&\n\n\n\n\n\n", self.loader_pose_srv_req)
+        # raise NotImplementedError()
+
         ## # get odom 2 base
         ## qos_profile = QoSProfile(
         ##     reliability=QoSReliabilityPolicy.RMW_QOS_POLICY_RELIABILITY_RELIABLE,           
@@ -251,11 +266,15 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         self.blackboard.register_key(key=self.name +'/grasp_top_pose', access=py_trees.common.Access.WRITE)
         self.blackboard.register_key(key=self.name +'/place_pose', access=py_trees.common.Access.WRITE)
         self.blackboard.register_key(key=self.name +'/place_top_pose', access=py_trees.common.Access.WRITE)
+
+        self.blackboard.register_key(key=self.name +'/pre_insertion_pose', access=py_trees.common.Access.WRITE)
         
         self.blackboard.set(self.name +'/grasp_pose', Pose())
         self.blackboard.set(self.name +'/grasp_top_pose', Pose())
         self.blackboard.set(self.name +'/place_pose', Pose())    
         self.blackboard.set(self.name +'/place_top_pose', Pose())
+
+        self.blackboard.set(self.name +'/pre_insertion_pose', Pose())
 
 
     def update(self):
@@ -361,6 +380,10 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                 elif self.en_close_pose:
                     req      = StringPose.Request(data=json.dumps(self.object_dict))
                     future = self.close_pose_srv_req.call_async(req)
+                elif self.find_empty_loader:
+                    assert self.object_dict['destination'] == 'test_ssd_loader_renewal'
+                    req = NonePose.Request()
+                    future = self.loader_pose_srv_req.call_async(req)
                 else:
                     req      = StringPose.Request(data=destination)
                     future = self.pose_srv_req.call_async(req)
@@ -375,7 +398,7 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                     ## return py_trees.common.Status.FAILURE
                     
                 dst_pose = future.result().pose
-
+                print("DDDDDDDDDDDDDDDDDDDDDDD\n\n\n\n\n", dst_pose)
                 if 'destination_offset' in self.object_dict.keys():
                     offset = self.object_dict['destination_offset']
                     offset_frame = PyKDL.Frame(PyKDL.Rotation.RotZ(offset[3]),
@@ -386,21 +409,42 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                     dst_frame = misc.pose2KDLframe(dst_pose)*offset_frame
                     dst_pose = misc.KDLframe2Pose(dst_frame)
 
-                place_pose = POSE_ESTIMATOR.get_place_pose(dst_pose, \
+                place_pose = POSE_ESTIMATOR.get_place_pose_with_original_rot(dst_pose, \
                                                            self.base2arm_baselink, \
                                                            grasp_pose, \
                                                            obj_height, \
                                                            self.grasp_offset_z)
 
+                place_pose2 = POSE_ESTIMATOR.get_place_pose_with_original_rot(dst_pose, \
+                                                           self.base2arm_baselink, \
+                                                           grasp_pose, \
+                                                           obj_height, \
+                                                           self.grasp_offset_z)
+
+
                 # the sliding motion 
                 if self.en_close_pose:
                     place_pose.position.z = grasp_pose.position.z
 
+                if self.insertion:
+                    place_pre_insertion_pose = copy.deepcopy(place_pose)
+                    place_pre_insertion_pose.position.y += self.insertion_offset_y
+                    place_pre_insertion_pose2 = copy.deepcopy(place_pose2)
+                    place_pre_insertion_pose2.position.y += self.insertion_offset_y
+
+
                 place_top_pose = copy.deepcopy(place_pose)
                 place_top_pose.position.z += self.top_offset_z
 
+                print("TTTTTTTTTTTTTTTTTTTTTTTT\n\n\n\n\n", place_pose, place_pose2)
+
                 self.blackboard.set(self.name +'/place_pose', place_pose)    
                 self.blackboard.set(self.name +'/place_top_pose', place_top_pose)
+
+                if self.insertion:
+                    print("WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW\n\n\n\n\n", place_pre_insertion_pose, place_pre_insertion_pose2)
+                    self.blackboard.set(self.name +'/pre_insertion_pose', place_pre_insertion_pose)
+
             self.sent_goal        = True
             self.feedback_message = "WorldModel: successful grasp pose estimation "
             return py_trees.common.Status.SUCCESS
@@ -451,11 +495,33 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         """ return the place pose """
         base2obj         = misc.pose2KDLframe(obj_pose)
         arm_baselink2obj = base2arm_baselink.Inverse() * base2obj
+        print("11111111111111111111\n\n\n\n\n\n\n\n", arm_baselink2obj)
         arm_baselink2obj.M = misc.pose2KDLframe(grasp_pose).M
+        print("22222222222222222222\n\n\n\n\n\n\n\n", arm_baselink2obj)
 
         place_pose     = misc.KDLframe2Pose(arm_baselink2obj)
 
         # for the object hold by the hand
         place_pose.position.z += obj_height
         place_pose.position.z -= grasp_offset_z
+
+        return place_pose 
+
+
+    @staticmethod
+    def get_place_pose_with_original_rot(obj_pose, base2arm_baselink, grasp_pose, \
+                       obj_height, grasp_offset_z):
+        """ return the place pose """
+        base2obj         = misc.pose2KDLframe(obj_pose)
+        arm_baselink2obj = base2arm_baselink.Inverse() * base2obj
+        # print("11111111111111111111\n\n\n\n\n\n\n\n", arm_baselink2obj)
+        # arm_baselink2obj.M = misc.pose2KDLframe(grasp_pose).M
+        # print("22222222222222222222\n\n\n\n\n\n\n\n", arm_baselink2obj)
+
+        place_pose     = misc.KDLframe2Pose(arm_baselink2obj)
+
+        # for the object hold by the hand
+        place_pose.position.z += obj_height
+        place_pose.position.z -= grasp_offset_z
+
         return place_pose 
