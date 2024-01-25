@@ -268,13 +268,16 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         self.blackboard.register_key(key=self.name +'/place_top_pose', access=py_trees.common.Access.WRITE)
 
         self.blackboard.register_key(key=self.name +'/pre_insertion_pose', access=py_trees.common.Access.WRITE)
-        
+        self.blackboard.register_key(key=self.name +'/post_insertion_pose', access=py_trees.common.Access.WRITE)
+
+
         self.blackboard.set(self.name +'/grasp_pose', Pose())
         self.blackboard.set(self.name +'/grasp_top_pose', Pose())
         self.blackboard.set(self.name +'/place_pose', Pose())    
         self.blackboard.set(self.name +'/place_top_pose', Pose())
 
         self.blackboard.set(self.name +'/pre_insertion_pose', Pose())
+        self.blackboard.set(self.name +'/post_insertion_pose', Pose())
 
 
     def update(self):
@@ -415,12 +418,6 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                                                            obj_height, \
                                                            self.grasp_offset_z)
 
-                place_pose2 = POSE_ESTIMATOR.get_place_pose_with_original_rot(dst_pose, \
-                                                           self.base2arm_baselink, \
-                                                           grasp_pose, \
-                                                           obj_height, \
-                                                           self.grasp_offset_z)
-
 
                 # the sliding motion 
                 if self.en_close_pose:
@@ -429,21 +426,22 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                 if self.insertion:
                     place_pre_insertion_pose = copy.deepcopy(place_pose)
                     place_pre_insertion_pose.position.y += self.insertion_offset_y
-                    place_pre_insertion_pose2 = copy.deepcopy(place_pose2)
-                    place_pre_insertion_pose2.position.y += self.insertion_offset_y
+                    place_post_insertion_pose = copy.deepcopy(place_pose)
+                    place_post_insertion_pose.position.z += 0.02
 
+                    # place_post_insertion_pose = copy.deepcopy(place_pre_insertion_pose)
+                    # place_post_insertion_pose.position.x += 0.002
 
                 place_top_pose = copy.deepcopy(place_pose)
                 place_top_pose.position.z += self.top_offset_z
 
-                print("TTTTTTTTTTTTTTTTTTTTTTTT\n\n\n\n\n", place_pose, place_pose2)
 
                 self.blackboard.set(self.name +'/place_pose', place_pose)    
                 self.blackboard.set(self.name +'/place_top_pose', place_top_pose)
 
                 if self.insertion:
-                    print("WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW\n\n\n\n\n", place_pre_insertion_pose, place_pre_insertion_pose2)
                     self.blackboard.set(self.name +'/pre_insertion_pose', place_pre_insertion_pose)
+                    self.blackboard.set(self.name +'/post_insertion_pose', place_post_insertion_pose)
 
             self.sent_goal        = True
             self.feedback_message = "WorldModel: successful grasp pose estimation "
