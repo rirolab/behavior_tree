@@ -270,6 +270,7 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         self.blackboard.register_key(key=self.name +'/pre_insertion_pose', access=py_trees.common.Access.WRITE)
         self.blackboard.register_key(key=self.name +'/post_insertion_pose', access=py_trees.common.Access.WRITE)
         self.blackboard.register_key(key=self.name +'/observation_pose', access=py_trees.common.Access.WRITE)
+        self.blackboard.register_key(key='intermediate_pose', access=py_trees.common.Access.WRITE)
 
         self.blackboard.set(self.name +'/grasp_pose', Pose())
         self.blackboard.set(self.name +'/grasp_top_pose', Pose())
@@ -279,6 +280,7 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         self.blackboard.set(self.name +'/pre_insertion_pose', Pose())
         self.blackboard.set(self.name +'/post_insertion_pose', Pose())
         self.blackboard.set(self.name +'/observation_pose', Pose())
+        # self.blackboard.set('intermediate_pose')
 
 
     def update(self):
@@ -427,6 +429,8 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                 if self.insertion:
                     place_pre_insertion_pose = copy.deepcopy(place_pose)
                     place_pre_insertion_pose.position.y += self.insertion_offset_y
+                    place_pre_insertion_pose.position.z += 0.02
+
                     place_post_insertion_pose = copy.deepcopy(place_pose)
                     place_post_insertion_pose.position.z += 0.02
 
@@ -448,6 +452,16 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                 self.blackboard.set(self.name +'/place_top_pose', place_top_pose)
 
                 if self.insertion:
+                    if place_pose.position.x > 0.0:
+                        inter_pose = [-29, -93, 114, -185, -156, -82]
+                        inter_pose = [x * np.pi/180 for x in inter_pose]
+                        self.blackboard.set('intermediate_pose', inter_pose)
+                        pass
+                    else:
+                        inter_pose = [-297, -57, -110, 161, -110, 85]
+                        inter_pose = [x * np.pi/180 for x in inter_pose]
+                        self.blackboard.set('intermediate_pose', inter_pose)
+                        pass
                     self.blackboard.set(self.name +'/pre_insertion_pose', place_pre_insertion_pose)
                     self.blackboard.set(self.name +'/post_insertion_pose', place_post_insertion_pose)
                     self.blackboard.set(self.name +'/observation_pose', place_observation_pose)
