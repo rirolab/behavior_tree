@@ -435,8 +435,15 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                     place_post_insertion_pose.position.z += 0.02
 
                     place_observation_pose = copy.deepcopy(place_pose)
-                    place_observation_pose.position.y += 0.25
-                    place_observation_pose.position.z += 0.05
+                    place_observation_pose.position.x -= 0.1
+                    place_observation_pose.position.y += 0.3 
+                    place_observation_pose.position.z -= 0.022
+
+                    # place_observation_pose.position.z += 0.05
+                    
+                    #minjae
+                    # place_observation_pose.position.y += 0.2
+                    # place_observation_pose.position.z += 0.05
 
 
                     # place_post_insertion_pose = copy.deepcopy(place_pre_insertion_pose)
