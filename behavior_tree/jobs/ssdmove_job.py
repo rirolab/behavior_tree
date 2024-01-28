@@ -152,6 +152,7 @@ class Move(base_job.BaseJob):
         
         s_move21 = MovePose.MOVEP(name="Observe", action_client=action_client,
                                  action_goal={'pose': "Plan"+idx+"/observation_pose"})
+        fine_tune1 = WorldModel.FINETUNE_GOALS(name="FTGoal", idx=idx)
 
         s_move22 = MovePose.MOVEP(name="Approach", action_client=action_client,
                                  action_goal={'pose': "Plan"+idx+"/pre_insertion_pose"})
@@ -174,7 +175,7 @@ class Move(base_job.BaseJob):
         # place.add_children([pose_est2, s_move20, s_move21, s_move22, s_move23, s_move24, s_init3])
 
         # place.add_children([s_init4, pose_est2,  s_move22, s_move23, s_move24, s_move25, s_init5])
-        place.add_children([pose_est2, s_init_inter1, s_move22, s_move23, s_move24, s_move25, s_init5])
+        place.add_children([pose_est2, s_init_inter1, s_move21, fine_tune1, s_move22, s_move23, s_move24, s_move25, s_init5])
 
 
         task = py_trees.composites.Sequence(name="SSDMove", memory=True)
