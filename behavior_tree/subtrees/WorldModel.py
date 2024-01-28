@@ -133,6 +133,76 @@ class CAPTURE_JUKJAEHAM(py_trees.behaviour.Behaviour):
     def terminate(self, new_status):
         return
 
+class FINETUNE_GOALS(py_trees.behaviour.Behaviour):
+    def __init__(self, name, idx):
+        super(FINETUNE_GOALS, self).__init__(name=name)
+
+        self.sent_goal     = False
+        self.cmd_req       = None
+        self.idx = idx
+
+        self.blackboard = py_trees.blackboard.Client()
+        self.blackboard.register_key(key="Plan"+self.idx+'/pre_insertion_pose', access=py_trees.common.Access.READ)
+        self.blackboard.register_key(key="Plan"+self.idx+'/post_insertion_pose', access=py_trees.common.Access.READ)
+
+
+    def setup(self,
+              node: typing.Optional[rclpy.node.Node]=None,
+              timeout: float=py_trees.common.Duration.INFINITE):
+        self.node = node
+        self.feedback_message = "{}: setup".format(self.name)
+        return True
+
+    def initialise(self):
+        self.logger.debug("{0}.initialise()".format(self.__class__.__name__))
+        self.sent_goal = False
+
+    def update(self):
+        self.logger.debug("%s.update()" % self.__class__.__name__)
+
+
+        if not self.sent_goal:
+            self.sent_goal = True
+            self.feedback_message = "Fine tuning pose."
+
+            pre_ps = self.blackboard.get("Plan"+self.idx+'/pre_insertion_pose')
+            post_ps = self.blackboard.get("Plan"+self.idx+'/post_insertion_pose')
+
+            x_offset = 0
+            y_offset = 0
+            p_offset = 0.8
+
+            pre_ps = misc.pose2list(pre_ps)
+            pre_ps = misc.list_quat2list_rpy(pre_ps)
+            pre_ps[0] += x_offset
+            pre_ps[1] += y_offset
+            pre_ps[-2] += p_offset
+            pre_ps = misc.list_rpy2list_quat(pre_ps)
+            pre_ps = misc.list2Pose(pre_ps)
+    
+            post_ps = misc.pose2list(post_ps)
+            post_ps = misc.list_quat2list_rpy(post_ps)
+            post_ps[0] += x_offset
+            post_ps[1] += y_offset
+            post_ps[-2] += p_offset
+            post_ps = misc.list_rpy2list_quat(post_ps)
+            post_ps = misc.list2Pose(post_ps)
+    
+            self.blackboard.register_key(key="Plan"+self.idx+'/pre_insertion_pose', access=py_trees.common.Access.WRITE)
+            self.blackboard.register_key(key="Plan"+self.idx+'/post_insertion_pose', access=py_trees.common.Access.WRITE)
+
+            self.blackboard.set("Plan"+self.idx+'/pre_insertion_pose', pre_ps)
+            self.blackboard.set("Plan"+self.idx+'/post_insertion_pose', post_ps)
+
+
+            return py_trees.common.Status.RUNNING
+
+
+        return py_trees.common.Status.SUCCESS
+    
+    def terminate(self, new_status):
+        return
+
 
 
 class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
@@ -404,7 +474,7 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                     ## return py_trees.common.Status.FAILURE
                     
                 dst_pose = future.result().pose
-                print("DDDDDDDDDDDDDDDDDDDDDDD\n\n\n\n\n", dst_pose)
+                # print("DDDDDDDDDDDDDDDDDDDDDDD\n\n\n\n\n", dst_pose)
                 if 'destination_offset' in self.object_dict.keys():
                     offset = self.object_dict['destination_offset']
                     offset_frame = PyKDL.Frame(PyKDL.Rotation.RotZ(offset[3]),
@@ -472,6 +542,7 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                     self.blackboard.set(self.name +'/pre_insertion_pose', place_pre_insertion_pose)
                     self.blackboard.set(self.name +'/post_insertion_pose', place_post_insertion_pose)
                     self.blackboard.set(self.name +'/observation_pose', place_observation_pose)
+                    print("########################\n\n\n\n\n\n", place_pre_insertion_pose, place_post_insertion_pose)
 
             self.sent_goal        = True
             self.feedback_message = "WorldModel: successful grasp pose estimation "
