@@ -19,7 +19,8 @@ from tf2_ros import TransformException
 from geometry_msgs.msg import Pose
 from complex_action_client import misc
 from riro_srvs.srv import StringInt, StringPose, NoneString, NonePose
-
+from std_srvs.srv import Trigger
+from geometry_msgs.msg import PoseStamped
 
 class REMOVE(py_trees.behaviour.Behaviour):
     """
@@ -144,47 +145,84 @@ class FINETUNE_GOALS(py_trees.behaviour.Behaviour):
         self.blackboard = py_trees.blackboard.Client()
         self.blackboard.register_key(key="Plan"+self.idx+'/pre_insertion_pose', access=py_trees.common.Access.READ)
         self.blackboard.register_key(key="Plan"+self.idx+'/post_insertion_pose', access=py_trees.common.Access.READ)
+        
+        self.callback_group = ReentrantCallbackGroup()
 
+        self.ny_pose = None
 
     def setup(self,
               node: typing.Optional[rclpy.node.Node]=None,
               timeout: float=py_trees.common.Duration.INFINITE):
         self.node = node
         self.feedback_message = "{}: setup".format(self.name)
+
+        self.ft_srv_req = self.node.create_client(Trigger, "/get_rack_match_pose",callback_group=self.callback_group,
+                                qos_profile=rclpy.qos.qos_profile_services_default)
+        if not self.ft_srv_req.wait_for_service(timeout_sec=3.0):
+            raise exceptions.TimedOutError('[{}] service not available, waiting again...'.format("/get_rack_match_pose"))
+
+        self.match_result_sub = self.node.create_subscription(PoseStamped,'/match_result', self.match_result_callback, 10)
+
+        # self.create_subscription(PoseStamped, "/match_result", self._tm_topic_callback, 10)
+
         return True
 
+    def match_result_callback(self, msg):
+        # self.ny_pose = msg.pose
+        # print("SSSSSSS\n\n\n\n\n\n\n", msg.pose.position.x)
+        self.ny_pose = [msg.pose.position.x, msg.pose.position.y, msg.pose.position.z, msg.pose.orientation.x, msg.pose.orientation.y, msg.pose.orientation.z, msg.pose.orientation.w]
+        self.ny_pose = misc.list_quat2list_rpy(self.ny_pose)
+        
     def initialise(self):
         self.logger.debug("{0}.initialise()".format(self.__class__.__name__))
         self.sent_goal = False
+        
 
     def update(self):
         self.logger.debug("%s.update()" % self.__class__.__name__)
-
 
         if not self.sent_goal:
             self.sent_goal = True
             self.feedback_message = "Fine tuning pose."
 
+            tg = Trigger.Request()
+            # tg = TriggerRequest()
+            future = self.ft_srv_req.call_async(tg)
+            while rclpy.ok():
+                # print("WWWWWWWWW\n\n\n\n\n",future.result())
+                # if future.done() and self.is_topic_call:
+                if future.done():
+                    break
+                rclpy.spin_once(self.node, timeout_sec=0.01)
+            
+            return py_trees.common.Status.RUNNING
+
+
+        if self.ny_pose  is None:
+            return py_trees.common.Status.RUNNING
+        else:
+
             pre_ps = self.blackboard.get("Plan"+self.idx+'/pre_insertion_pose')
             post_ps = self.blackboard.get("Plan"+self.idx+'/post_insertion_pose')
 
-            x_offset = 0
-            y_offset = 0
-            p_offset = 0.8
-
             pre_ps = misc.pose2list(pre_ps)
             pre_ps = misc.list_quat2list_rpy(pre_ps)
-            pre_ps[0] += x_offset
-            pre_ps[1] += y_offset
-            pre_ps[-2] += p_offset
+            post_ps = misc.pose2list(post_ps)
+            post_ps = misc.list_quat2list_rpy(post_ps)
+
+            print("NYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY\n\n\n\n\n\n\n\n", self.ny_pose[0], self.ny_pose[1], self.ny_pose[-1])
+            pre_ps[0] += self.ny_pose[0]
+            pre_ps[2] += self.ny_pose[1]
+            pre_ps[-2] -= self.ny_pose[-1]
+            # pre_ps[-2] += 0.8
+            
             pre_ps = misc.list_rpy2list_quat(pre_ps)
             pre_ps = misc.list2Pose(pre_ps)
     
-            post_ps = misc.pose2list(post_ps)
-            post_ps = misc.list_quat2list_rpy(post_ps)
-            post_ps[0] += x_offset
-            post_ps[1] += y_offset
-            post_ps[-2] += p_offset
+            post_ps[0] += self.ny_pose[0]
+            post_ps[2] += self.ny_pose[1]
+            post_ps[-2] -= self.ny_pose[-1]
+            # post_ps[-2] += 0.8
             post_ps = misc.list_rpy2list_quat(post_ps)
             post_ps = misc.list2Pose(post_ps)
     
@@ -194,15 +232,28 @@ class FINETUNE_GOALS(py_trees.behaviour.Behaviour):
             self.blackboard.set("Plan"+self.idx+'/pre_insertion_pose', pre_ps)
             self.blackboard.set("Plan"+self.idx+'/post_insertion_pose', post_ps)
 
-
-            return py_trees.common.Status.RUNNING
-
-
         return py_trees.common.Status.SUCCESS
     
     def terminate(self, new_status):
         return
 
+    # def _tm_topic_callback(self, msg):
+        
+    #     self.get_logger().info('msg type: %s'%type(msg))
+        
+    #     offset_list = [msg.pose.posotion.x, msg.pose.posotion.y, msg.pose.posotion.z, msg.pose.orientation.x, msg.pose.orientation.y, msg.pose.orientation.z, msg.pose.orientation.w]
+    #     offset_list = misc.list_quat2list_rpy(offset_list)
+    #     print("SSSSSSSIDIDIDIDID\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n", offset_list)
+        
+        
+    #     self.x_offset = msg.pose.position.x
+    #     self.y_offset = msg.pose.posotion.y
+        
+    #     self.p_offset = offset_list[-2]
+        
+    #     self.is_topic_call = True
+        
+    #     return
 
 
 class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
@@ -499,15 +550,17 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                 if self.insertion:
                     place_pre_insertion_pose = copy.deepcopy(place_pose)
                     place_pre_insertion_pose.position.y += self.insertion_offset_y
-                    place_pre_insertion_pose.position.z += 0.02
+                    place_pre_insertion_pose.position.z += 0.0335
 
                     place_post_insertion_pose = copy.deepcopy(place_pose)
-                    place_post_insertion_pose.position.z += 0.02
+                    place_post_insertion_pose.position.z += 0.0335
+                    place_post_insertion_pose.position.y += 0.015
+
 
                     place_observation_pose = copy.deepcopy(place_pose)
-                    place_observation_pose.position.x -= 0.1
-                    place_observation_pose.position.y += 0.3 
-                    place_observation_pose.position.z -= 0.022
+                    place_observation_pose.position.x -= 0.05
+                    place_observation_pose.position.y += 0.25 
+                    place_observation_pose.position.z -= 0.02
 
                     # place_observation_pose.position.z += 0.05
                     
