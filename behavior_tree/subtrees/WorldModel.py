@@ -588,7 +588,9 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                         self.blackboard.set('intermediate_pose', inter_pose)
                         pass
                     else:
-                        inter_pose = [-297, -57, -110, 161, -110, 85]
+                        ## inter pose that has collision
+                        # inter_pose = [-297, -57, -110, 161, -110, 85]
+                        inter_pose = [-134,-131,133,-173,-47,-100]
                         inter_pose = [x * np.pi/180 for x in inter_pose]
                         self.blackboard.set('intermediate_pose', inter_pose)
                         pass
