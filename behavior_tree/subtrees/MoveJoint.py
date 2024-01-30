@@ -91,24 +91,25 @@ class MOVEJ_FIT(Move.MOVE):
     command to the robot if it is cancelled or interrupted by a higher
     priority behaviour.
     """
-    def __init__(self, name, action_client, action_goal=None):
+    def __init__(self, name, action_client, idx, action_goal=None):
         super(MOVEJ_FIT, self).__init__(name=name,
                                    action_client=action_client,
                                    action_goal=action_goal)
         self.logger.debug("%s.__init__()" % self.__class__.__name__)
         
-        self.blackboard.register_key(key='intermediate_pose', access=py_trees.common.Access.READ)
+        self.idx = idx
+        self.blackboard.register_key(key='intermediate_pose_' + self.idx, access=py_trees.common.Access.READ)
         # print("DFQFEQWFQFQ!!!!\n\n\n\n\n\n\n", self.blackboard.intermediate_pose)
         # self.action_goal = self.blackboard.intermediate_pose
 
     def initialise(self):
-        self.action_goal = self.blackboard.intermediate_pose
+        # self.action_goal = self.blackboard.intermediate_pose
+        self.action_goal = self.blackboard.get('intermediate_pose_' + self.idx)
+
+        print("^^^^^^^^^^^^^^^^^^^^^^^^\n\n\n\n\n\n\n\n\n\n", self.blackboard.get('intermediate_pose_' + self.idx))
 
     def update(self):
         self.logger.debug("%s.update()" % self.__class__.__name__)
-
-        # print("DFQFEQWFQFQ!!!!\n\n\n\n\n\n\n", self.blackboard.intermediate_pose)
-        # self.action_goal = self.blackboard.intermediate_pose
 
         if self.cmd_req is None:
             self.feedback_message = \

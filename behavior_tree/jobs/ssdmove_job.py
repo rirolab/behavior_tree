@@ -132,7 +132,7 @@ class Move(base_job.BaseJob):
                                 action_goal=blackboard.gripper_close_pos,
                                 force=blackboard.gripper_close_force,
                                 timeout=5)        
-        s_move15 = MovePose.MOVEP(name="Top",
+        s_move15 = MovePose.MOVES(name="Top",
                                   action_client=action_client,
                                   action_goal={'pose': "Plan"+idx+"/grasp_top_pose"})
 
@@ -147,9 +147,13 @@ class Move(base_job.BaseJob):
                                                              'destination': destination}, find_empty_loader=True, insertion=True,
                                               tf_buffer=kwargs['tf_buffer'])
         
-        s_init_inter1 = MoveJoint.MOVEJ_FIT(name="Inter", action_client=action_client,
-                                  action_goal=None)
+        s_init_inter1 = MoveJoint.MOVEJ_FIT(name="Inter1", action_client=action_client, idx="1", action_goal=None)
+        s_init_inter2 = MoveJoint.MOVEJ_FIT(name="Inter2", action_client=action_client, idx="2", action_goal=None)
         
+        s_init_inter3 = MoveJoint.MOVEJ_FIT(name="Inter1", action_client=action_client, idx="1", action_goal=None)
+        s_init_inter4 = MoveJoint.MOVEJ_FIT(name="Inter2", action_client=action_client, idx="2", action_goal=None)
+
+
         s_move21 = MovePose.MOVEP(name="Observe", action_client=action_client,
                                  action_goal={'pose': "Plan"+idx+"/observation_pose"})
         fine_tune1 = WorldModel.FINETUNE_GOALS(name="FTGoal", idx=idx)
@@ -178,16 +182,16 @@ class Move(base_job.BaseJob):
         # place.add_children([s_init4, pose_est2,  s_move22, s_move23, s_move24, s_move25, s_init5])
 
         # place.add_children([pose_est2, s_init_inter1,s_move22,  s_move23, s_move24, s_move25, s_init5])
-        place.add_children([pose_est2, s_init_inter1,s_move22,  s_move23])
+        # place.add_children([pose_est2, s_init_inter1,s_move22,  s_move23])
     
         # place.add_children([pose_est2, s_init_inter1, s_move21, fine_tune1, s_move22, s_move23])
         
         #MJ
-        # place.add_children([pose_est2, s_init_inter1, s_move21, fine_tune1, s_move22, s_move23, s_move24, s_move25, s_init5])
-
+        # place.add_children([pose_est2, s_init_inter1, s_init_inter2, s_move21, fine_tune1, s_move22, s_move23, s_move24, s_move25, s_init5])
+        place.add_children([pose_est2, s_init_inter1, s_init_inter2, s_move21, fine_tune1, s_move22, s_move23, s_move24, s_move25, s_init_inter4, s_init_inter3, s_init5])
 
         #JE 
-        place.add_children([pose_est2, s_init_inter1,s_move22, s_move21])
+        # place.add_children([pose_est2, s_init_inter2, s_move22])
 
         
         task = py_trees.composites.Sequence(name="SSDMove", memory=True)
