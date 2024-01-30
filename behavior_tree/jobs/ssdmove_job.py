@@ -175,7 +175,8 @@ class Move(base_job.BaseJob):
         # place.add_children([pose_est2, s_move20, s_move21, s_move22, s_move23, s_move24, s_init3])
 
         # place.add_children([s_init4, pose_est2,  s_move22, s_move23, s_move24, s_move25, s_init5])
-        place.add_children([pose_est2, s_init_inter1, s_move21, fine_tune1, s_move22, s_move23, s_move24, s_move25, s_init5])
+        # place.add_children([pose_est2, s_init_inter1,s_move22,  s_move23, s_move24, s_move25, s_init5])
+        place.add_children([pose_est2, s_init_inter1,s_move22,  s_move23])
 
 
         task = py_trees.composites.Sequence(name="SSDMove", memory=True)
