@@ -166,7 +166,7 @@ class Move(base_job.BaseJob):
                                  action_goal={'pose': "Plan"+idx+"/post_insertion_pose"})
 
         s_move24 = Gripper.GOTO(name="Open", action_client=action_client,
-                                action_goal=blackboard.gripper_open_pos,
+                                action_goal=0.0,
                                 force=blackboard.gripper_open_force,
                                 timeout=1)        
         # s_move25 = MovePose.MOVEP(name="Approach", action_client=action_client,
