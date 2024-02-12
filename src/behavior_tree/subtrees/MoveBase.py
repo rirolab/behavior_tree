@@ -203,7 +203,7 @@ class MOVEBCOLLAB(py_trees.behaviour.Behaviour):
 
         self._drive_status_update_srv_channel = "/update_robot_drive_state"
         self._spot_cmd_vel = "/spot/cmd_vel"
-        self._spot2haetae_cmd_vel = "sibal/cmd_vel"
+        self._spot2haetae_cmd_vel = "collab/cmd_vel"
 
         if (destination == "placing_shelf1") or (destination == "placing_shelf2"):
             self.destination = destination
@@ -217,7 +217,6 @@ class MOVEBCOLLAB(py_trees.behaviour.Behaviour):
         self._arrival_state_udpate_srv_channel = "/update_arrival_state"
         self._arrival_state_delete_srv_channel = '/delete_arrival_state'
 
-        # self._local_planner = rospy.get_param("local_planner", "sibals")
         self._local_planner = "TebLocalPlannerROS"
         self._prev_params = None
 
@@ -738,7 +737,7 @@ class TOUCHB(py_trees.behaviour.Behaviour):
         self.sent_goal   = False
         self.collab = collab
         self._world_frame_id = rospy.get_param("/world_frame", 'map')
-        self._local_planner = rospy.get_param("local_planner", "sibals")
+        self._local_planner = rospy.get_param("local_planner", "local_planner")
         self._prev_params = dict()
         self.cmd_req     = None
         self.idx = idx
@@ -928,7 +927,7 @@ class TOUCHCOLLAB(py_trees.behaviour.Behaviour):
         # self.controller_ns = controller_ns
         self.mode = action_goal['mode']
         self.sent_goal   = False
-        self._local_planner = rospy.get_param("local_planner", "sibals")
+        self._local_planner = rospy.get_param("local_planner", "local_planner")
         self._start_params = {'xy_goal_tolerance':0.01, 'yaw_goal_tolerance':0.01,'min_obstacle_dist':0.01}
         self._end_params = {'xy_goal_tolerance':0.3, 'yaw_goal_tolerance':0.2,'min_obstacle_dist':0.2}
         self.idx = idx
