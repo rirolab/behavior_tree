@@ -202,90 +202,6 @@ class SplinteredReality(object):
             self.current_job = task.children[0].name
         return
 
-                
-            # elif self.busy() and goal is not None and False:
-            #     # Todo find the node by name
-            #     is_task_node = False
-            #     for task_node in self.priorities.iterate():
-            #         if task_node.name == 'Task':
-            #             is_task_node = True
-            #             break
-            #     if is_task_node is False:
-            #         rospy.logerr("No Task Node")
-                
-            #     ## task = self.priorities.children[0].children[-1].children[-1]
-            #     ## if task.name is not 'Task':
-            #     ##     rospy.logerr("Tree name does not match")
-            #     ## from IPython import embed; embed(); sys.exit()
-                
-            #     # Check from the last goal
-            #     for idx in range(1,len(goal)+1):
-            #         if "action" not in list(goal[str(len(goal)-idx+1)].keys()) and \
-            #         "primitive_action" in list(goal[str(len(goal)-idx+1)].keys()):
-            #             goal[str(len(goal)-idx+1)]["action"] = goal[str(len(goal)-idx+1)]["primitive_action"]
-                    
-            #         print("Check: {}th plan".format(str(len(goal)-idx)), \
-            #         goal[str(len(goal)-idx+1)]["action"])
-                    
-            #         if len(task_node.children) >= idx and \
-            #         task_node.children[-idx].name == goal[str(len(goal)-idx+1)]["action"]:
-            #             rospy.loginfo("{0}: passing to set up".format(len(goal)-idx+1))
-            #             continue
-
-            #         # check if there are removable plans
-            #         is_rm_plan = False                
-            #         for i in range(idx+1,len(task_node.children)+1):
-            #             if task_node.children[-i].name == goal[str(len(goal)-idx+1)]["action"]:
-            #                 is_rm_plan = True
-            #                 break
-
-            #         if is_rm_plan:
-            #             blackboard = py_trees.Blackboard()
-            #             edges      = blackboard.get('edges')
-            #             if edges is None: edges = []
-                            
-            #             for j in range(idx,i)[::-1]:
-            #                 # remove the name from the known edge set
-            #                 cur_edge = eval(task_node.children[-j].name)
-            #                 edges.remove(cur_edge)
-            #                 task_node.remove_child_by_id(task_node.children[-j].id)
-            #             blackboard.edges = edges
-            #         else:
-            #             for job in self.jobs:
-            #                 # job.goal contains current goal json message.
-            #                 if job.goal is not None:
-
-            #                     job_root = job.create_root(str( len(goal)-idx+1 ), job.goal,
-            #                                             self.controller_ns)
-            #                     if job_root is None:
-            #                         continue
-            #                     rospy.loginfo("{0}: running to set up".format(len(goal)-idx+1))
-            #                     if not job_root.setup(timeout=15):
-            #                         rospy.logerr("{0}: failed to setup".format(len(goal)-idx+1))
-            #                         continue
-            #                     ## from IPython import embed; embed(); sys.exit()
-            #                     task_node.insert_child(job_root, len(task_node.children)-idx+1)
-            #                     break
-
-            #         # remove old plans
-            #         if len(task_node.children)>len(goal):
-            #             blackboard = py_trees.Blackboard()
-            #             edges      = blackboard.get('edges')
-            #             if edges is None: edges = []
-                        
-            #             for i in range(len(task_node.children)-len(goal))[::-1]:
-            #                 cur_edge = eval(task_node.children[i].name)
-            #                 edges.remove(cur_edge)
-            #                 task_node.remove_child_by_id(task_node.children[i].id)
-            #             blackboard.edges = edges
-                            
-                # # Reset goals
-                # for job in self.jobs:
-                #     job.goal = None
-                # self.current_job = job
-                # return 
-                
-                    
 
     def post_tick_handler(self, tree):
         """
@@ -305,15 +221,7 @@ class SplinteredReality(object):
                 
                 tree.prune_subtree(job.id)
                 self.current_job = None
-                
-        ## # publish a status report
-        ## if self.busy():
-        ##     job = self.priorities.children[-2]
-        ##     self.report_publisher.publish(self.current_job.create_report_string(job))
-        ## elif tree.tip().has_parent_with_name("Battery Emergency"):
-        ##     self.report_publisher.publish("battery")
-        ## else:
-            ## self.report_publisher.publish("idle")
+
     def idle(self):
         return len(self.priorities.children) == 1
 
@@ -384,15 +292,6 @@ if __name__ == '__main__':
     jobs = []
     if opt.robot == 'manip':
         jobs = [
-                # 'jobs.pick_job.Move',
-                # 'jobs.place_job.Move',
-                # 'jobs.move_job.Move',
-                # 'jobs.gripper_job.Move',
-                # 'jobs.load_job.Move',
-                # 'jobs.unload_job.Move',
-                # 'jobs.collabload_job.Move',
-                # 'jobs.collabunload_job.Move',
-                # 'jobs.wait_drive_job.Move',
                 'jobs.delivery_job.Move',
                 'jobs.home_job.Move',
                 'jobs.drive_job.Move',
@@ -403,9 +302,7 @@ if __name__ == '__main__':
     elif opt.robot == 'quad':
         jobs = ['jobs.drive_job.Move',
                 'jobs.spot_delivery_job.Move',
-                # 'jobs.wait_spot_drive_job.Move',
                 'jobs.home_job.Move',
-                # 'jobs.collabspot_drive_job.Move',
                 'jobs.collabspot_delivery_job.Move'
                 ]
         
