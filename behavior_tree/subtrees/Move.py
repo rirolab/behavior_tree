@@ -18,7 +18,7 @@ class MOVE(py_trees.behaviour.Behaviour):
     priority behaviour.
     """
 
-    def __init__(self, name, action_client, action_goal=None):
+    def __init__(self, name, action_client, action_goal=None, timeout=3):
         super(MOVE, self).__init__(name=name)
 
         self.arm           = None
@@ -28,6 +28,7 @@ class MOVE(py_trees.behaviour.Behaviour):
         self.goal_uuid_des = None
         ## self.goal_id       = None
         ## self.goal_status   = None
+        self.timeout       = timeout
 
         self.blackboard = self.attach_blackboard_client(name=self.name)
         ## self.blackboard = py_trees.blackboard.Client()
