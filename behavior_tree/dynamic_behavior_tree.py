@@ -438,6 +438,8 @@ def main(args=None):
                                                  'jobs.gripper_job.Move',
                                                  'jobs.observe_job.Move',
                                                  'jobs.ssdmove_job.Move',
+                                                 'jobs.ssdremove_job.Move',
+                                                 'jobs.ssdreinsert_job.Move',
                                                  ## ## 'jobs.slide_job.Move',
                                                  ## ## 'jobs.attach_job.Move',
                                                  ## ## 'jobs.touch_job.Move'
