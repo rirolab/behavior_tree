@@ -150,7 +150,7 @@ class Move(base_job.BaseJob):
         s_move22 = MovePose.MOVES(name="Approach", action_client=action_client,
                                  action_goal={'pose': "Plan"+idx+"/pre_insertion_pose"})
         s_move23 = Gripper.GOTO(name="Open", action_client=action_client,
-                                action_goal=0.3,
+                                action_goal=0.2,
                                 force=blackboard.gripper_open_force,
                                 timeout=1)     
         s_move24 = MovePose.MOVES(name="CloseApproach", action_client=action_client,
@@ -158,7 +158,7 @@ class Move(base_job.BaseJob):
                                   timeout=5.)
         s_move25 = Gripper.GOTO(name="Close",
                                 action_client=action_client,
-                                action_goal=0.55,
+                                action_goal=0.57,
                                 force=blackboard.gripper_close_force,
                                 timeout=7)     
         s_move26 = MovePose.MOVES(name="Approach", action_client=action_client,
