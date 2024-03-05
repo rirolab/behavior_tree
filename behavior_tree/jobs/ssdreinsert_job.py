@@ -42,7 +42,7 @@ class Move(base_job.BaseJob):
         if type(self.blackboard.init_config) is str:
             self.blackboard.init_config = eval(self.blackboard.init_config)
 
-            
+
     def incoming(self, msg):
         """
         Incoming goal callback.

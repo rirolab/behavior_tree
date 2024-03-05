@@ -146,7 +146,7 @@ class Move(base_job.BaseJob):
 
         s_move21 = MovePose.MOVES(name="Observe", action_client=action_client,
                                  action_goal={'pose': "Plan"+idx+"/observation_pose"})
-        fine_tune1 = WorldModel.FINETUNE_GOALS(name="FTGoal", idx=idx)
+        fine_tune1 = WorldModel.FINETUNE_GOALS(name="FTGoal", idx=idx, is_loaded = True)
         s_move22 = MovePose.MOVES(name="Approach", action_client=action_client,
                                  action_goal={'pose': "Plan"+idx+"/pre_insertion_pose"})
         s_move23 = Gripper.GOTO(name="Open", action_client=action_client,
@@ -160,7 +160,7 @@ class Move(base_job.BaseJob):
                                 action_client=action_client,
                                 action_goal=0.57,
                                 force=blackboard.gripper_close_force,
-                                timeout=7)     
+                                timeout=9)     
         s_move26 = MovePose.MOVES(name="Approach", action_client=action_client,
                                  action_goal={'pose': "Plan"+idx+"/pre_insertion_pose"})
 
