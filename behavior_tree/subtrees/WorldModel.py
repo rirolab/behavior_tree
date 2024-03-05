@@ -14,7 +14,7 @@ from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 
 from tf2_ros import TransformException
 
-
+import os
 
 from geometry_msgs.msg import Pose
 from complex_action_client import misc
@@ -135,12 +135,13 @@ class CAPTURE_JUKJAEHAM(py_trees.behaviour.Behaviour):
         return
 
 class FINETUNE_GOALS(py_trees.behaviour.Behaviour):
-    def __init__(self, name, idx):
+    def __init__(self, name, idx, is_loaded):
         super(FINETUNE_GOALS, self).__init__(name=name)
 
         self.sent_goal     = False
         self.cmd_req       = None
         self.idx = idx
+        self.is_loaded = is_loaded
 
         self.blackboard = py_trees.blackboard.Client()
         self.blackboard.register_key(key="Plan"+self.idx+'/pre_insertion_pose', access=py_trees.common.Access.READ)
@@ -177,6 +178,15 @@ class FINETUNE_GOALS(py_trees.behaviour.Behaviour):
         self.logger.debug("{0}.initialise()".format(self.__class__.__name__))
         self.sent_goal = False
         
+        # if self.is_loaded == True:
+        #     template_file = os.getcwd()+ '/tmp_mj.png'
+        #     self.node.set_parameter("template_path", template_file)
+
+        # else:
+        #     template_file = os.getcwd()+ '/src/sandbox/template_matching/template.png'
+        #     self.node.set_parameter("template_path", template_file)
+
+
 
     def update(self):
         self.logger.debug("%s.update()" % self.__class__.__name__)
@@ -594,7 +604,7 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                     place_pre_insertion_pose.position.z += 0.028
 
                     place_post_insertion_pose = copy.deepcopy(place_pose)
-                    place_post_insertion_pose.position.z += 0.028
+                    place_post_insertion_pose.position.z += 0.026
                     place_post_insertion_pose.position.y += 0.028
 
 
