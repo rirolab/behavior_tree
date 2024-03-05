@@ -266,7 +266,7 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
     priority behaviour.
     """
 
-    def __init__(self, name, object_dict=None, en_random=False, en_close_pose=False, find_empty=False, find_empty_loader=False, insertion=False,
+    def __init__(self, name, object_dict=None, en_random=False, en_close_pose=False, find_empty=False, find_empty2=False, find_empty_loader=False, insertion=False, find_loaded_loader=False,
                     **kwargs):
         super(POSE_ESTIMATOR, self).__init__(name=name)
 
@@ -279,8 +279,13 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         self.tf_buffer     = kwargs['tf_buffer']
 
         self.find_empty = find_empty
+        self.find_empty2 = find_empty2
+
         self.find_empty_loader = find_empty_loader
-        self.insertion = insertion
+        self.find_loaded_loader = find_loaded_loader
+
+        self.insertion = insertion ## wether this POSE_ESTIMATION returns "observation_pose", "intermediate_pose", ...
+
 
     def setup(self,
               node: typing.Optional[rclpy.node.Node]=None,
@@ -296,7 +301,10 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         self._close_pose_srv_channel = self.node.get_parameter("close_pose_srv_channel").get_parameter_value().string_value
         
         self._jukjaeham_empty_pose_channel = "/get_jukjaeham_pose"
+        self._jukjaeham_empty_pose_channel2 = "/get_jukjaeham_pose2"
+
         self._loader_empty_pose_channel = "/get_loader_empty_pose"
+        self._loader_loaded_pose_channel = "/get_loader_loaded_pose"
 
         self._world_frame    = self.node.get_parameter("world_frame").get_parameter_value().string_value
         self._arm_base_frame = self.node.get_parameter("arm_base_frame").get_parameter_value().string_value
@@ -348,12 +356,26 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         if not self.jukjaeham_pose_srv_req.wait_for_service(timeout_sec=3.0):
             raise exceptions.TimedOutError('[{}] service not available, waiting again...'.format(self._jukjaeham_empty_pose_channel))
 
+        self.jukjaeham_pose_srv_req2 = self.node.create_client(StringPose, \
+                                            self._jukjaeham_empty_pose_channel2,
+                                            callback_group=self.callback_group,
+                                            qos_profile=rclpy.qos.qos_profile_services_default)
+        if not self.jukjaeham_pose_srv_req2.wait_for_service(timeout_sec=3.0):
+            raise exceptions.TimedOutError('[{}] service not available, waiting again...'.format(self._jukjaeham_empty_pose_channel2))
+
         self.loader_pose_srv_req = self.node.create_client(NonePose, \
                                             self._loader_empty_pose_channel,
                                             callback_group=self.callback_group,
                                             qos_profile=rclpy.qos.qos_profile_services_default)
         if not self.loader_pose_srv_req.wait_for_service(timeout_sec=10.0):
             raise exceptions.TimedOutError('[{}] service not available, waiting again...'.format(self._loader_empty_pose_channel))
+
+        self.loader_loaded_pose_srv_req = self.node.create_client(NonePose, \
+                                            self._loader_loaded_pose_channel,
+                                            callback_group=self.callback_group,
+                                            qos_profile=rclpy.qos.qos_profile_services_default)
+        if not self.loader_loaded_pose_srv_req.wait_for_service(timeout_sec=10.0):
+            raise exceptions.TimedOutError('[{}] service not available, waiting again...'.format(self._loader_loaded_pose_channel))
 
         # print("&&&&&&&&&&&&&&&&&&777&&&&&\n\n\n\n\n\n", self.loader_pose_srv_req)
         # raise NotImplementedError()
@@ -429,6 +451,20 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                 except Exception as e:
                     self.feedback_message = "Pose Service is not available2: %s"%e
                     return py_trees.common.Status.FAILURE
+            elif self.find_empty2 == True:
+                try:
+                    future = self.jukjaeham_pose_srv_req2.call_async(req)
+
+                    while rclpy.ok():
+                        if future.done():
+                            break
+                        rclpy.spin_once(self.node, timeout_sec=0.05)
+                        ## time.sleep(0.05)
+                    
+                    obj_pose = future.result().pose
+                except Exception as e:
+                    self.feedback_message = "Pose Service is not available2: %s"%e
+                    return py_trees.common.Status.FAILURE                
             else:
                 try:
                     future = self.grasp_pose_srv_req.call_async(req)
@@ -512,6 +548,10 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                     assert self.object_dict['destination'] == 'test_ssd_loader_renewal'
                     req = NonePose.Request()
                     future = self.loader_pose_srv_req.call_async(req)
+                elif self.find_loaded_loader:
+                    assert self.object_dict['destination'] == 'test_ssd_loader_renewal'
+                    req = NonePose.Request()
+                    future = self.loader_loaded_pose_srv_req.call_async(req)
                 else:
                     req      = StringPose.Request(data=destination)
                     future = self.pose_srv_req.call_async(req)
@@ -555,7 +595,7 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
 
                     place_post_insertion_pose = copy.deepcopy(place_pose)
                     place_post_insertion_pose.position.z += 0.028
-                    place_post_insertion_pose.position.y += 0.015
+                    place_post_insertion_pose.position.y += 0.028
 
 
                     place_observation_pose = copy.deepcopy(place_pose)
