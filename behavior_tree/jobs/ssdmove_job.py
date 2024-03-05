@@ -175,12 +175,8 @@ class Move(base_job.BaseJob):
         place = py_trees.composites.Sequence(name="MovePlace", memory=True)
         
         #MJ
-<<<<<<< HEAD
-        place.add_children([pose_est2, s_init_inter1, s_init_inter2, s_move21, fine_tune1, s_move22, s_move23, s_move24, s_move25, s_init5])
-        # place.add_children([s_init6, pose_est2, s_init_inter1, s_init_inter2, s_move21, fine_tune1, s_move22, s_move23, s_move24, s_move25, s_init_inter4, s_init_inter3, s_init7])
-=======
         place.add_children([s_init6, pose_est2, s_init_inter1, s_init_inter2, s_move21, fine_tune1, s_move22, s_move23, s_move24, s_move25, s_init_inter4, s_init_inter3, s_init7])
->>>>>>> origin/minjae/5_foxy
+        # place.add_children([pose_est2, s_init_inter1, s_init_inter2, s_move21, fine_tune1, s_move22, s_move23, s_move24, s_move25, s_init5])
 
         #JE 
         # place.add_children([pose_est2, s_init_inter2, s_move22])
