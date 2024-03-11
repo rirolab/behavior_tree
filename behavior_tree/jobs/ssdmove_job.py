@@ -124,11 +124,12 @@ class Move(base_job.BaseJob):
                                   action_client=action_client,
                                   action_goal={'pose': "Plan"+idx+"/grasp_pose"},
                                   timeout=5.)
+        attach = WorldModel.ATTACH_DETACH(name="Attach", is_attach=True)
         s_move14 = Gripper.GOTO(name="Close",
                                 action_client=action_client,
-                                action_goal=blackboard.gripper_close_pos,
+                                action_goal=blackboard.gripper_open_pos,
                                 force=blackboard.gripper_close_force,
-                                timeout=7)        
+                                timeout=7)
         s_move15 = MovePose.MOVES(name="Top",
                                   action_client=action_client,
                                   action_goal={'pose': "Plan"+idx+"/grasp_top_pose"},
@@ -136,7 +137,7 @@ class Move(base_job.BaseJob):
 
         pick = py_trees.composites.Sequence(name="SSDMovePick", memory=True)
         # pick.add_children([s_init5, pose_est1, s_move10, s_move11, s_move12, s_move13, s_move14, s_move15])
-        pick.add_children([s_init5, pose_est1, s_move11, s_move12, s_move13, s_move14, s_move15])
+        pick.add_children([s_init5, pose_est1, s_move11, s_move12, s_move13, attach, s_move14, s_move15])
 
 
         # ----------------- Place ---------------------
@@ -167,7 +168,8 @@ class Move(base_job.BaseJob):
         s_move24 = Gripper.GOTO(name="Open", action_client=action_client,
                                 action_goal=0.0,
                                 force=blackboard.gripper_open_force,
-                                timeout=1)        
+                                timeout=1)   
+        detach = WorldModel.ATTACH_DETACH(name="Detach", is_attach=False)
         s_move25 = MovePose.MOVES(name="Approach", action_client=action_client,
                                  action_goal={'pose': "Plan"+idx+"/pre_insertion_pose"})
 
@@ -175,7 +177,7 @@ class Move(base_job.BaseJob):
         place = py_trees.composites.Sequence(name="MovePlace", memory=True)
         
         #MJ
-        place.add_children([s_init6, pose_est2, s_init_inter1, s_init_inter2, s_move21, fine_tune1, s_move22, s_move23, s_move24, s_move25, s_init_inter4, s_init_inter3, s_init7])
+        place.add_children([s_init6, pose_est2, s_init_inter1, s_init_inter2, s_move21, fine_tune1, s_move22, s_move23, s_move24,detach, s_move25, s_init_inter4, s_init_inter3, s_init7])
 
         #JE 
         # place.add_children([pose_est2, s_init_inter2, s_move22])

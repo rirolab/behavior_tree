@@ -23,6 +23,11 @@ class ToBlackboard(subscribers.ToBlackboard):
         self.blackboard.register_key(key="grnd_msg", access=py_trees.common.Access.READ)        
         self.blackboard.stop_cmd = False
 
+        self.blackboard.register_key(key="loader_lib", access=py_trees.common.Access.WRITE)
+        self.blackboard.register_key(key="loader_lib", access=py_trees.common.Access.READ)
+        loader_lib = {}
+        self.blackboard.set('loader_lib', loader_lib)
+
 
     def update(self) -> py_trees.common.Status:
         """

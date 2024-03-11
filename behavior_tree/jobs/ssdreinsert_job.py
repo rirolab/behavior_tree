@@ -111,7 +111,8 @@ class Move(base_job.BaseJob):
                                 action_client=action_client,
                                 action_goal=0.43,
                                 force=blackboard.gripper_open_force,
-                                timeout=1)        
+                                timeout=1)     
+        detach = WorldModel.ATTACH_DETACH(name="Detach", is_attach=False)   
         s_move12 = MovePose.MOVES(name="Approach",
                                   action_client=action_client,
                                   action_goal={'pose': "Plan"+idx+"/grasp_pose"},
@@ -128,7 +129,7 @@ class Move(base_job.BaseJob):
 
         pick = py_trees.composites.Sequence(name="SSDReInsert", memory=True)
         # pick.add_children([s_init5, pose_est1, s_move10, s_move11, s_move12, s_move13, s_move14, s_move15])
-        pick.add_children([s_init5, pose_est1, s_move11, s_move12, s_move13, s_move14])
+        pick.add_children([s_init5, pose_est1, s_move11, s_move12, s_move13, detach, s_move14])
 
         task = py_trees.composites.Sequence(name="SSDReInsert", memory=True)
         
