@@ -124,12 +124,12 @@ class Move(base_job.BaseJob):
                                 timeout=1)     
         s_move24 = MovePose.MOVES(name="CloseApproach", action_client=action_client,
                                   action_goal={'pose': "Plan"+idx+"/post_insertion_pose"},
-                                  timeout=5.)
+                                  timeout=3.)
         s_move25 = Gripper.GOTO(name="Close",
                                 action_client=action_client,
                                 action_goal=0.44,
                                 force=blackboard.gripper_close_force,
-                                timeout=5)
+                                timeout=3)
         attach = WorldModel.ATTACH_DETACH(name="Attach", is_attach=True)
         s_move26 = MovePose.MOVES(name="Approach", action_client=action_client,
                                  action_goal={'pose': "Plan"+idx+"/pre_insertion_pose"})

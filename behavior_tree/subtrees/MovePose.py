@@ -117,7 +117,7 @@ class MOVES(Move.MOVE):
     priority behaviour.
     """
 
-    def __init__(self, name, action_client, action_goal=None, timeout=3.):
+    def __init__(self, name, action_client, action_goal=None, timeout=1.):
         super(MOVES, self).__init__(name=name,
                                    action_client=action_client,
                                     action_goal=action_goal,
