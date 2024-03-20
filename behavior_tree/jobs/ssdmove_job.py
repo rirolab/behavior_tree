@@ -127,7 +127,7 @@ class Move(base_job.BaseJob):
         attach = WorldModel.ATTACH_DETACH(name="Attach", is_attach=True)
         s_move14 = Gripper.GOTO(name="Close",
                                 action_client=action_client,
-                                action_goal=blackboard.gripper_open_pos,
+                                action_goal=blackboard.gripper_close_pos,
                                 force=blackboard.gripper_close_force,
                                 timeout=5)
         s_move15 = MovePose.MOVES(name="Top",
@@ -137,7 +137,9 @@ class Move(base_job.BaseJob):
 
         pick = py_trees.composites.Sequence(name="SSDMovePick", memory=True)
         # pick.add_children([s_init5, pose_est1, s_move10, s_move11, s_move12, s_move13, s_move14, s_move15])
-        pick.add_children([s_init5, pose_est1, s_move11, s_move12, s_move13, attach, s_move14, s_move15])
+
+        # pick.add_children([s_init5, pose_est1, s_move11, s_move12, s_move13, attach, s_move14, s_move15])
+        pick.add_children([s_init5, pose_est1, s_move11, s_move12, s_move13, s_move14, attach, s_move15])
 
 
         # ----------------- Place ---------------------
