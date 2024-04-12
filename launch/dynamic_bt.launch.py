@@ -12,12 +12,29 @@ import xacro
 import yaml
 
 def generate_launch_description():
+    print("Select either simulation or real setup:")
+    sim = True
+    while (sim == True):
+        print("     + Option N1: UR5 ROBOT (REAL).")
+        print("     + Option N2: UR5 ROBOT (SIMULATION).")
+        robot_config = input ("  Please select: ")
+        if (robot_config == "1"):
+            sim = False
+        elif (robot_config == "2"):
+            sim = True
+        else:
+            print ("  Please select a valid option!")
+    print("")
 
     # Get the launch directory
     bt_dir = get_package_share_directory('behavior_tree')
 
-    params_file=os.path.join(
-        bt_dir, 'params', 'default.yaml')
+    if sim:
+        params_file=os.path.join(
+            bt_dir, 'params', 'default.yaml')
+    else:
+        params_file=os.path.join(
+            bt_dir, 'params', 'real_default.yaml')
 
     bt_node = Node(
         name="tree",

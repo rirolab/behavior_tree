@@ -78,7 +78,7 @@ class Move(base_job.BaseJob):
         blackboard.register_key(key="gripper_open_force", access=py_trees.common.Access.READ)
         blackboard.register_key(key="gripper_close_force", access=py_trees.common.Access.READ)
         blackboard.register_key(key="init_config", access=py_trees.common.Access.READ)
-        
+
         if goal[idx]["primitive_action"] in ['move']:
             obj         = goal[idx]['object']
             destination = goal[idx]['destination']
@@ -103,7 +103,7 @@ class Move(base_job.BaseJob):
                                 action_client=action_client,
                                 action_goal=blackboard.gripper_open_pos,
                                 force=blackboard.gripper_open_force,
-                                timeout=1)        
+                                timeout=2)        
         s_move13 = MovePose.MOVEP(name="Approach",
                                   action_client=action_client,
                                   action_goal={'pose': "Plan"+idx+"/grasp_pose"})
@@ -141,7 +141,7 @@ class Move(base_job.BaseJob):
         
         place = py_trees.composites.Sequence(name="MovePlace", memory=True)
         place.add_children([pose_est2, s_move20, s_move21, s_move22, s_move23, s_move24, s_init3])
-        
+
         task = py_trees.composites.Sequence(name="Move", memory=True)
         task.add_children([pick, place])
         return task

@@ -45,7 +45,7 @@ class GOTO(Move.MOVE):
                                   'force': self.force,
                                   'check_contact': self.check_contact,
                                   'timeout': self.timeout,
-                                  'enable_wait': True })
+                                  'enable_wait': True})
             req = StringGoalStatus.Request(data=cmd_str)
             self.future = self.cmd_req.call_async(req)
             
