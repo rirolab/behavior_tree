@@ -14,14 +14,16 @@ import yaml
 def generate_launch_description():
     print("Select either simulation or real setup:")
     sim = True
-    while (sim == True):
+    while (True):
         print("     + Option N1: UR5 ROBOT (REAL).")
         print("     + Option N2: UR5 ROBOT (SIMULATION).")
         robot_config = input ("  Please select: ")
         if (robot_config == "1"):
             sim = False
+            break
         elif (robot_config == "2"):
             sim = True
+            break
         else:
             print ("  Please select a valid option!")
     print("")
