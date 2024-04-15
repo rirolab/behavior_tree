@@ -212,8 +212,8 @@ class MOVEPR(Move.MOVE):
                                    action_client=action_client,
                                    action_goal=action_goal)
 
-        self.blackboard.register_key(key=self.action_goal['pose'], \
-                                     access=py_trees.common.Access.READ)
+        ## self.blackboard.register_key(key=self.action_goal['pose'], \
+        ##                              access=py_trees.common.Access.READ)
                                      
         # Enable continuous motion
         self.action_cont = cont
