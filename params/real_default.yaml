@@ -1,10 +1,10 @@
 tree:
   ros__parameters:
     sim: False
-    gripper_open_pos: 0.05
-    gripper_close_pos: 0.75
+    gripper_open_pos: 0.0
+    gripper_close_pos: 0.8
     gripper_open_force: 100.0
-    gripper_close_force: 10.0
+    gripper_close_force: 100.0
     init_config: [0.0, -1.570796, 1.570796, -1.570796, -1.570796, 0.785]
     pose_srv_channel: "/get_object_pose"
     grasp_pose_srv_channel: "/get_object_grasp_pose"

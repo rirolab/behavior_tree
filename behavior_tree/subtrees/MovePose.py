@@ -240,22 +240,32 @@ class MOVEPR(Move.MOVE):
             return py_trees.Status.FAILURE
 
         if not self.sent_goal or (self.action_cont and self.action_goal['pose'] is not None):
-            goal = {'x': self.action_goal['pose'].position.x,
-                    'y': self.action_goal['pose'].position.y,
-                    'z': self.action_goal['pose'].position.z,
-                    'qx': self.action_goal['pose'].orientation.x,
-                    'qy': self.action_goal['pose'].orientation.y,
-                    'qz': self.action_goal['pose'].orientation.z,
-                    'qw': self.action_goal['pose'].orientation.w,}                    
+            if type(self.action_goal['pose']) is geometry_msgs.msg.Pose:
+                goal = {'x': self.action_goal['pose'].position.x,
+                        'y': self.action_goal['pose'].position.y,
+                        'z': self.action_goal['pose'].position.z,
+                        'qx': self.action_goal['pose'].orientation.x,
+                        'qy': self.action_goal['pose'].orientation.y,
+                        'qz': self.action_goal['pose'].orientation.z,
+                        'qw': self.action_goal['pose'].orientation.w,}
+            else:
+                ps = self.blackboard.get(self.action_goal['pose'])                
+                goal = {'x': ps.position.x,
+                        'y': ps.position.y,
+                        'z': ps.position.z,
+                        'qx': ps.orientation.x,
+                        'qy': ps.orientation.y,
+                        'qz': ps.orientation.z,
+                        'qw': ps.orientation.w,}
+               
 
             self.goal_uuid_des = np.random.randint(0, 255, size=16,
                                             dtype=np.uint8)
-                
             cmd_str = json.dumps({'action_type': 'movePoseRelative',
                                   'goal': json.dumps(goal),
                                   'frame': self.action_goal['frame'],
                                   'uuid': self.goal_uuid_des.tolist(),
-                                  'timeout': 3.,
+                                  'timeout': 7.,
                                   'enable_wait': False})
 
             req = StringGoalStatus.Request(data=cmd_str)            
@@ -265,6 +275,7 @@ class MOVEPR(Move.MOVE):
             self.feedback_message = "Sending a joint goal"
             return py_trees.common.Status.RUNNING
             
+        
         if self.blackboard.goal_id is None:
             return py_trees.common.Status.RUNNING
             
