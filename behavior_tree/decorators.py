@@ -1,5 +1,6 @@
 import time
 from py_trees.decorators import *
+import py_trees
 
 class Loop(Decorator):
     """
@@ -75,3 +76,203 @@ class Loop(Decorator):
             self.feedback_message = self.decorated.feedback_message
             return self.decorated.status
     
+
+class FTReplanning(Decorator):
+    """
+    A decorator that loops the node or branch a number of times, or infinitely.
+    """
+    def __init__(self, child, idx, name=common.Name.AUTO_GENERATED):
+        """
+        Init with the decorated child.
+        
+        Args:
+        child (:class:`~py_trees.behaviour.Behaviour`): behaviour to time
+        name (:obj:`str`): the decorator name
+        """
+        super(FTReplanning, self).__init__(name=name, child=child)
+        self.idx = idx
+
+    # def setup(self, timeout):
+    #     return super(FTReplanning, self).setup(timeout)
+
+    def initialise(self):
+        """
+        Reset the feedback message and finish time on behaviour entry.
+        """
+        self.logger.debug("{0}.initialise()".format(self.__class__.__name__))
+        self.logger.info("FTReplanning Initialise!\n\n\n\n")
+        self.feedback_message = "[(Decorator) FTReplanning]"
+        self.sent_goal = False
+        self.blackboard = py_trees.blackboard.Client()
+        self.is_recover = False
+        self.blackboard.register_key(key= 'recover_flag', access=py_trees.common.Access.WRITE)
+        self.blackboard.register_key(key= 'recover_flag', access=py_trees.common.Access.READ)
+        self.blackboard.set('recover_flag', self.is_recover)
+
+        self.blackboard.register_key(key= 'reinsert_condition', access=py_trees.common.Access.WRITE)
+        self.blackboard.register_key(key= 'reinsert_condition', access=py_trees.common.Access.READ)
+        self.blackboard.set('reinsert_condition', False)
+
+        self.blackboard.register_key(key= 'goal_reached', access=py_trees.common.Access.WRITE)
+        self.blackboard.register_key(key= 'goal_reached', access=py_trees.common.Access.READ)
+        self.blackboard.set('goal_reached', False)
+        self.is_goal_reached = False
+
+
+    def update(self):
+        """
+        Flip :data:`~py_trees.common.Status.FAILURE` and
+        :data:`~py_trees.common.Status.SUCCESS`
+        
+        Returns:
+        :class:`~py_trees.common.Status`: the behaviour's new status :class:`~py_trees.common.Status`
+        """
+        self.logger.debug("%s.update()" % self.__class__.__name__)
+        self.is_recover = self.blackboard.get('recover_flag')
+        self.is_goal_reached = self.blackboard.get('goal_reached')
+
+        if self.is_goal_reached:
+            if self.decorated.status == common.Status.SUCCESS:
+                return common.Status.SUCCESS
+
+        if not self.sent_goal:
+            self.decorated.initialise()
+            self.sent_goal = True
+            return common.Status.RUNNING
+
+        if self.decorated.status == common.Status.FAILURE:
+            return common.Status.FAILURE
+
+        if self.is_recover:
+            self.decorated.initialise()
+            self.blackboard.set('recover_flag', False)
+            self.blackboard.set('reinsert_condition', True)
+            return common.Status.RUNNING
+
+
+        return common.Status.RUNNING
+
+    
+class ConditionalLoop(Decorator):
+    """
+    A decorator that loops the node or branch a number of times, or infinitely.
+    """
+    def __init__(self, child, idx, name=common.Name.AUTO_GENERATED):
+        """
+        Init with the decorated child.
+        
+        Args:
+        child (:class:`~py_trees.behaviour.Behaviour`): behaviour to time
+        name (:obj:`str`): the decorator name
+        n_loop: the number of loops to run
+        enable_inf_loop: run indefinitely
+        timeout: timeout value if enalble_inf_loop is True (a negative timeout will loop forever).
+        """
+        super(ConditionalLoop, self).__init__(name=name, child=child)
+
+        self.idx = idx
+
+    def initialise(self):
+        """
+        Reset the feedback message and finish time on behaviour entry.
+        """
+        self.logger.debug("{0}.initialise()".format(self.__class__.__name__))
+
+        self.feedback_message = "[(Decorator) FTReplanning]"
+        self.sent_goal = False
+        self.blackboard = py_trees.blackboard.Client()
+
+        self.blackboard.register_key(key= 'reinsert_condition', access=py_trees.common.Access.WRITE)
+        self.blackboard.register_key(key= 'reinsert_condition', access=py_trees.common.Access.READ)
+        self.blackboard.set('reinsert_condition', False)
+        self.is_reinsert = False
+        
+    def update(self):
+        """
+        Flip :data:`~py_trees.common.Status.FAILURE` and
+        :data:`~py_trees.common.Status.SUCCESS`
+        
+        Returns:
+        :class:`~py_trees.common.Status`: the behaviour's new status :class:`~py_trees.common.Status`
+        """
+        self.logger.debug("%s.update()" % self.__class__.__name__)
+        self.is_reinsert = self.blackboard.get('reinsert_condition')
+
+        if not self.sent_goal:
+            self.decorated.initialise()
+            self.sent_goal = True
+            return common.Status.RUNNING
+
+        if self.decorated.status == common.Status.FAILURE:
+            return common.Status.FAILURE
+
+        if self.is_reinsert:
+            self.decorated.initialise()
+            self.blackboard.set('reinsert_condition', False)
+            return common.Status.RUNNING
+
+        return common.Status.RUNNING
+
+
+class ConditionalRUN(Decorator):
+    """
+    A decorator that loops the node or branch a number of times, or infinitely.
+    """
+    def __init__(self, child, idx, name=common.Name.AUTO_GENERATED):
+        """
+        Init with the decorated child.
+        
+        Args:
+        child (:class:`~py_trees.behaviour.Behaviour`): behaviour to time
+        name (:obj:`str`): the decorator name
+        n_loop: the number of loops to run
+        enable_inf_loop: run indefinitely
+        timeout: timeout value if enalble_inf_loop is True (a negative timeout will loop forever).
+        """
+        super(ConditionalRUN, self).__init__(name=name, child=child)
+        self.idx = idx
+        self.bb_name = 'conditional_run_' + idx
+
+    def initialise(self):
+        """
+        Reset the feedback message and finish time on behaviour entry.
+        """
+        self.logger.debug("{0}.initialise()".format(self.__class__.__name__))
+
+        self.feedback_message = "[(Decorator) ConditionalRUN]"
+        self.sent_goal = False
+        self.blackboard = py_trees.blackboard.Client()
+
+        self.blackboard.register_key(key= self.bb_name, access=py_trees.common.Access.WRITE)
+        self.blackboard.register_key(key= self.bb_name, access=py_trees.common.Access.READ)
+        
+    def update(self):
+        """
+        Flip :data:`~py_trees.common.Status.FAILURE` and
+        :data:`~py_trees.common.Status.SUCCESS`
+        
+        Returns:
+        :class:`~py_trees.common.Status`: the behaviour's new status :class:`~py_trees.common.Status`
+        """
+        self.logger.debug("%s.update()" % self.__class__.__name__)
+
+        if not self.blackboard.get(self.bb_name):
+            return common.Status.SUCCESS
+        else:
+            if not self.sent_goal:
+                self.decorated.initialise()
+                self.sent_goal = True
+                return common.Status.RUNNING
+
+            if self.decorated.status == common.Status.SUCCESS:
+                return common.Status.SUCCESS
+
+            if self.decorated.status == common.Status.FAILURE:
+                return common.Status.FAILURE
+
+            if self.is_reinsert:
+                self.decorated.initialise()
+                self.blackboard.set('reinsert_condition', False)
+                return common.Status.RUNNING
+
+            return common.Status.RUNNING

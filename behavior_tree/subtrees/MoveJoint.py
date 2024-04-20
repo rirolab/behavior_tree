@@ -78,6 +78,7 @@ class MOVEJ(Move.MOVE):
                                   py_trees.common.Status.SUCCESS, \
                                   self.feedback_message))
             return py_trees.common.Status.SUCCESS
+
         else:
             return py_trees.common.Status.RUNNING
                 

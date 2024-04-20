@@ -440,6 +440,7 @@ def main(args=None):
                                                  'jobs.ssdmove_job.Move',
                                                  'jobs.ssdremove_job.Move',
                                                  'jobs.ssdreinsert_job.Move',
+                                                 'jobs.ssdmove_resil_job.Move',
                                                  ## ## 'jobs.slide_job.Move',
                                                  ## ## 'jobs.attach_job.Move',
                                                  ## ## 'jobs.touch_job.Move'

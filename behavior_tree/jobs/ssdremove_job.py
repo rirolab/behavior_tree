@@ -129,7 +129,7 @@ class Move(base_job.BaseJob):
                                 action_client=action_client,
                                 action_goal=0.44,
                                 force=blackboard.gripper_close_force,
-                                timeout=3)
+                                timeout=5)
         attach = WorldModel.ATTACH_DETACH(name="Attach", is_attach=True)
         s_move26 = MovePose.MOVES(name="Approach", action_client=action_client,
                                  action_goal={'pose': "Plan"+idx+"/pre_insertion_pose"})

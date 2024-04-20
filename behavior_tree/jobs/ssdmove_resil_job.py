@@ -8,6 +8,7 @@ import std_msgs.msg as std_msgs
 
 from . import base_job
 from behavior_tree.subtrees import MoveJoint, MovePose, Gripper, WorldModel
+from behavior_tree.decorators import FTReplanning, ConditionalLoop, ConditionalRUN
 
 import numpy as np
 
@@ -42,7 +43,7 @@ class Move(base_job.BaseJob):
         if type(self.blackboard.init_config) is str:
             self.blackboard.init_config = eval(self.blackboard.init_config)
 
-
+            
     def incoming(self, msg):
         """
         Incoming goal callback.
@@ -55,7 +56,7 @@ class Move(base_job.BaseJob):
         else:
             grounding = json.loads(msg.data)['params']
             for i in range( len(grounding.keys()) ):
-                if grounding[str(i+1)]['primitive_action'] in ['ssdreinsert']:
+                if grounding[str(i+1)]['primitive_action'] in ['ssdmoveresil']:
                     self.goal = grounding #[str(i+1)] )
                     break
                 
@@ -72,7 +73,7 @@ class Move(base_job.BaseJob):
            :class:`~py_trees.behaviour.Behaviour`: subtree root
         """
         # beahviors
-        root = py_trees.composites.Sequence(name="SSDReInsert", memory=True)
+        root = py_trees.composites.Sequence(name="SSDMoveResil", memory=True)
         blackboard = py_trees.blackboard.Client()
         blackboard.register_key(key="gripper_open_pos", access=py_trees.common.Access.READ)
         blackboard.register_key(key="gripper_close_pos", access=py_trees.common.Access.READ)
@@ -82,60 +83,126 @@ class Move(base_job.BaseJob):
 
 
 
-        if goal[idx]["primitive_action"] in ['ssdreinsert']:
+        if goal[idx]["primitive_action"] in ['ssdmoveresil']:
             obj         = goal[idx]['object']
             destination = goal[idx]['destination']
         else:
             return None
         
+        # intermediate_config = [-1.5707963267948966, -1.5707963267948966, 1.5707963267948966, -3.141592653589793, -1.5707963267948966, 0.]
+
+        # intermediate_config2 = [-21, -91, 113, -201, -161, -90]
+        # intermediate_config2 = [x * np.pi/180 for x in intermediate_config2]
+
         intermediate_common = [-17, -81, 54, -63, -90, -15]
         intermediate_common = [x * np.pi/180 for x in intermediate_common]
 
         # ----------------- Move Task ----------------        
+        # s_init2 = MoveJoint.MOVEJ(name="Init", action_client=action_client,
+        #                           action_goal=blackboard.init_config)
+
         s_init5 = MoveJoint.MOVEJ(name="Init", action_client=action_client,
                                   action_goal=intermediate_common)
         s_init6 = MoveJoint.MOVEJ(name="Init", action_client=action_client,
                                   action_goal=intermediate_common)
-        s_init7 = MoveJoint.MOVEJ(name="Init", action_client=action_client,
-                                  action_goal=intermediate_common)
+
+        inter_pose = [-21, -91, 113, -201, -161, -90]
+        inter_pose = [x * np.pi/180 for x in inter_pose]
+
+        s_inter1 = MoveJoint.MOVEJ(name="Inter", action_client=action_client,
+                                  action_goal=inter_pose)
+        s_inter3 = MoveJoint.MOVEJ(name="Inter", action_client=action_client,
+                                  action_goal=inter_pose)
 
         # ----------------- Pick ---------------------
-        pose_est1 = WorldModel.POSE_ESTIMATOR(name="Plan"+idx, object_dict = {'target': obj}, find_empty2=True, tf_buffer=kwargs['tf_buffer'])
+        pose_est1 = WorldModel.POSE_ESTIMATOR(name="Plan"+idx, object_dict = {'target': obj}, find_empty=True, tf_buffer=kwargs['tf_buffer'])
         s_move10 = MovePose.MOVEPROOT(name="Top1",
                                       action_client=action_client,
                                       action_goal={'pose': "Plan"+idx+"/grasp_top_pose"})
         s_move11 = MovePose.MOVEP(name="Top2",
                                   action_client=action_client,
                                   action_goal={'pose': "Plan"+idx+"/grasp_top_pose"})
-        s_move13 = Gripper.GOTO(name="Open",
+        s_move12 = Gripper.GOTO(name="Open",
                                 action_client=action_client,
-                                action_goal=0.43,
+                                action_goal=blackboard.gripper_open_pos,
                                 force=blackboard.gripper_open_force,
-                                timeout=1)     
-        detach = WorldModel.ATTACH_DETACH(name="Detach", is_attach=False)   
-        s_move12 = MovePose.MOVES(name="Approach",
+                                timeout=1)        
+        s_move13 = MovePose.MOVES(name="Approach",
                                   action_client=action_client,
                                   action_goal={'pose': "Plan"+idx+"/grasp_pose"},
                                   timeout=3.)
-        s_move15 = Gripper.GOTO(name="Close",
+        attach = WorldModel.ATTACH_DETACH(name="Attach", is_attach=True)
+        s_move14 = Gripper.GOTO(name="Close",
                                 action_client=action_client,
                                 action_goal=blackboard.gripper_close_pos,
                                 force=blackboard.gripper_close_force,
-                                timeout=5)        
-        s_move14 = MovePose.MOVES(name="Top",
+                                timeout=5)
+        s_move15 = MovePose.MOVES(name="Top",
                                   action_client=action_client,
                                   action_goal={'pose': "Plan"+idx+"/grasp_top_pose"},
                                   timeout=3.)
 
-        pick = py_trees.composites.Sequence(name="SSDReInsert", memory=True)
+        pick = py_trees.composites.Sequence(name="SSDMovePick", memory=True)
         # pick.add_children([s_init5, pose_est1, s_move10, s_move11, s_move12, s_move13, s_move14, s_move15])
-        # pick.add_children([s_init5, pose_est1, s_move11])
-        pick.add_children([s_init5, pose_est1, s_move11, s_move12, s_move13, detach, s_move14])
+        pick.add_children([s_init5, pose_est1, s_move11, s_move12, s_move13, s_move14, attach, s_move15])
 
-        task = py_trees.composites.Sequence(name="SSDReInsert", memory=True)
+        # pick.add_children([s_init5, pose_est1, s_move11, s_move12, s_move13, s_move14, s_move15])
+
+
+        # ----------------- Place ---------------------
+        pose_est2 = WorldModel.POSE_ESTIMATOR(name="Plan"+idx,
+                                              object_dict = {'target': obj,
+                                                             'destination': destination}, find_empty_loader=True, insertion=True, utilize_ft= True, 
+                                              tf_buffer=kwargs['tf_buffer'])
+
+        observe_and_insert_1 = py_trees.composites.Sequence(name="ObserveInsert")
+
+        s_move21 = MovePose.MOVES(name="Observe", action_client=action_client,
+                                 action_goal={'pose': "Plan"+idx+"/observation_pose"}, timeout=3.)
+        fine_tune1 = WorldModel.FINETUNE_GOALS(name="FTGoal", idx=idx, is_loaded = False)
+
+        s_move22 = MovePose.MOVES(name="Approach", action_client=action_client,
+                                 action_goal={'pose': "Plan"+idx+"/pre_insertion_pose"})
+
+        sr_move22 = MovePose.MOVES(name="ReApproach", action_client=action_client,
+                                 action_goal={'pose': "Plan"+idx+"/pre_insertion_pose"}, timeout=5.)
+
+        s_move23 = MovePose.MOVEP(name="Insertion", action_client=action_client,
+                                 action_goal={'pose': "Plan"+idx+"/post_insertion_pose"})
+
+        s_move222 = MovePose.MOVESFT(name="Sensing", action_client=action_client,
+                                 action_goal={'pose': "Plan"+idx+"/sensing_pose"}, timeout=5., idx=idx)
+
+        observe_and_insert_1.add_children([pose_est2, s_move21, fine_tune1, s_move22, s_move222])
+
+        selection_1 = py_trees.composites.Selector(name="Selection", memory=False)
+        selection_1.add_child(observe_and_insert_1)
+        selection_1.add_child(s_inter3)
+
+        s_move23 = MovePose.MOVES(name="Insertion", action_client=action_client,
+                                  action_goal={'pose': "Plan"+idx+"/post_insertion_pose"},
+                                  timeout=7.)
+
+        s_move24 = Gripper.GOTO(name="Open", action_client=action_client,
+                                action_goal=0.0,
+                                force=blackboard.gripper_open_force,
+                                timeout=1)   
+        detach = WorldModel.ATTACH_DETACH(name="Detach", is_attach=False)
+        s_move25 = MovePose.MOVES(name="Approach", action_client=action_client,
+                                 action_goal={'pose': "Plan"+idx+"/pre_insertion_pose"})
+
+        place = py_trees.composites.Sequence(name="MovePlace", memory=True)
+        #MJ
+        # place.add_children([s_init6, pose_est2, s_init_inter1, s_init_inter2, s_move21, fine_tune1, s_move22, s_move23, s_move24,detach, s_move25, s_init_inter4, s_init_inter3, s_init7])
+        # place.add_children([s_init6, pose_est2, s_init_inter1, s_init_inter2, observe_and_insert_1])
+        place.add_children([s_init6, s_inter1, selection_1, s_move23, s_move24, detach, s_move25])
+        # place.add_children([s_init6, s_inter1, selection_1, s_move23, s_move24, s_move25])
+
         
-        # task.add_children([pick, place])
-        task.add_children([pick])
+        task = py_trees.composites.Sequence(name="SSDMoveResil", memory=True)
+        
+        task.add_children([pick, place])
+        # task.add_children([pick])
 
         return task
 

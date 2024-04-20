@@ -197,6 +197,113 @@ class MOVES(Move.MOVE):
             return py_trees.common.Status.RUNNING
 
 
+class MOVESFT(Move.MOVE):
+    """
+    Move to a Cartesian pose following a straight pose trajectory
+    
+    Note that this behaviour will return with
+    :attr:`~py_trees.common.Status.SUCCESS`. It will also send a clearing
+    command to the robot if it is cancelled or interrupted by a higher
+    priority behaviour.
+    """
+
+    def __init__(self, name, action_client, idx, action_goal=None, timeout=1.):
+        super(MOVESFT, self).__init__(name=name,
+                                   action_client=action_client,
+                                    action_goal=action_goal,
+                                    timeout=timeout)
+
+        self.blackboard.register_key(key=self.action_goal['pose'], \
+                                     access=py_trees.common.Access.READ)
+        # self.idx = idx
+        self.bb_name = 'conditional_run_' + idx
+        self.blackboard.register_key(key= self.bb_name, access=py_trees.common.Access.WRITE)
+        self.blackboard.register_key(key= self.bb_name, access=py_trees.common.Access.READ)
+        self.blackboard.set(self.bb_name, False)
+
+    def update(self):
+        self.logger.debug("%s.update()" % self.__class__.__name__)
+
+        print("##############dddd\n\n\n\n\n", self.blackboard.goal_status)
+
+        if self.cmd_req is None:
+            self.feedback_message = \
+              "no action client, did you call setup() on your tree?"
+            return py_trees.Status.FAILURE
+
+        if not self.sent_goal:
+            # reference frame: arm_baselink
+            if type(self.action_goal['pose']) is geometry_msgs.msg.Pose:
+                goal = {'x': self.action_goal['pose'].position.x,
+                        'y': self.action_goal['pose'].position.y,
+                        'z': self.action_goal['pose'].position.z,
+                        'qx': self.action_goal['pose'].orientation.x,
+                        'qy': self.action_goal['pose'].orientation.y,
+                        'qz': self.action_goal['pose'].orientation.z,
+                        'qw': self.action_goal['pose'].orientation.w,}
+            else:
+                ps = self.blackboard.get(self.action_goal['pose'])                
+                goal = {'x': ps.position.x,
+                        'y': ps.position.y,
+                        'z': ps.position.z,
+                        'qx': ps.orientation.x,
+                        'qy': ps.orientation.y,
+                        'qz': ps.orientation.z,
+                        'qw': ps.orientation.w,}
+            
+            self.goal_uuid_des = np.random.randint(0, 255, size=16,
+                                            dtype=np.uint8)
+            
+            cmd_str = json.dumps({'action_type': 'movePoseStraightFT',
+                                  'goal': json.dumps(goal),
+                                  'uuid': self.goal_uuid_des.tolist(),
+                                  'timeout': self.timeout,
+                                  'enable_wait': False})
+            req = StringGoalStatus.Request(data=cmd_str)
+            self.future = self.cmd_req.call_async(req)
+            # print("SdA\n\n\n", self.future.done(), self.future.result())
+            self.sent_goal = True
+            self.feedback_message = "Sending a joint goal"
+            return py_trees.common.Status.RUNNING
+
+        if self.blackboard.goal_id is None:
+            self.logger.info("MOVESFT running!!!!")
+            self.feedback_message= "RUNNING1"
+            return py_trees.common.Status.RUNNING
+            
+        if (self.goal_uuid_des == self.blackboard.goal_id).all() and \
+           self.blackboard.goal_status in [GoalStatus.STATUS_ABORTED,
+                                GoalStatus.STATUS_UNKNOWN,
+                                GoalStatus.STATUS_CANCELING,
+                                GoalStatus.STATUS_CANCELED]:
+            self.blackboard.set(self.bb_name, True)
+            self.feedback_message = "FAILURE"
+            self.logger.debug("%s.update()[%s->%s][%s]" % \
+                                  (self.__class__.__name__, \
+                                   self.status, \
+                                   py_trees.common.Status.FAILURE, \
+                                  self.feedback_message))
+            return py_trees.common.Status.FAILURE
+
+        # self.logger.info("MJMJMJ", self.goal_uuid_des, self.blackboard.goal_id, self.blackboard.goal_status)
+
+        print("MJMJMJ", self.goal_uuid_des, self.blackboard.goal_id, self.blackboard.goal_status)
+
+        if (self.goal_uuid_des == self.blackboard.goal_id).all() and \
+           self.blackboard.goal_status is GoalStatus.STATUS_SUCCEEDED:
+            self.feedback_message = "SUCCESSFUL"
+            self.logger.debug("%s.update()[%s->%s][%s]" % \
+                                  (self.__class__.__name__, \
+                                       self.status, \
+                                  py_trees.common.Status.SUCCESS, \
+                                  self.feedback_message))
+            return py_trees.common.Status.SUCCESS
+        
+        else:
+            self.logger.info("MOVESFT running22222!!!!")
+            self.feedback_message= "RUNNING2"
+            return py_trees.common.Status.RUNNING
+
 
 class MOVEPR(Move.MOVE):
     """
