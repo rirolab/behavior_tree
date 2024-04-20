@@ -3,7 +3,7 @@ import json
 
 import rclpy
 from action_msgs.msg import GoalStatus
-from riro_srvs.srv import StringInt
+from riro_srvs.srv import StringInt, IntNone
 
 import py_trees
 from py_trees_ros import exceptions, utilities
@@ -41,11 +41,17 @@ class MOVE(py_trees.behaviour.Behaviour):
             key="goal_status",
             access=py_trees.common.Access.READ,
         )
-        
+        self.blackboard.register_key(
+            key="goal_status",
+            access=py_trees.common.Access.WRITE,
+        )        
+
+
     def setup(self, node):
         """ """
         self.feedback_message = "{}: setup".format(self.name)
-        ## self.node = node
+        self.node = node
+        self.node.create_service(IntNone, '/arm_client/goal_status_update', self._goal_status_update)
         ## self.node.create_subscription(GoalStatus, 'arm_client/goal_status',
         ##                              self.goal_status_callback,
         ##                              10,
@@ -87,3 +93,7 @@ class MOVE(py_trees.behaviour.Behaviour):
     ##     self.goal_id     = msg.goal_info.goal_id
     ##     self.goal_status = msg.status
         
+    def _goal_status_update(self, request, response):
+        goal_status = request.data
+        self.blackboard.goal_status = goal_status
+        return response

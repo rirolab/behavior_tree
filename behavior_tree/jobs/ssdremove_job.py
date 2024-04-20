@@ -127,7 +127,7 @@ class Move(base_job.BaseJob):
                                   timeout=3.)
         s_move25 = Gripper.GOTO(name="Close",
                                 action_client=action_client,
-                                action_goal=blackboard.gripper_close_pos,
+                                action_goal=0.44,
                                 force=blackboard.gripper_close_force,
                                 timeout=5)
         attach = WorldModel.ATTACH_DETACH(name="Attach", is_attach=True)

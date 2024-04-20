@@ -20,7 +20,7 @@ from geometry_msgs.msg import Pose
 from complex_action_client import misc
 from riro_srvs.srv import StringInt, StringPose, NoneString, NonePose, StringPoseInt, NonePoseInt
 from std_srvs.srv import Trigger
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, WrenchStamped
 
 from gazebo_ros_link_attacher.srv import Attach
 
@@ -219,10 +219,12 @@ class FINETUNE_GOALS(py_trees.behaviour.Behaviour):
         self.blackboard = py_trees.blackboard.Client()
         self.blackboard.register_key(key="Plan"+self.idx+'/pre_insertion_pose', access=py_trees.common.Access.READ)
         self.blackboard.register_key(key="Plan"+self.idx+'/post_insertion_pose', access=py_trees.common.Access.READ)
-        
+        self.blackboard.register_key(key="Plan"+self.idx+'/sensing_pose', access=py_trees.common.Access.READ)        
+
         self.callback_group = ReentrantCallbackGroup()
 
-        self.ny_pose = None
+        # self.ny_pose = None
+        self.ny_pose = [0., 0., 0., 0., 0., 0., 0.]
 
     def setup(self,
               node: typing.Optional[rclpy.node.Node]=None,
@@ -281,62 +283,56 @@ class FINETUNE_GOALS(py_trees.behaviour.Behaviour):
             return py_trees.common.Status.RUNNING
 
 
-        if self.ny_pose  is None:
-            return py_trees.common.Status.RUNNING
-        else:
+        # if self.ny_pose  is None:
+        #     return py_trees.common.Status.RUNNING
+        # else:
 
-            pre_ps = self.blackboard.get("Plan"+self.idx+'/pre_insertion_pose')
-            post_ps = self.blackboard.get("Plan"+self.idx+'/post_insertion_pose')
+        pre_ps = self.blackboard.get("Plan"+self.idx+'/pre_insertion_pose')
+        post_ps = self.blackboard.get("Plan"+self.idx+'/post_insertion_pose')
+        sense_ps = self.blackboard.get("Plan"+self.idx+'/sensing_pose')
 
-            pre_ps = misc.pose2list(pre_ps)
-            pre_ps = misc.list_quat2list_rpy(pre_ps)
-            post_ps = misc.pose2list(post_ps)
-            post_ps = misc.list_quat2list_rpy(post_ps)
+        pre_ps = misc.pose2list(pre_ps)
+        pre_ps = misc.list_quat2list_rpy(pre_ps)
+        post_ps = misc.pose2list(post_ps)
+        post_ps = misc.list_quat2list_rpy(post_ps)
+        sense_ps = misc.pose2list(sense_ps)
+        sense_ps = misc.list_quat2list_rpy(sense_ps)
 
-            print("NYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY\n\n\n\n\n\n\n\n", self.ny_pose[0], self.ny_pose[1], self.ny_pose[-1])
-            pre_ps[0] += self.ny_pose[0]
-            pre_ps[2] += self.ny_pose[1]
-            pre_ps[-2] -= self.ny_pose[-1]
-            # pre_ps[-2] += 0.8
-            
-            pre_ps = misc.list_rpy2list_quat(pre_ps)
-            pre_ps = misc.list2Pose(pre_ps)
-    
-            post_ps[0] += self.ny_pose[0]
-            post_ps[2] += self.ny_pose[1]
-            post_ps[-2] -= self.ny_pose[-1]
-            # post_ps[-2] += 0.8
-            post_ps = misc.list_rpy2list_quat(post_ps)
-            post_ps = misc.list2Pose(post_ps)
-    
-            self.blackboard.register_key(key="Plan"+self.idx+'/pre_insertion_pose', access=py_trees.common.Access.WRITE)
-            self.blackboard.register_key(key="Plan"+self.idx+'/post_insertion_pose', access=py_trees.common.Access.WRITE)
+        print("NYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY\n\n\n\n\n\n\n\n", self.ny_pose[0], self.ny_pose[1], self.ny_pose[-1])
+        pre_ps[0] += self.ny_pose[0]
+        pre_ps[2] += self.ny_pose[1]
+        pre_ps[-2] -= self.ny_pose[-1]
+        # pre_ps[-2] += 0.8
+        
+        pre_ps = misc.list_rpy2list_quat(pre_ps)
+        pre_ps = misc.list2Pose(pre_ps)
 
-            self.blackboard.set("Plan"+self.idx+'/pre_insertion_pose', pre_ps)
-            self.blackboard.set("Plan"+self.idx+'/post_insertion_pose', post_ps)
+        post_ps[0] += self.ny_pose[0]
+        post_ps[2] += self.ny_pose[1]
+        post_ps[-2] -= self.ny_pose[-1]
+        # post_ps[-2] += 0.8
+        post_ps = misc.list_rpy2list_quat(post_ps)
+        post_ps = misc.list2Pose(post_ps)
+
+        sense_ps[0] += self.ny_pose[0]
+        sense_ps[2] += self.ny_pose[1]
+        sense_ps[-2] -= self.ny_pose[-1]
+        # post_ps[-2] += 0.8
+        sense_ps = misc.list_rpy2list_quat(sense_ps)
+        sense_ps = misc.list2Pose(sense_ps)
+
+        self.blackboard.register_key(key="Plan"+self.idx+'/pre_insertion_pose', access=py_trees.common.Access.WRITE)
+        self.blackboard.register_key(key="Plan"+self.idx+'/post_insertion_pose', access=py_trees.common.Access.WRITE)
+        self.blackboard.register_key(key="Plan"+self.idx+'/sensing_pose', access=py_trees.common.Access.WRITE)
+
+        self.blackboard.set("Plan"+self.idx+'/pre_insertion_pose', pre_ps)
+        self.blackboard.set("Plan"+self.idx+'/post_insertion_pose', post_ps)
+        self.blackboard.set("Plan"+self.idx+'/sensing_pose', sense_ps)
 
         return py_trees.common.Status.SUCCESS
     
     def terminate(self, new_status):
         return
-
-    # def _tm_topic_callback(self, msg):
-        
-    #     self.get_logger().info('msg type: %s'%type(msg))
-        
-    #     offset_list = [msg.pose.posotion.x, msg.pose.posotion.y, msg.pose.posotion.z, msg.pose.orientation.x, msg.pose.orientation.y, msg.pose.orientation.z, msg.pose.orientation.w]
-    #     offset_list = misc.list_quat2list_rpy(offset_list)
-    #     print("SSSSSSSIDIDIDIDID\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n", offset_list)
-        
-        
-    #     self.x_offset = msg.pose.position.x
-    #     self.y_offset = msg.pose.posotion.y
-        
-    #     self.p_offset = offset_list[-2]
-        
-    #     self.is_topic_call = True
-        
-    #     return
 
 
 class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
@@ -349,7 +345,7 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
     priority behaviour.
     """
 
-    def __init__(self, name, object_dict=None, en_random=False, en_close_pose=False, find_empty=False, find_empty2=False, find_empty_loader=False, insertion=False, find_loaded_loader=False,
+    def __init__(self, name, object_dict=None, en_random=False, en_close_pose=False, find_empty=False, find_empty2=False, find_empty_loader=False, insertion=False, find_loaded_loader=False, utilize_ft=False,
                     **kwargs):
         super(POSE_ESTIMATOR, self).__init__(name=name)
 
@@ -368,7 +364,7 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         self.find_loaded_loader = find_loaded_loader
 
         self.insertion = insertion ## wether this POSE_ESTIMATION returns "observation_pose", "intermediate_pose", ...
-
+        self.utilize_ft = utilize_ft
 
     def setup(self,
               node: typing.Optional[rclpy.node.Node]=None,
@@ -459,25 +455,20 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                                             qos_profile=rclpy.qos.qos_profile_services_default)
         if not self.loader_loaded_pose_srv_req.wait_for_service(timeout_sec=10.0):
             raise exceptions.TimedOutError('[{}] service not available, waiting again...'.format(self._loader_loaded_pose_channel))
-
-        # print("&&&&&&&&&&&&&&&&&&777&&&&&\n\n\n\n\n\n", self.loader_pose_srv_req)
-        # raise NotImplementedError()
-
-        ## # get odom 2 base
-        ## qos_profile = QoSProfile(
-        ##     reliability=QoSReliabilityPolicy.RMW_QOS_POLICY_RELIABILITY_RELIABLE,           
-        ##     history=QoSHistoryPolicy.RMW_QOS_POLICY_HISTORY_KEEP_LAST,
-        ##     depth=10
-        ## )
         
-        ## self.tf_buffer   = Buffer()
-        ## self.tf_listener = TransformListener(buffer=self.tf_buffer,
-        ##                                      node=self.node,
-        ##                                      qos=qos_profile,
-        ##                                          )
-        
+        if self.utilize_ft:
+            self.ft_sub = self.node.create_subscription(PoseStamped,'/ur5/ft_sensor_ur5', self.ft_sensor_callback, 10)
+
+
         self.feedback_message = "{}: finished setting up".format(self.name)
         return True
+
+    def ft_sensor_callback(self, msg):
+        ### if msg's FT sensor data exceeds certain amount ###
+        print("EEEEEEEEEEEEE\n\n\n\n\n", msg)
+        if False:
+        # if msg.data.:
+            self.blackboard.set("recover_flag", True)
 
 
     def initialise(self):
@@ -496,6 +487,8 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         self.blackboard.register_key(key=self.name +'/pre_insertion_pose', access=py_trees.common.Access.WRITE)
         self.blackboard.register_key(key=self.name +'/post_insertion_pose', access=py_trees.common.Access.WRITE)
         self.blackboard.register_key(key=self.name +'/observation_pose', access=py_trees.common.Access.WRITE)
+        self.blackboard.register_key(key=self.name +'/sensing_pose', access=py_trees.common.Access.WRITE)
+
         self.blackboard.register_key(key='intermediate_pose_1', access=py_trees.common.Access.WRITE)
         self.blackboard.register_key(key='intermediate_pose_2', access=py_trees.common.Access.WRITE)
 
@@ -512,6 +505,8 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         self.blackboard.set(self.name +'/pre_insertion_pose', Pose())
         self.blackboard.set(self.name +'/post_insertion_pose', Pose())
         self.blackboard.set(self.name +'/observation_pose', Pose())
+        self.blackboard.set(self.name +'/sensing_pose', Pose())
+
         # self.blackboard.set('intermediate_pose')
         # loader_lib = {}
         # self.blackboard.set('loader_lib', loader_lib)
@@ -671,14 +666,12 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                 if self.find_empty_loader:
                     load_ind = future.result().ind
                     loader_lib = self.blackboard.get('loader_lib')
-                    print("??????????????\n\n\n\n\n\n", loader_lib)
-                    # raise NotImplementedError
 
                     already_exist = loader_lib.get(load_ind, -1)
                     if already_exist == -1:
                         loader_lib[load_ind] = self.blackboard.get("attach_target")
                         self.blackboard.set('loader_lib', loader_lib)
-                    print("^^^^^^^^^^^^^^^\n\n\n\n\n", loader_lib, self.blackboard.get('loader_lib'))
+                    print("^^^^^^^^^^^^^^^\n\n\n\n\n", self.blackboard.get('loader_lib'))
 
                 if self.find_loaded_loader:
                     load_ind = future.result().ind
@@ -718,18 +711,25 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
 
                 if self.insertion:
                     place_pre_insertion_pose = copy.deepcopy(place_pose)
-                    place_pre_insertion_pose.position.y += self.insertion_offset_y
+                    # place_pre_insertion_pose.position.y += self.insertion_offset_y ## 0.2
+                    place_pre_insertion_pose.position.y += 0.25
                     place_pre_insertion_pose.position.z += 0.028
 
                     place_post_insertion_pose = copy.deepcopy(place_pose)
-                    place_post_insertion_pose.position.z += 0.026
-                    place_post_insertion_pose.position.y += 0.028
+                    # place_post_insertion_pose.position.y += 0.028
+                    # place_post_insertion_pose.position.z += 0.026
+                    place_post_insertion_pose.position.y += 0.026
+                    place_post_insertion_pose.position.z += 0.028
 
 
                     place_observation_pose = copy.deepcopy(place_pose)
                     place_observation_pose.position.x -= 0.05
                     place_observation_pose.position.y += 0.25 
                     place_observation_pose.position.z -= 0.02
+
+                    place_sensing_pose = copy.deepcopy(place_pose)
+                    place_sensing_pose.position.y += 0.21
+                    place_sensing_pose.position.z += 0.028
 
                     # place_observation_pose.position.z += 0.05
                     
@@ -755,8 +755,6 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                     if place_pose.position.x > 0.0:
                         # inter_pose = [-29, -93, 114, -185, -156, -82]
                         inter_pose = [-21, -91, 113, -201, -161, -90]
-
-
                         inter_pose = [x * np.pi/180 for x in inter_pose]
                         self.blackboard.set('intermediate_pose_1', inter_pose)
                         self.blackboard.set('intermediate_pose_2', inter_pose)
@@ -804,7 +802,8 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                     self.blackboard.set(self.name +'/pre_insertion_pose', place_pre_insertion_pose)
                     self.blackboard.set(self.name +'/post_insertion_pose', place_post_insertion_pose)
                     self.blackboard.set(self.name +'/observation_pose', place_observation_pose)
-                    print("########################\n\n\n\n\n\n", place_pre_insertion_pose, place_post_insertion_pose)
+                    self.blackboard.set(self.name +'/sensing_pose', place_sensing_pose)
+                    # print("########################\n\n\n\n\n\n", place_pre_insertion_pose, place_post_insertion_pose)
 
             self.sent_goal        = True
             self.feedback_message = "WorldModel: successful grasp pose estimation "
@@ -822,7 +821,6 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         ## self.destroy_service(self.rnd_pose_srv_req)
         ## self.destroy_service(self.close_pose_srv_req)
         return
-
 
     @staticmethod
     def get_grasp_pose(obj_pose, base2arm_baselink, grasp_offset_z):

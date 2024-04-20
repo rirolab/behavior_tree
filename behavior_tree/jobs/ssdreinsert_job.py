@@ -129,6 +129,7 @@ class Move(base_job.BaseJob):
 
         pick = py_trees.composites.Sequence(name="SSDReInsert", memory=True)
         # pick.add_children([s_init5, pose_est1, s_move10, s_move11, s_move12, s_move13, s_move14, s_move15])
+        # pick.add_children([s_init5, pose_est1, s_move11])
         pick.add_children([s_init5, pose_est1, s_move11, s_move12, s_move13, detach, s_move14])
 
         task = py_trees.composites.Sequence(name="SSDReInsert", memory=True)
