@@ -100,14 +100,15 @@ class Move(base_job.BaseJob):
             return None
         
         print("&&&&&&&&&&&&&&&&&&&&&&&&&\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n", blackboard.observe_config)
-        
+        intermediate_common = [-47, -138, 125, -167, -135, 0]
+        intermediate_common = [x*3.141592/180 for x in intermediate_common]
         # ------------ Compute -------------------------
         s_init1 = MoveJoint.MOVEJ(name="Init",\
                                   action_client=action_client,\
                                   action_goal=blackboard.init_config)
         o_init1 = MoveJoint.MOVEJ(name="Observe",\
                                   action_client=action_client,\
-                                  action_goal=blackboard.observe_config)
+                                  action_goal=intermediate_common)
         # s_init2 = MoveJoint.MOVEJ(name="Init",\
         #                           action_client=action_client,\
         #                           action_goal=blackboard.init_config)

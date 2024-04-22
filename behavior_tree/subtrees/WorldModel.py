@@ -164,14 +164,14 @@ class CAPTURE_JUKJAEHAM(py_trees.behaviour.Behaviour):
 
         self.sent_goal     = False
         self.cmd_req       = None
-
+        self.callback_group = ReentrantCallbackGroup()
 
     def setup(self,
               node: typing.Optional[rclpy.node.Node]=None,
               timeout: float=py_trees.common.Duration.INFINITE):
         self.node = node
-        self.feedback_message = "{}: setup".format(self.name)
-        self.cmd_req = self.node.create_client(NoneString, '/jukjaeham/empty_capture', qos_profile=rclpy.qos.qos_profile_services_default)
+        self.feedback_message = "{}: setup jejejejeje".format(self.name)
+        self.cmd_req = self.node.create_client(Trigger, '/get_artag_pose', callback_group=self.callback_group, qos_profile=rclpy.qos.qos_profile_services_default)
         if not self.cmd_req.wait_for_service(timeout_sec=3.0):
             raise exceptions.TimedOutError('remove wm service not available, waiting again...')
         return True
@@ -189,14 +189,15 @@ class CAPTURE_JUKJAEHAM(py_trees.behaviour.Behaviour):
             return py_trees.Status.FAILURE
 
         if not self.sent_goal:
-            req = NoneString.Request()
+            # req = NoneString.Request()
+            req = Trigger.Request()
             future = self.cmd_req.call_async(req)
 
             while rclpy.ok():
                 if future.done():
                     break
-                rclpy.spin_once(self.node, timeout_sec=0)
-                time.sleep(0.05)
+                rclpy.spin_once(self.node, timeout_sec=0.01)
+                # time.sleep(0.05)
 
             self.sent_goal = True
             self.feedback_message = "Sending a world_model command"
