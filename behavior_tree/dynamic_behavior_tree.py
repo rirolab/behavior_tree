@@ -437,6 +437,7 @@ def main(args=None):
                                                  ## ## 'jobs.jog_job.Move',
                                                  'jobs.gripper_job.Move',
                                                  'jobs.observe_job.Move',
+                                                 'jobs.artagobserve_job.Move',
                                                  'jobs.ssdmove_job.Move',
                                                  'jobs.ssdremove_job.Move',
                                                  'jobs.ssdreinsert_job.Move',

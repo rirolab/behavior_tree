@@ -62,7 +62,7 @@ class Move(base_job.BaseJob):
         else:
             grounding = json.loads(msg.data)['params']
             for i in range( len(grounding.keys()) ):
-                if grounding[str(i+1)]['primitive_action'] in ['observe']:
+                if grounding[str(i+1)]['primitive_action'] in ['artagobserve']:
                     self.goal = grounding #[str(i+1)] )
                     break
                 
@@ -87,7 +87,7 @@ class Move(base_job.BaseJob):
         blackboard.register_key(key="init_config", access=py_trees.common.Access.READ)
         blackboard.register_key(key="observe_config", access=py_trees.common.Access.READ)
 
-        if goal[idx]["primitive_action"] in ['observe']:
+        if goal[idx]["primitive_action"] in ['artagobserve']:
             # if 'object' in goal[idx].keys():
             #     obj = goal[idx]['object']
             # elif 'obj' in goal[idx].keys():
@@ -100,21 +100,22 @@ class Move(base_job.BaseJob):
             return None
         
         print("&&&&&&&&&&&&&&&&&&&&&&&&&\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n", blackboard.observe_config)
-        
+        intermediate_common = [-47, -138, 125, -167, -135, 0]
+        intermediate_common = [x*3.141592/180 for x in intermediate_common]
         # ------------ Compute -------------------------
         s_init1 = MoveJoint.MOVEJ(name="Init",\
                                   action_client=action_client,\
                                   action_goal=blackboard.init_config)
         o_init1 = MoveJoint.MOVEJ(name="Observe",\
                                   action_client=action_client,\
-                                  action_goal=blackboard.observe_config)
+                                  action_goal=intermediate_common)
         # s_init2 = MoveJoint.MOVEJ(name="Init",\
         #                           action_client=action_client,\
         #                           action_goal=blackboard.init_config)
 
-        c_capture1 = WorldModel.CAPTURE_JUKJAEHAM(name="Capture")
+        c_capture1 = WorldModel.CAPTURE_ARTAG(name="Capture")
 
-        observe = py_trees.composites.Sequence(name="Observe", memory=True)
+        observe = py_trees.composites.Sequence(name="ArtagObserve", memory=True)
         # observe.add_children([s_init1, o_init1, s_init2])
         # observe.add_children([s_init1, o_init1, c_capture1])
         observe.add_children([o_init1, c_capture1])
