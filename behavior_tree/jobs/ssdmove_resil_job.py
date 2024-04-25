@@ -111,8 +111,6 @@ class Move(base_job.BaseJob):
 
         s_inter1 = MoveJoint.MOVEJ(name="Inter", action_client=action_client,
                                   action_goal=inter_pose)
-        s_inter3 = MoveJoint.MOVEJ(name="Inter", action_client=action_client,
-                                  action_goal=inter_pose)
 
         # ----------------- Pick ---------------------
         pose_est1 = WorldModel.POSE_ESTIMATOR(name="Plan"+idx, object_dict = {'target': obj}, find_empty=True, tf_buffer=kwargs['tf_buffer'])
@@ -164,24 +162,21 @@ class Move(base_job.BaseJob):
         s_move22 = MovePose.MOVES(name="Approach", action_client=action_client,
                                  action_goal={'pose': "Plan"+idx+"/pre_insertion_pose"})
 
-        sr_move22 = MovePose.MOVES(name="ReApproach", action_client=action_client,
-                                 action_goal={'pose': "Plan"+idx+"/pre_insertion_pose"}, timeout=5.)
-
-        s_move23 = MovePose.MOVEP(name="Insertion", action_client=action_client,
-                                 action_goal={'pose': "Plan"+idx+"/post_insertion_pose"})
+        sr_move22 = MovePose.MOVES(name="Recovery", action_client=action_client,
+                                 action_goal={'pose': "Plan"+idx+"/pre_insertion_pose"}, timeout=1.)
 
         s_move222 = MovePose.MOVESFT(name="Sensing", action_client=action_client,
                                  action_goal={'pose': "Plan"+idx+"/sensing_pose"}, timeout=5., idx=idx)
 
-        observe_and_insert_1.add_children([pose_est2, s_move21, fine_tune1, s_move22, s_move222])
+        observe_and_insert_1.add_children([s_inter1, pose_est2, s_move21, fine_tune1, s_move22, s_move222])
 
         selection_1 = py_trees.composites.Selector(name="Selection", memory=False)
         selection_1.add_child(observe_and_insert_1)
-        selection_1.add_child(s_inter3)
+        selection_1.add_child(sr_move22)
 
         s_move23 = MovePose.MOVES(name="Insertion", action_client=action_client,
                                   action_goal={'pose': "Plan"+idx+"/post_insertion_pose"},
-                                  timeout=7.)
+                                  timeout=5.)
 
         s_move24 = Gripper.GOTO(name="Open", action_client=action_client,
                                 action_goal=0.0,
@@ -193,10 +188,8 @@ class Move(base_job.BaseJob):
 
         place = py_trees.composites.Sequence(name="MovePlace", memory=True)
         #MJ
-        # place.add_children([s_init6, pose_est2, s_init_inter1, s_init_inter2, s_move21, fine_tune1, s_move22, s_move23, s_move24,detach, s_move25, s_init_inter4, s_init_inter3, s_init7])
-        # place.add_children([s_init6, pose_est2, s_init_inter1, s_init_inter2, observe_and_insert_1])
-        place.add_children([s_init6, s_inter1, selection_1, s_move23, s_move24, detach, s_move25])
-        # place.add_children([s_init6, s_inter1, selection_1, s_move23, s_move24, s_move25])
+        place.add_children([s_init6, selection_1, s_move23, s_move24, detach, s_move25])
+        # place.add_children([s_init6, selection_1])
 
         
         task = py_trees.composites.Sequence(name="SSDMoveResil", memory=True)

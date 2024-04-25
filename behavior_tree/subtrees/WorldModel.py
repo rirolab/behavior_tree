@@ -244,10 +244,11 @@ class FINETUNE_GOALS(py_trees.behaviour.Behaviour):
         return True
 
     def match_result_callback(self, msg):
-        # self.ny_pose = msg.pose
-        # print("SSSSSSS\n\n\n\n\n\n\n", msg.pose.position.x)
         self.ny_pose = [msg.pose.position.x, msg.pose.position.y, msg.pose.position.z, msg.pose.orientation.x, msg.pose.orientation.y, msg.pose.orientation.z, msg.pose.orientation.w]
-        self.ny_pose = misc.list_quat2list_rpy(self.ny_pose)
+        self.ny_pose = misc.list_quat2list_rpy(self.ny_pose)        
+        ## For collision test ## 
+        # self.ny_pose[0] += 0.1
+
         
     def initialise(self):
         self.logger.debug("{0}.initialise()".format(self.__class__.__name__))
@@ -298,11 +299,9 @@ class FINETUNE_GOALS(py_trees.behaviour.Behaviour):
         sense_ps = misc.pose2list(sense_ps)
         sense_ps = misc.list_quat2list_rpy(sense_ps)
 
-        print("NYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY\n\n\n\n\n\n\n\n", self.ny_pose[0], self.ny_pose[1], self.ny_pose[-1])
         pre_ps[0] += self.ny_pose[0]
         pre_ps[2] += self.ny_pose[1]
         pre_ps[-2] -= self.ny_pose[-1]
-        # pre_ps[-2] += 0.8
         
         pre_ps = misc.list_rpy2list_quat(pre_ps)
         pre_ps = misc.list2Pose(pre_ps)
@@ -310,14 +309,13 @@ class FINETUNE_GOALS(py_trees.behaviour.Behaviour):
         post_ps[0] += self.ny_pose[0]
         post_ps[2] += self.ny_pose[1]
         post_ps[-2] -= self.ny_pose[-1]
-        # post_ps[-2] += 0.8
         post_ps = misc.list_rpy2list_quat(post_ps)
         post_ps = misc.list2Pose(post_ps)
 
         sense_ps[0] += self.ny_pose[0]
         sense_ps[2] += self.ny_pose[1]
         sense_ps[-2] -= self.ny_pose[-1]
-        # post_ps[-2] += 0.8
+        
         sense_ps = misc.list_rpy2list_quat(sense_ps)
         sense_ps = misc.list2Pose(sense_ps)
 
@@ -734,7 +732,7 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                     # place_observation_pose.position.y += 0.25 
                     # place_observation_pose.position.z -= 0.02
                     place_sensing_pose = copy.deepcopy(place_pose)
-                    place_sensing_pose.position.y += 0.21
+                    place_sensing_pose.position.y += 0.18
                     place_sensing_pose.position.z += 0.028
 
                     # place_observation_pose.position.z += 0.05
