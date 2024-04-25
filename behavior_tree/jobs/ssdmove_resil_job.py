@@ -165,8 +165,9 @@ class Move(base_job.BaseJob):
         sr_move22 = MovePose.MOVES(name="Recovery", action_client=action_client,
                                  action_goal={'pose': "Plan"+idx+"/pre_insertion_pose"}, timeout=1.)
 
-        s_move222 = MovePose.MOVESFT(name="Sensing", action_client=action_client,
-                                 action_goal={'pose': "Plan"+idx+"/sensing_pose"}, timeout=5., idx=idx)
+        s_move222 = MovePose.MOVES(name="Sensing", action_client=action_client,
+                                 action_goal={'pose': "Plan"+idx+"/sensing_pose"}, timeout=5., check_contact=True)
+
 
         observe_and_insert_1.add_children([s_inter1, pose_est2, s_move21, fine_tune1, s_move22, s_move222])
 
