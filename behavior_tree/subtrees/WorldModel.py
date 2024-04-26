@@ -9,6 +9,7 @@ import py_trees_ros
 import PyKDL
 import rclpy
 #import py_trees.console as console
+from py_trees_ros import exceptions, utilities
 from rclpy.callback_groups import ReentrantCallbackGroup, MutuallyExclusiveCallbackGroup
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 

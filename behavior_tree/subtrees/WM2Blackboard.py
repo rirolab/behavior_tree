@@ -38,7 +38,6 @@ class ToBlackboard(subscribers.ToBlackboard):
                 self.node.get_logger().warning("%s: No world model on the blackboard!" % self.name)
             else:
                 self.blackboard.no_wm_warning=False
-                
             self.feedback_message = "No world model " if self.blackboard.no_wm_warning else "World model is ok"
             
         return status

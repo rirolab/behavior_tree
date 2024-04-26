@@ -68,7 +68,7 @@ class MOVEP(Move.MOVE):
             cmd_str = json.dumps({'action_type': 'movePose',
                                   'goal': json.dumps(goal),
                                   'uuid': self.goal_uuid_des.tolist(),
-                                  'timeout': 3.,
+                                  'timeout': self.timeout,
                                   'enable_wait': False})
             req = StringGoalStatus.Request(data=cmd_str)
             self.future = self.cmd_req.call_async(req)
@@ -117,11 +117,12 @@ class MOVES(Move.MOVE):
     priority behaviour.
     """
 
-    def __init__(self, name, action_client, action_goal=None):
+    def __init__(self, name, action_client, action_goal=None, timeout=1., check_contact=False):
         super(MOVES, self).__init__(name=name,
                                    action_client=action_client,
-                                   action_goal=action_goal)
-
+                                    action_goal=action_goal,
+                                    timeout=timeout)
+        self.check_contact = check_contact
         self.blackboard.register_key(key=self.action_goal['pose'], \
                                      access=py_trees.common.Access.READ)
 
@@ -158,7 +159,8 @@ class MOVES(Move.MOVE):
             cmd_str = json.dumps({'action_type': 'movePoseStraight',
                                   'goal': json.dumps(goal),
                                   'uuid': self.goal_uuid_des.tolist(),
-                                  'timeout': 3.,
+                                  'timeout': self.timeout,
+                                  'check_contact': self.check_contact,
                                   'enable_wait': False})
             req = StringGoalStatus.Request(data=cmd_str)
             self.future = self.cmd_req.call_async(req)
@@ -196,7 +198,6 @@ class MOVES(Move.MOVE):
             return py_trees.common.Status.RUNNING
 
 
-
 class MOVEPR(Move.MOVE):
     """
     Move Pose Relative with a certain frame
@@ -207,10 +208,11 @@ class MOVEPR(Move.MOVE):
     priority behaviour.
     """
     def __init__(self, name, action_client, action_goal=None,\
-                     cont=False):
+                     cont=False, timeout=3.):
         super(MOVEPR, self).__init__(name=name,
                                    action_client=action_client,
-                                   action_goal=action_goal)
+                                     action_goal=action_goal,
+                                     timeout=timeout)
 
         ## self.blackboard.register_key(key=self.action_goal['pose'], \
         ##                              access=py_trees.common.Access.READ)
@@ -265,7 +267,7 @@ class MOVEPR(Move.MOVE):
                                   'goal': json.dumps(goal),
                                   'frame': self.action_goal['frame'],
                                   'uuid': self.goal_uuid_des.tolist(),
-                                  'timeout': 7.,
+                                  'timeout': self.timeout,
                                   'enable_wait': False})
 
             req = StringGoalStatus.Request(data=cmd_str)            
@@ -275,7 +277,6 @@ class MOVEPR(Move.MOVE):
             self.feedback_message = "Sending a joint goal"
             return py_trees.common.Status.RUNNING
             
-        
         if self.blackboard.goal_id is None:
             return py_trees.common.Status.RUNNING
             
@@ -315,10 +316,11 @@ class MOVEPROOT(Move.MOVE):
     priority behaviour.
     """
 
-    def __init__(self, name, action_client, action_goal=None):
+    def __init__(self, name, action_client, action_goal=None, timeout=3.):
         super(MOVEPROOT, self).__init__(name=name,
                                    action_client=action_client,
-                                   action_goal=action_goal)
+                                        action_goal=action_goal,
+                                        timeout=timeout)
     
         self.blackboard.register_key(key=self.action_goal['pose'], \
                                      access=py_trees.common.Access.READ)
@@ -357,7 +359,7 @@ class MOVEPROOT(Move.MOVE):
             cmd_str = json.dumps({'action_type': 'movePoseRoot',
                                   'goal': json.dumps(goal),
                                   'uuid': self.goal_uuid_des.tolist(),
-                                  'timeout': 3.,
+                                  'timeout': self.timeout,
                                   'enable_wait': False})
             req = StringGoalStatus.Request(data=cmd_str)            
             self.future = self.cmd_req.call_async(req)
