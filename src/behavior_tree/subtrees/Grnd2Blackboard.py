@@ -11,7 +11,8 @@ class ToBlackboard(subscribers.ToBlackboard):
         super(ToBlackboard, self).__init__(name=name,
                                            topic_name=topic_name,
                                            topic_type=std_msgs.String,
-                                           blackboard_variables={"grnd_msg": None}, clearing_policy=py_trees.common.ClearingPolicy.ON_INITIALISE 
+                                           blackboard_variables={"grnd_msg": None}, 
+                                           clearing_policy=py_trees.common.ClearingPolicy.ON_INITIALISE 
                                            )
 
         self.blackboard = py_trees.blackboard.Blackboard()
