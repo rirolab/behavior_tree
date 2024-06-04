@@ -1,18 +1,23 @@
 #!/usr/bin/env python3
 # Copyright YYYY Massachusetts Institute of Technology 
 
+# Standard imports
+import sys
+import json
 import importlib
+
+# Third-party imports
+import numpy as np
 import py_trees
-import py_trees_ros
 import py_trees.console as console
+
+# ROS-related imports
 import rospy
 import std_msgs.msg as std_msgs
-import sys
-import numpy as np
-import json
+import py_trees_ros
 
-## import subtrees.WM2Blackboard
-from subtrees import Grnd2Blackboard
+# Local imports
+from subtrees import Grnd2Blackboard, Goals2Blackboard
 import decorators
 
 def create_root(controller_ns=""):
@@ -67,7 +72,7 @@ def create_root(controller_ns=""):
     root.add_children([grnd2bb,priorities])
     return root
 
-
+# Helper function to load a list of topics to record
 def load_topic_list(filename):
     if filename is None: return None
         
@@ -75,7 +80,7 @@ def load_topic_list(filename):
     with open(filename) as json_file:
         data = json.load(json_file)
         for p in data['topic_list']:
-            topic_list_str += p+' '
+            topic_list_str += p + ' '
     if topic_list_str == "": return None
     return topic_list_str
             
@@ -104,13 +109,17 @@ class SplinteredReality(object):
         self.tree = py_trees_ros.trees.BehaviourTree(create_root(self.controller_ns))
         self.tree.add_pre_tick_handler(self.pre_tick_handler)
         self.tree.add_post_tick_handler(self.post_tick_handler)
+
         self.report_publisher = rospy.Publisher("~report", std_msgs.String, queue_size=5)
+
+        # Initialise the jobs given
         self.jobs = []
         for job in jobs:
             module_name = '.'.join(job.split('.')[:-1])
             class_name = job.split('.')[-1]
             self.jobs.append(getattr(importlib.import_module(module_name), class_name)())
         self.current_job = None
+
         rospy.loginfo("dynamic_behavior_tree: initialized")
 
 
@@ -139,15 +148,17 @@ class SplinteredReality(object):
                 goal = job.goal
 
         if not self.busy() and goal is not None:
+            # 'Cancel' sequence block building
             cancel_seq = py_trees.composites.Sequence(name="Cancel")        
             is_stop_requested = py_trees.blackboard.CheckBlackboardVariable(
                 name="Stop?",
                 variable_name="stop_cmd",
                 expected_value=True
                 )
-            cancel_seq.add_child(is_stop_requested)                                
-            task_list = []
+            cancel_seq.add_child(is_stop_requested)
 
+            task_list = []
+            
             # self.jobs are holding all available job classes
             for idx in range(len(goal)):                
                 for job in self.jobs:
@@ -282,8 +293,6 @@ class SplinteredReality(object):
             self.current_job = job
             return 
             
-                    
-
     def post_tick_handler(self, tree):
         """
         Check if a job is running and if it has finished. If so, prune the job subtree from the tree.
@@ -330,9 +339,6 @@ class SplinteredReality(object):
     def shutdown(self):
         self.tree.interrupt()
 
-
-
-
 ##############################################################################
 # Main
 ##############################################################################
@@ -360,7 +366,7 @@ if __name__ == '__main__':
 
     # TODO: import a list of jobs from a json file or ROS parameter server.
     # Keep the default job on the top
-    rospy.init_node("tree")   
+    rospy.init_node("BT")   
     splintered_reality = SplinteredReality(jobs=['jobs.pick_job.Move',
                                                  'jobs.place_job.Move',
                                                  'jobs.move_job.Move',
@@ -372,6 +378,7 @@ if __name__ == '__main__':
                                                  'jobs.touch_job.Move'],
                                                  rec_topic_list=topic_list)
     rospy.on_shutdown(splintered_reality.shutdown)
+
     if not splintered_reality.setup():
         console.logerror("failed to setup the tree, aborting.")
         sys.exit(1)
