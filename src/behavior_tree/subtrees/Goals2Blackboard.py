@@ -9,12 +9,6 @@ from py_trees_ros import subscribers
 # ROS imports
 import rospy
 import std_msgs.msg as std_msgs
-from actionlib_msgs.msg import GoalStatus
-
-# Local import
-from riro_navigation.msg import TaskPlanAction, TaskPlanResult, TaskPlanFeedback, GoalInfo, GoalsInfo
-from riro_navigation.msg import Dictlistfloat
-from riro_navigation.srv import LTLPlan, LTLPlanRequest
 
 class ToBlackboard(subscribers.ToBlackboard):
 
