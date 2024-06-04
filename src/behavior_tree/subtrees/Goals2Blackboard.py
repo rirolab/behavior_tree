@@ -1,5 +1,6 @@
 # Standard imports
 import json
+import queue
 
 # Third-party imports
 import py_trees
@@ -7,7 +8,6 @@ from py_trees_ros import subscribers
 
 # ROS imports
 import rospy
-import actionlib
 import std_msgs.msg as std_msgs
 from actionlib_msgs.msg import GoalStatus
 
@@ -27,6 +27,9 @@ class ToBlackboard(subscribers.ToBlackboard):
                                            )
 
         self.blackboard = py_trees.blackboard.Blackboard()
+        self.blackboard.goal_num = 0 # To track the number of goals
+        self.blackboard.list_goals = [] # To store and lookup the goals
+        self.blackboard.queue_goals = queue.Queue() # To track the progress
 
     def update(self):
         self.logger.debug("%s.update()" % self.__class__.__name__)
@@ -41,8 +44,11 @@ class ToBlackboard(subscribers.ToBlackboard):
             # Load the goals from the blackboard
             goals = json.loads(self.blackboard.goals.data)
         
-        # Create queue for goals
-        self.blackboard.queue = None
-        self.blackboard.queue = []
-        for goal in goals['goals']:
-            self.blackboard.queue.append(goal[1])
+            # Create queue for goals  
+            for goal in goals:
+                self.blackboard.goal_num += 1
+                self.blackboard.list_goals.append(goal)
+                self.blackboard.queue_goals.put(goal)
+                rospy.loginfo("%s: Goal %d: added" % (self.__class__.__name__, 
+                                                      self.blackboard.goal_num
+                                                      ))
