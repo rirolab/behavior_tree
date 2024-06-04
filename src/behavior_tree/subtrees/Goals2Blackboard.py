@@ -46,3 +46,4 @@ class ToBlackboard(subscribers.ToBlackboard):
                 rospy.loginfo("%s: Goal %d: added" % (self.__class__.__name__, 
                                                       self.blackboard.goal_num
                                                       ))
+        return status
