@@ -34,6 +34,8 @@ def create_root(controller_ns=""):
     ## topics2bb = py_trees.composites.Sequence("Topics2BB")
     grnd2bb = Grnd2Blackboard.ToBlackboard(name="Grnd2BB",
                                            topic_name="symbol_grounding")
+    goals2bb = Goals2Blackboard.ToBlackboard(name="Goals2BB",
+                                             topic_name="/task_goals")
     ## wm2bb   = WM2Blackboard.ToBlackboard(name="WM2BB",
     ##                                      topic_name="/world_model" )
     ## reccmd2bb = py_trees_ros.subscribers.EventToBlackboard(
@@ -69,7 +71,7 @@ def create_root(controller_ns=""):
     idle       = py_trees.behaviours.Running(name="Idle")
     priorities.add_child(idle)
     
-    root.add_children([grnd2bb,priorities])
+    root.add_children([grnd2bb, goals2bb, priorities])
     return root
 
 # Helper function to load a list of topics to record
@@ -195,6 +197,16 @@ class SplinteredReality(object):
             ## root = py_trees.composites.Sequence(name="SubRoot")
             ## root.add_child(run_or_cancel)
             root = run_or_cancel
+            
+            # https://py-trees.readthedocs.io/en/devel/_modules/py_trees/trees.html#BehaviourTree
+            # def insert_subtree(self, 
+            #                    child: behaviour.Behaviour, 
+            #                    unique_id: uuid.UUID, 
+            #                    index: int) -> bool:
+            # Args:
+            # child: subtree to insert
+            # unique_id: unique id of the parent
+            # index: insert the child at this index, pushing all children after it back one.
             tree.insert_subtree(root, self.priorities.id, 0)
             rospy.loginfo("{0}: inserted job subtree".format(root.name))
 
