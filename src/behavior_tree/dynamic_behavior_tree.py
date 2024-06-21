@@ -151,7 +151,7 @@ class SplinteredReality(object):
 
         if not self.busy() and goal is not None:
             # 'Cancel' sequence block building
-            cancel_seq = py_trees.composites.Sequence(name="Cancel")        
+            cancel_seq = py_trees.composites.Sequence(name="Cancel")
             is_stop_requested = py_trees.blackboard.CheckBlackboardVariable(
                 name="Stop?",
                 variable_name="stop_cmd",
@@ -162,7 +162,7 @@ class SplinteredReality(object):
             task_list = []
             
             # self.jobs are holding all available job classes
-            for idx in range(len(goal)):                
+            for idx in range(len(goal)):
                 for job in self.jobs:
                     # job.goal contains current goal json message.
                     if job.goal is not None:
@@ -314,14 +314,24 @@ class SplinteredReality(object):
             tree (:class:`~py_trees.trees.BehaviourTree`): tree to investigate/manipulate.
         """
         # delete the job subtree if it is finished
-        if self.busy():
-            job = self.priorities.children[-2]
+        # if self.busy():
+        #     job = self.priorities.children[-2]
+                        
+        #     if job.status == py_trees.common.Status.SUCCESS or job.status == py_trees.common.Status.FAILURE or job.status == py_trees.common.Status.INVALID:
+        #         rospy.loginfo("{0}: finished [{1}]".format(job.name, job.status))
+        #         tree.prune_subtree(job.id)
+        #         self.current_job = None
+        
+        if not self.idle():
+            job = self.priorities.children[0]
                         
             if job.status == py_trees.common.Status.SUCCESS or job.status == py_trees.common.Status.FAILURE or job.status == py_trees.common.Status.INVALID:
                 rospy.loginfo("{0}: finished [{1}]".format(job.name, job.status))
+                print("{0}: finished [{1}]".format(job.name, job.status))
+                
                 tree.prune_subtree(job.id)
                 self.current_job = None
-                
+
         ## # publish a status report
         ## if self.busy():
         ##     job = self.priorities.children[-2]
@@ -331,6 +341,9 @@ class SplinteredReality(object):
         ## else:
             ## self.report_publisher.publish("idle")
 
+    # When there are no goal subtrees, except idle node
+    def idle(self):
+        return len(self.priorities.children) == 1
 
     def busy(self):
         """
