@@ -12,6 +12,8 @@ import std_msgs.msg as std_msgs
 
 class ToBlackboard(subscribers.ToBlackboard):
 
+    # Goals are published from quadruped_riro/ltl_planner/product_automata_planner.py, 
+    # refer to line 340 & 623 to corresponding file.
     def __init__(self, name, topic_name="/task_goals"):
         super(ToBlackboard, self).__init__(name=name,
                                            topic_name = topic_name,
@@ -37,13 +39,18 @@ class ToBlackboard(subscribers.ToBlackboard):
             
             # Load the goals from the blackboard
             goals = json.loads(self.blackboard.goals.data)
+
+            self.blackboard.goal_num = goals['param_num'] # number of goals
         
-            # Create queue for goals  
-            for goal in goals:
-                self.blackboard.goal_num += 1
-                self.blackboard.list_goals.append(goal)
-                self.blackboard.queue_goals.put(goal)
-                rospy.loginfo("%s: Goal %d: added" % (self.__class__.__name__, 
-                                                      self.blackboard.goal_num
-                                                      ))
+            # Create queue for goals
+            for i in range(1, self.blackboard.goal_num + 1):
+                goal_key = str(i)
+                if goal_key in goals['params']:
+                    goal = goals['params'][goal_key]
+                    # Put goal into list and push goal into queue
+                    self.blackboard.list_goals.append(goal)
+                    self.blackboard.queue_goals.put(goal)
+
+                    # Log
+                    rospy.loginfo("%s: Goal %d: added" % (self.__class__.__name__, i))
         return status
