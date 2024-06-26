@@ -120,6 +120,8 @@ class SplinteredReality(object):
             module_name = '.'.join(job.split('.')[:-1])
             class_name = job.split('.')[-1]
             self.jobs.append(getattr(importlib.import_module(module_name), class_name)())
+        
+        # Not directly used in this code, but useful for inspection
         self.current_job = None
 
         rospy.loginfo("dynamic_behavior_tree: initialized")
@@ -134,7 +136,7 @@ class SplinteredReality(object):
         """
         return self.tree.setup(timeout=15)
 
-
+    #TODO: Consider reconfiguring the tree when a new goal comes in
     def pre_tick_handler(self, tree):
         """
         Check if a job is running. If not, spin up a new job subtree
@@ -144,86 +146,79 @@ class SplinteredReality(object):
             tree (:class:`~py_trees.trees.BehaviourTree`): tree to investigate/manipulate.
         """
 
-        goal = None
-        for job in self.jobs:
-            if job.goal is not None:
-                goal = job.goal
+        rospy.loginfo(f"[TREE ROOT] pre_tick_handler() is adding {self.blackboard.goal_num} goal subtrees")
+        goals = self.blackboard.get('goals')
 
-        if not self.busy() and goal is not None:
-            # 'Cancel' sequence block building
-            cancel_seq = py_trees.composites.Sequence(name="Cancel")
-            is_stop_requested = py_trees.blackboard.CheckBlackboardVariable(
-                name="Stop?",
-                variable_name="stop_cmd",
-                expected_value=True
-                )
-            cancel_seq.add_child(is_stop_requested)
-
+        # Check whether the tree is idle and there are goals to process
+        if goals is not None:
+            goals = json.loads(goals.data)
             task_list = []
+
+            # Basic setup when the tree is idle
+            if not self.busy():
+                # Configure 'cancel' block
+                cancel_seq = py_trees.composites.Sequence(name="Cancel")
+                is_stop_requested = py_trees.blackboard.CheckBlackboardVariable(
+                                    name="Stop?",
+                                    variable_name="stop_cmd",
+                                    expected_value=True
+                                    )
+                cancel_seq.add_child(is_stop_requested)
+
+                # Configure 'task' block
+                task = py_trees.composites.Sequence(name="Task")
+
+                # Configure 'run_or_cancel' block
+                if self.n_loop <= 1 and self.enable_inf_loop is False:
+                    run_or_cancel = py_trees.composites.Selector(name="Run or Cancel?")
+                    run_or_cancel.add_children([cancel_seq, task])
+                else:
+                    loop = decorators.Loop(child=task, name='Loop', n_loop=self.n_loop,
+                                           enable_inf_loop=self.enable_inf_loop,
+                                           timeout=self.loop_timeout)
+
+                    run_or_cancel = py_trees.composites.Selector(name="Run or Cancel?")
+                    run_or_cancel.add_children([cancel_seq, loop])
             
-            # self.jobs are holding all available job classes
-            for idx in range(len(goal)):
+                # Insert the 'run_or_cancel' block under 'self.priorities'
+                # https://py-trees.readthedocs.io/en/devel/_modules/py_trees/trees.html#BehaviourTree
+                # def insert_subtree(self, 
+                #                    child: behaviour.Behaviour, 
+                #                    unique_id: uuid.UUID, 
+                #                    index: int) -> bool:
+                # child: subtree to insert
+                # unique_id: unique id of the parent
+                # index: insert the child at this index, pushing all children after it back one.
+                tree.insert_subtree(run_or_cancel, self.priorities.id, 0)
+                rospy.loginfo("{0}: inserted job subtree".format(run_or_cancel.name))
+
+            # Configure 'task' block
+            for idx in range(self.blackboard.goal_num + 1):
                 for job in self.jobs:
-                    # job.goal contains current goal json message.
-                    if job.goal is not None:
-                        job_root = job.create_root(str(idx+1), job.goal,
+                    if job.name == goals['params'][str(idx + 1)]['primitive_action']:
+                        job_root = job.create_root(str(idx+1), goals,
                                                    self.controller_ns,
                                                    rec_topic_list=self.rec_topic_list)
                         if job_root is None:
                             continue
-                        rospy.loginfo("{0}: running to set up all subtree modules".format(idx+1))
+
+                        # Setting up i-th goal subtree
+                        rospy.loginfo("{0}: running to set up all goal subtree modules".format(idx+1))
                         if not job_root.setup(timeout=15):
-                            rospy.logerr("{0}: failed to setup".format(idx+1))
+                            rospy.logerr("goal {0}: failed to setup".format(idx+1))
                             continue
                         rospy.loginfo("{0}: finished setting up".format(idx+1))
+
                         task_list.append(job_root)
-                        #continue
                         break
-
-            task = py_trees.composites.Sequence(name="Task")
+            
             task.add_children(task_list)
-                    
-            if self.n_loop<=1 and self.enable_inf_loop is False:
-                run_or_cancel = py_trees.composites.Selector(name="Run or Cancel?")
-                run_or_cancel.add_children([cancel_seq, task])
-            else:
-                loop = decorators.Loop(child=task, name='Loop', n_loop=self.n_loop,
-                                       enable_inf_loop=self.enable_inf_loop,
-                                       timeout=self.loop_timeout)
-
-                run_or_cancel = py_trees.composites.Selector(name="Run or Cancel?")
-                run_or_cancel.add_children([cancel_seq, loop])
-            
-            ## root = py_trees.composites.Sequence(name="SubRoot")
-            ## root.add_child(run_or_cancel)
-            root = run_or_cancel
-            
-            # https://py-trees.readthedocs.io/en/devel/_modules/py_trees/trees.html#BehaviourTree
-            # def insert_subtree(self, 
-            #                    child: behaviour.Behaviour, 
-            #                    unique_id: uuid.UUID, 
-            #                    index: int) -> bool:
-            # Args:
-            # child: subtree to insert
-            # unique_id: unique id of the parent
-            # index: insert the child at this index, pushing all children after it back one.
-            tree.insert_subtree(root, self.priorities.id, 0)
-            rospy.loginfo("{0}: inserted job subtree".format(root.name))
-
-            # Reset goals
-            for job in self.jobs:
-                job.goal = None
-            self.current_job = job
+            self.current_job = task.children[0]
             
             return
-            ## self.blackboard.is_running = True
 
-            ## if rec_job is not None:
-            ##     # launch rosbag?
-            ##     rospy.loginfo("Start to record rosbag")
-
-        # Dynamic Reconfiguration
-        elif self.busy() and goal is not None and False:
+        # Dynamic Reconfiguration (Not used in this code)
+        elif self.busy() and goals is not None and False:
             # Todo find the node by name
             is_task_node = False
             for task_node in self.priorities.iterate():
@@ -323,7 +318,7 @@ class SplinteredReality(object):
         #         self.current_job = None
         
         if not self.idle():
-            job = self.priorities.children[0]
+            job = self.priorities.children[0] # 'Run or Cancel?' block
                         
             if job.status == py_trees.common.Status.SUCCESS or job.status == py_trees.common.Status.FAILURE or job.status == py_trees.common.Status.INVALID:
                 rospy.loginfo("{0}: finished [{1}]".format(job.name, job.status))
@@ -352,7 +347,7 @@ class SplinteredReality(object):
         Returns:
             :obj:`bool`: whether it is busy with a job subtree or not
         """
-        return len(self.priorities.children) == 2
+        return len(self.priorities.children) >= 2
 
     @property
     def priorities(self):
