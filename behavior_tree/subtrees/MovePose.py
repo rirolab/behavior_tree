@@ -26,10 +26,11 @@ class MOVEP(Move.MOVE):
     priority behaviour.
     """
 
-    def __init__(self, name, action_client, action_goal=None):
+    def __init__(self, name, action_client, action_goal=None, timeout=1.):
         super(MOVEP, self).__init__(name=name,
                                    action_client=action_client,
-                                   action_goal=action_goal)
+                                   action_goal=action_goal,
+                                   timeout=timeout)
 
         self.blackboard.register_key(key=self.action_goal['pose'], \
                                      access=py_trees.common.Access.READ)
