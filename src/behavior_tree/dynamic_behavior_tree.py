@@ -17,7 +17,7 @@ import std_msgs.msg as std_msgs
 import py_trees_ros
 
 # Local imports
-from subtrees import Grnd2Blackboard, Goals2Blackboard
+from subtrees import Grnd2Blackboard, WM2Blackboard
 import decorators
 
 def create_root(controller_ns=""):
@@ -34,10 +34,10 @@ def create_root(controller_ns=""):
     ## topics2bb = py_trees.composites.Sequence("Topics2BB")
     grnd2bb = Grnd2Blackboard.ToBlackboard(name="Grnd2BB",
                                            topic_name="symbol_grounding")
-    goals2bb = Goals2Blackboard.ToBlackboard(name="Goals2BB",
-                                             topic_name="/task_goals")
-    ## wm2bb   = WM2Blackboard.ToBlackboard(name="WM2BB",
-    ##                                      topic_name="/world_model" )
+    # goals2bb = Goals2Blackboard.ToBlackboard(name="Goals2BB",
+    #                                          topic_name="/task_goals")
+    wm2bb   = WM2Blackboard.ToBlackboard(name="WM2BB",
+                                         topic_name="/world_model" )
     ## reccmd2bb = py_trees_ros.subscribers.EventToBlackboard(
     ##     name="RecCmd2BB",
     ##     topic_name="/record_cmd",
@@ -71,7 +71,7 @@ def create_root(controller_ns=""):
     idle       = py_trees.behaviours.Running(name="Idle")
     priorities.add_child(idle)
     
-    root.add_children([grnd2bb, goals2bb, priorities])
+    root.add_children([grnd2bb, wm2bb, priorities])
     return root
 
 # Helper function to load a list of topics to record
