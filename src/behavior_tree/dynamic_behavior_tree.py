@@ -34,8 +34,6 @@ def create_root(controller_ns=""):
     ## topics2bb = py_trees.composites.Sequence("Topics2BB")
     grnd2bb = Grnd2Blackboard.ToBlackboard(name="Grnd2BB",
                                            topic_name="symbol_grounding")
-    # goals2bb = Goals2Blackboard.ToBlackboard(name="Goals2BB",
-    #                                          topic_name="/task_goals")
     wm2bb   = WM2Blackboard.ToBlackboard(name="WM2BB",
                                          topic_name="/world_model" )
     ## reccmd2bb = py_trees_ros.subscribers.EventToBlackboard(
