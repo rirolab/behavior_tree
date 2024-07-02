@@ -14,7 +14,7 @@ from complex_action_client import misc
 from geometry_msgs.msg import PoseStamped, Point, Quaternion, Pose
 
 sys.path.insert(0,'..')
-from subtrees import MoveJoint, MovePose, Gripper, Stop
+from subtrees import MoveJoint, MovePose, Gripper, Stop, WorldModel
 
 
 ##############################################################################
@@ -69,8 +69,9 @@ class Move(object):
         else:
             grounding = json.loads(msg.data)['params']
             for i in range( len(grounding.keys()) ):
-                self.goal = grounding
-                break
+                if grounding[str(i+1)]['primitive_action'] in ['move_to_goal']:
+                    self.goal = grounding
+                    break
 
     @staticmethod
     def create_root(idx="1", goal=std_msgs.Empty(), controller_ns="", **kwargs):
@@ -83,5 +84,21 @@ class Move(object):
         Returns:
            :class:`~py_trees.behaviour.Behaviour`: subtree root
         """
+        # beahviors
+        root = py_trees.composites.Sequence(name="Pick")
+        blackboard = py_trees.blackboard.Blackboard()
+        
+        # move to goal
+        if goal[idx]["primitive_action"] in ['move_to_goal']:
+            if 'object' in goal[idx].keys():
+                obj = goal[idx]['object']
+            elif 'obj' in goal[idx].keys():
+                obj = goal[idx]['obj']
+            else:
+                rospy.logerr("Pick: No navigation object")
+                sys.exit()                
+        else:
+            return None
+
         return None
 
