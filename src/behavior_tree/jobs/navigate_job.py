@@ -14,7 +14,7 @@ from complex_action_client import misc
 from geometry_msgs.msg import PoseStamped, Point, Quaternion, Pose
 
 sys.path.insert(0,'..')
-from subtrees import MoveJoint, MovePose, Gripper, Stop, WorldModel
+from subtrees import MoveJoint, MovePose, MoveBase, Gripper, Stop, WorldModel
 
 
 ##############################################################################
@@ -85,20 +85,24 @@ class Move(object):
            :class:`~py_trees.behaviour.Behaviour`: subtree root
         """
         # beahviors
-        root = py_trees.composites.Sequence(name="Pick")
+        root = py_trees.composites.Sequence(name="navigate_job"+idx)
         blackboard = py_trees.blackboard.Blackboard()
         
         # move to goal
         if goal[idx]["primitive_action"] in ['move_to_goal']:
-            if 'object' in goal[idx].keys():
-                obj = goal[idx]['object']
-            elif 'obj' in goal[idx].keys():
-                obj = goal[idx]['obj']
+            if 'goal' in goal[idx].keys():
+                goal = goal[idx]['destination']
             else:
-                rospy.logerr("Pick: No navigation object")
-                sys.exit()                
+                rospy.logerr("No navigation goal")
+                sys.exit()
         else:
             return None
 
-        return None
+        # ----------------- Navigate ---------------------
+        navigate = py_trees.composites.Sequence(name="navigate")
+        s_drive = MoveBase.MOVEB(name = "Drive", idx=idx, destination=goal,
+                                 action_goal={'pose': "goal"+idx+"/location"})
+        navigate.add_children([s_drive])
 
+        root.add_children([navigate])
+        return root
