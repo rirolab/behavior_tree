@@ -1,4 +1,3 @@
-
 import numpy as np
 import json
 import rospy
@@ -54,11 +53,13 @@ class MOVEB(py_trees.behaviour.Behaviour):
     def setup(self, timeout):
         rospy.loginfo('[subtree] movebase: setup() called.')
         self.feedback_message = "{}: setup".format(self.name)
+
         rospy.wait_for_service("move_base_client/command", rospy.Duration(3))
         self.cmd_req = rospy.ServiceProxy("move_base_client/command", String_Int)
+
         rospy.wait_for_service("move_base_client/status", rospy.Duration(3))
         self.status_req = rospy.ServiceProxy("move_base_client/status", None_String)
-        rospy.loginfo('[subtree] movebase: setup() done.')
+
         rospy.wait_for_service(self._drive_status_update_srv_channel, rospy.Duration(3))
         self.drive_status_update_req = rospy.ServiceProxy(self._drive_status_update_srv_channel, String_None)
 
@@ -69,6 +70,8 @@ class MOVEB(py_trees.behaviour.Behaviour):
         self.arrival_status_delete_req = rospy.ServiceProxy(self._arrival_state_delete_srv_channel, String_None)
 
         blackboard = py_trees.Blackboard()
+
+        rospy.loginfo('[subtree] movebase: setup() done.')
         return True
 
     def get_obj_pose_from_wm(self, target_name):
@@ -82,6 +85,20 @@ class MOVEB(py_trees.behaviour.Behaviour):
             if wm_obj_name == target_name:
                 target_pose = wm_obj["pose"]
         return target_pose
+    
+    # Returns the goal location from the world model
+    def get_goal_location_from_wm(self, goal_name):
+        blackboard = py_trees.Blackboard()
+        wm_msg = json.loads(blackboard.wm_msg.data)["world"]
+
+        goal_location = None
+
+        for wm_obj in wm_msg:
+            wm_obj_name = wm_obj["name"]
+            if wm_obj_name == goal_name:
+                goal_location = wm_obj["location"]
+        
+        return goal_location
 
     def initialise(self):
         rospy.loginfo('[subtree] movebase: initialise() called.')
