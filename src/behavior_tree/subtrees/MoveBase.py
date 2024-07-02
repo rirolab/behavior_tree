@@ -104,7 +104,9 @@ class MOVEB(py_trees.behaviour.Behaviour):
         rospy.loginfo('[subtree] movebase: initialise() called.')
         self.logger.debug("{0}.initialise()".format(self.__class__.__name__))
         rospy.loginfo(f"{self.__class__.__name__}.intialise() called")
+
         self.sent_goal = False
+
         blackboard = py_trees.Blackboard()
         self.drive_status_update_req(blackboard.robot_name)
         self.arrival_status_delete_req(blackboard.robot_name)
@@ -112,9 +114,10 @@ class MOVEB(py_trees.behaviour.Behaviour):
     def update(self):
         rospy.loginfo('[subtree] movebase: update() called.')
         blackboard = py_trees.Blackboard()
-        ticket = blackboard.get('Plan'+self.idx+'/ticket')
-        print(f"(MOVEBASE update) ticket: {ticket}")
-        docking = (ticket == 0)
+
+        # ticket = blackboard.get('Plan'+self.idx+'/ticket')
+        # print(f"(MOVEBASE update) ticket: {ticket}")
+        # docking = (ticket == 0)
         
         self.logger.debug("%s.update()" % self.__class__.__name__)
 
