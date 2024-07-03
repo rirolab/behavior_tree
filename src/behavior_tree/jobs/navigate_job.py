@@ -14,7 +14,7 @@ from complex_action_client import misc
 from geometry_msgs.msg import PoseStamped, Point, Quaternion, Pose
 
 sys.path.insert(0,'..')
-from subtrees import MoveJoint, MovePose, MoveBase, Gripper, Stop, WorldModel
+from subtrees import MoveJoint, MovePose, MoveBase, MoveGoal, Gripper, Stop, WorldModel
 
 
 ##############################################################################
@@ -100,7 +100,7 @@ class Move(object):
 
         # ----------------- Navigate ---------------------
         navigate = py_trees.composites.Sequence(name="navigate")
-        s_drive = MoveBase.MOVEB(name = "Drive", idx=idx, destination=goal,
+        s_drive = MoveGoal.MOVEG(name = "Drive", idx=idx, destination=goal,
                                  action_goal={'pose': "goal"+idx+"/location"})
         navigate.add_children([s_drive])
 
