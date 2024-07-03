@@ -21,6 +21,7 @@ from complex_action_client.srv import String_Int, None_String, String_IntRequest
 
 from riro_srvs.srv import String_None, String_String, String_Pose, String_PoseResponse, String_Dup_None, String_Dup_NoneRequest
 
+# https://py-trees.readthedocs.io/en/devel/behaviours.html
 class MOVEB(py_trees.behaviour.Behaviour):
     """
     Move Base
@@ -31,7 +32,20 @@ class MOVEB(py_trees.behaviour.Behaviour):
     priority behaviour.
     """
 
+    # __init__(self) should instantiate the behaviour sufficiently for offline dot graph generation
+    # No hardware connections that may not be there, e.g. usb lidars
+    # No middleware connections to other software that may not be there, e.g. ROS pubs/subs/services
+    # No need to fire up other needlessly heavy resources, e.g. heavy threads in the background
     def __init__(self, name, idx='', action_goal=None, destination=None):
+        """
+        Minimal one-time initialisation. A good rule of thumb is
+        to only include the initialisation relevant for being able
+        to insert this behaviour in a tree for offline rendering to
+        dot graphs.
+
+        Other one-time initialisation requirements should be met via
+        the setup() method.
+        """
         super(MOVEB, self).__init__(name=name)
 
         # self.topic_name = topic_name
@@ -39,7 +53,7 @@ class MOVEB(py_trees.behaviour.Behaviour):
         self.action_goal = action_goal
         self.sent_goal   = False
         self._world_frame_id = rospy.get_param("/world_frame", 'map')
-        self.cmd_req     = None
+        self.cmd_req     = None 
         self.idx = idx
         self._drive_status_update_srv_channel = "/update_robot_drive_state"
         rospy.loginfo(f'{self.__class__.__name__}.__init__() called')
@@ -50,7 +64,36 @@ class MOVEB(py_trees.behaviour.Behaviour):
         self._arrival_state_udpate_srv_channel = "/update_arrival_state"
         self._arrival_state_delete_srv_channel = '/delete_arrival_state'
 
+    # setup(self) handles all other one-time initialisations of resources that are required for execution:
+    # Essentially, all the things that the constructor doesn’t handle - hardware connections, middleware and other heavy resources.
     def setup(self, timeout):
+        """
+        When is this called?
+          This function should be either manually called by your program
+          to setup this behaviour alone, or more commonly, via
+          :meth:`~py_trees.behaviour.Behaviour.setup_with_descendants`
+          or :meth:`~py_trees.trees.BehaviourTree.setup`, both of which
+          will iterate over this behaviour, it's children (it's children's
+          children ...) calling :meth:`~py_trees.behaviour.Behaviour.setup`
+          on each in turn.
+
+          If you have vital initialisation necessary to the success
+          execution of your behaviour, put a guard in your
+          :meth:`~py_trees.behaviour.Behaviour.initialise` method
+          to protect against entry without having been setup.
+
+        What to do here?
+          Delayed one-time initialisation that would otherwise interfere
+          with offline rendering of this behaviour in a tree to dot graph
+          or validation of the behaviour's configuration.
+
+          Good examples include:
+
+          - Hardware or driver initialisation
+          - Middleware initialisation (e.g. ROS pubs/subs/services)
+          - A parallel checking for a valid policy configuration after
+            children have been added or removed
+        """
         rospy.loginfo('[subtree] movebase: setup() called.')
         self.feedback_message = "{}: setup".format(self.name)
 
@@ -100,7 +143,17 @@ class MOVEB(py_trees.behaviour.Behaviour):
         
         return goal_location
 
+    # initialise(self) configures and resets the behaviour ready for (repeated) execution
     def initialise(self):
+        """
+        When is this called?
+          The first time your behaviour is ticked and anytime the
+          status is not RUNNING thereafter.
+
+        What to do here?
+          Any initialisation you need before putting your behaviour
+          to work.
+        """
         rospy.loginfo('[subtree] movebase: initialise() called.')
         self.logger.debug("{0}.initialise()".format(self.__class__.__name__))
         rospy.loginfo(f"{self.__class__.__name__}.intialise() called")
@@ -112,6 +165,15 @@ class MOVEB(py_trees.behaviour.Behaviour):
         self.arrival_status_delete_req(blackboard.robot_name)
 
     def update(self):
+        """
+        When is this called?
+          Every time your behaviour is ticked.
+
+        What to do here?
+          - Triggering, checking, monitoring. Anything...but do not block!
+          - Set a feedback message
+          - return a py_trees.common.Status.[RUNNING, SUCCESS, FAILURE]
+        """
         rospy.loginfo('[subtree] movebase: update() called.')
         blackboard = py_trees.Blackboard()
 
