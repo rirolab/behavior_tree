@@ -101,7 +101,7 @@ class Move(object):
         # ----------------- Navigate ---------------------
         navigate = py_trees.composites.Sequence(name="navigate")
         s_drive = MoveGoal.MOVEG(name = "Drive", idx=idx, destination=goal,
-                                 action_goal={'pose': "goal"+idx+"/location"})
+                                 action_goal={'pose': goal})
         navigate.add_children([s_drive])
 
         root.add_children([navigate])
