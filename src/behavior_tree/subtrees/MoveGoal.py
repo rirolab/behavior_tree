@@ -118,6 +118,10 @@ class MOVEG(py_trees.behaviour.Behaviour):
         self.nav_client = actionlib.SimpleActionClient("/move_base", MoveBaseAction)
         self.getregiongoal_client = rospy.ServiceProxy('/manage_map/get_region_goal', getRegionGoal)
 
+        # ROS publihser
+        # self.status_pub publishes the navigation status to product_automata_planner.py
+        self.status_pub = rospy.Publisher('/move_goal_status', String, queue_size=10)
+
         rospy.loginfo('[subtree] movebase: setup() done.')
         return True
 
@@ -160,6 +164,64 @@ class MOVEG(py_trees.behaviour.Behaviour):
 
         blackboard = py_trees.Blackboard()
 
+        goal_name = self.action_goal['pose'] # ex) r1, r3, etc.
+        is_last_goal, goal_loc = self.get_goal_info_from_wm(goal_name)
+        
+        # goal to send to move_base
+        goal = MoveBaseGoal()
+        goal.target_pose.header.frame_id = self.map_frame
+        goal.target_pose.header.stamp = rospy.Time.now()
+
+        # When the task_plan is format of 'r1,' 'r5,' etc.
+        if re.match(r'r\d+', goal_name):
+            # Get the goal from service '/manage_map/get_region_goal'
+            rospy.wait_for_service('/manage_map/get_region_goal') # In line 369 of manage_map.cpp
+            response = self.getregiongoal_client(int(goal_name[1:]))
+
+            goal.target_pose.pose.position.x = response.goal_x
+            goal.target_pose.pose.position.y = response.goal_y
+        else:
+            goal.target_pose.pose.position.x = goal_loc.goal_x
+            goal.target_pose.pose.position.y = goal_loc.goal_y
+        goal.target_pose.pose.position.z = 0
+
+        goal.target_pose.pose.orientation.x = 0
+        goal.target_pose.pose.orientation.y = 0
+        goal.target_pose.pose.orientation.z = 0
+        goal.target_pose.pose.orientation.w = 1
+
+        if self.sim == False:
+            rate = rospy.Rate(1)
+            rospy.loginfo(f"Navigation Plan Ready!")
+            while self.rviz_msg == None:
+                rate.sleep()
+        rospy.loginfo(f"Navigation Plan Being Executed!")
+
+        result = self.nav_move_base(goal)
+
+        # http://docs.ros.org/en/lunar/api/actionlib_msgs/html/msg/GoalStatus.html
+        # Checking the '/move_base' action client
+        if self.nav_client.get_state() == 2: # PREEMPTED
+            print("Navigation cancelled")
+            if not result.relaxation:
+                self.rviz_msg = None
+            # self.task_plan_server.set_preempted(result)
+            self.status_pub.publish("Cancelled")
+            return
+        elif self.nav_client.get_state() == 4: # ABORTED
+            print("Navigation aborted")
+            self.rviz_msg = None
+            # self.task_plan_server.set_aborted(result)
+            self.status_pub.publish("Aborted")
+            return
+
+        # print("Navigation succeed")
+        # self.task_plan_server.set_succeeded(result)
+        self.status_pub.publish("Succeeded")
+        rospy.loginfo(f"Navigation Plan Complete!")
+        if is_last_goal:
+            self.rviz_msg = None
+        return
 
 
     def terminate(self, new_status):
@@ -174,7 +236,7 @@ class MOVEG(py_trees.behaviour.Behaviour):
     
         # Returns the goal location from the world model
     
-    def get_goal_location_from_wm(self, goal_name):
+    def get_goal_info_from_wm(self, goal_name):
         blackboard = py_trees.Blackboard()
         wm_msg = json.loads(blackboard.wm_msg.data)["world"]
 
@@ -184,9 +246,11 @@ class MOVEG(py_trees.behaviour.Behaviour):
             wm_obj_name = wm_obj["name"]
             if wm_obj_name == goal_name:
                 goal_location = wm_obj["location"]
+                is_final_goal = wm_obj["final"] #True, False
         
-        return goal_location
+        return is_final_goal, goal_location
     
+    # Not used in the current implementation, just for legacy purposes
     def robot_pose_callback(self, msg):
         self.robot_pose = msg.pose.pose.position
     
