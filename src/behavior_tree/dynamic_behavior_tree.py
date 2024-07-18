@@ -17,7 +17,7 @@ import std_msgs.msg as std_msgs
 import py_trees_ros
 
 # Local imports
-from subtrees import Grnd2Blackboard, WM2Blackboard
+from subtrees import Grnd2Blackboard, WM2Blackboard, Status2Planner
 import decorators
 
 def create_root(controller_ns=""):
@@ -150,7 +150,6 @@ class SplinteredReality(object):
         # Check whether the tree is idle and there are goals to process
         if goals is not None:
             goals = json.loads(goals.data)
-            task_list = []
 
             # Basic setup when the tree is idle
             if not self.busy():
@@ -163,15 +162,16 @@ class SplinteredReality(object):
                                     )
                 cancel_seq.add_child(is_stop_requested)
 
-                # Configure 'task' block
-                task = py_trees.composites.Sequence(name="Task")
+                # Deifine 'task' block
+                tasks = py_trees.composites.Parallel(name="Tasks")
+                task_sequence = py_trees.composites.Sequence(name="Task Sequence")
 
                 # Configure 'run_or_cancel' block
                 if self.n_loop <= 1 and self.enable_inf_loop is False:
                     run_or_cancel = py_trees.composites.Selector(name="Run or Cancel?")
-                    run_or_cancel.add_children([cancel_seq, task])
+                    run_or_cancel.add_children([cancel_seq, tasks])
                 else:
-                    loop = decorators.Loop(child=task, name='Loop', n_loop=self.n_loop,
+                    loop = decorators.Loop(child=tasks, name='Loop', n_loop=self.n_loop,
                                            enable_inf_loop=self.enable_inf_loop,
                                            timeout=self.loop_timeout)
 
@@ -190,6 +190,7 @@ class SplinteredReality(object):
                 tree.insert_subtree(run_or_cancel, self.priorities.id, 0)
                 rospy.loginfo("{0}: inserted job subtree".format(run_or_cancel.name))
 
+            task_list = []
             # Configure 'task' block
             for idx in range(self.blackboard.goal_num + 1):
                 for job in self.jobs:
@@ -210,8 +211,11 @@ class SplinteredReality(object):
                         task_list.append(job_root)
                         break
             
-            task.add_children(task_list)
-            self.current_job = task.children[0]
+            task_sequence.add_children(task_list)
+            status2planner = Status2Planner.TASKPLANCOMM(name="Status2Planner")
+            tasks.add_children([task_sequence, status2planner])
+
+            self.current_job = task_sequence.children[0]
             
             return
 
