@@ -29,6 +29,7 @@ class ToBlackboard(subscribers.ToBlackboard):
         # Waypoint navigtation
         # TODO: Implement world model for to replace goal_loc_dict
         self.blackboard.goal_num = 0 # To track the number of goals
+        self.blackboard.current_goal_idx = 0 # To track the current goal
         self.blackboard.list_goals = [] # To store and lookup the goals
 
     def update(self):
