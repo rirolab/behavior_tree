@@ -9,14 +9,12 @@ import rospy
 import actionlib
 import py_trees
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
-from std_srvs.srv import Empty
 from nav_msgs.msg import Odometry
+from actionlib_msgs.msg import GoalStatus
 
 # local imports
-from riro_navigation.msg import TaskPlanAction, TaskPlanResult
+from riro_navigation.msg import TaskPlanResultTemp
 from riro_navigation.srv import getRegionGoal
-from riro_navigation.srv import NavigationControl, NavigationControlResponse
-from std_msgs.msg import String
 
 class MOVEG(py_trees.behaviour.Behaviour):
     """
@@ -59,8 +57,10 @@ class MOVEG(py_trees.behaviour.Behaviour):
             self.sim = False
             print("sim arg strange")
 
-        self.task_plan = None
+        self.action_goal = action_goal
         self.robot_pose = None
+
+        # May be deprecated
         self.rviz_msg = None
 
         # Mode
@@ -108,19 +108,13 @@ class MOVEG(py_trees.behaviour.Behaviour):
             rospy.Subscriber("/odom", Odometry, self.robot_pose_callback)
         else:
             print("sim arg strange")
-        
-        # ROS server, subscribed by product_automata_planner.py
-        self.task_plan_server = actionlib.SimpleActionServer('task_plan', TaskPlanAction, 
-                                                             self.execute_task_plan, False)
-        self.task_plan_server.start()
 
         # ROS client
         self.nav_client = actionlib.SimpleActionClient("/move_base", MoveBaseAction)
         self.getregiongoal_client = rospy.ServiceProxy('/manage_map/get_region_goal', getRegionGoal)
 
         # ROS publihser
-        # self.status_pub publishes the navigation status to product_automata_planner.py
-        self.status_pub = rospy.Publisher('/move_goal_status', String, queue_size=10)
+        self.TaskPlanResult_temp_pub = rospy.Publisher('/nav_result_temp', TaskPlanResultTemp, queue_size=10)
 
         rospy.loginfo('[subtree] movebase: setup() done.')
         return True
@@ -140,9 +134,8 @@ class MOVEG(py_trees.behaviour.Behaviour):
         self.logger.debug("{0}.initialise()".format(self.__class__.__name__))
         rospy.loginfo(f"{self.__class__.__name__}.intialise() called")
 
-        blackboard = py_trees.Blackboard()
+        blackboard = py_trees.Blackboard() # Is this line necessary?
 
-        self.task_plan = None
         self.robot_pose = None
         self.rviz_msg = None
 
@@ -161,8 +154,6 @@ class MOVEG(py_trees.behaviour.Behaviour):
         """
         rospy.loginfo('[subtree] movebase: update() called.')
         self.logger.debug("%s.update()" % self.__class__.__name__)
-
-        blackboard = py_trees.Blackboard()
 
         goal_name = self.action_goal['pose'] # ex) r1, r3, etc.
         is_last_goal, goal_loc = self.get_goal_info_from_wm(goal_name)
@@ -203,39 +194,39 @@ class MOVEG(py_trees.behaviour.Behaviour):
         # Checking the '/move_base' action client
         if self.nav_client.get_state() == 2: # PREEMPTED
             print("Navigation cancelled")
+            result.nav_client_state = 2
             if not result.relaxation:
                 self.rviz_msg = None
-            # self.task_plan_server.set_preempted(result)
-            self.status_pub.publish("Cancelled")
+            self.TaskPlanResult_temp_pub.publish(result)
             return
         elif self.nav_client.get_state() == 4: # ABORTED
             print("Navigation aborted")
+            result.nav_client_state = 4
             self.rviz_msg = None
-            # self.task_plan_server.set_aborted(result)
-            self.status_pub.publish("Aborted")
+            self.TaskPlanResult_temp_pub.publish(result)
             return
 
-        # print("Navigation succeed")
-        # self.task_plan_server.set_succeeded(result)
-        self.status_pub.publish("Succeeded")
+        print("Navigation succeed")
+        self.TaskPlanResult_temp_pub.publish(result)
         rospy.loginfo(f"Navigation Plan Complete!")
         if is_last_goal:
             self.rviz_msg = None
         return
 
-
+    # TODO: Implement this
     def terminate(self, new_status):
-        msg = self.status_req()
-        d = json.loads(msg.data)
-        if d['state'] == GoalStatus.ACTIVE:
-            self.cmd_req( json.dumps({'action_type': 'cancel_goal'}) )
+        # msg = self.status_req()
+        # d = json.loads(msg.data)
+        # if d['state'] == GoalStatus.ACTIVE:
+        #     self.cmd_req( json.dumps({'action_type': 'cancel_goal'}) )
         
-        blackboard = py_trees.Blackboard()
+        # blackboard = py_trees.Blackboard()
         # self.drive_status_update_req(blackboard.robot_name)
+        self.logger.debug("%s.terminate()[%s->%s]" % (self.__class__.__name__, self.status, new_status))
+
         return
     
-        # Returns the goal location from the world model
-    
+    # Returns the goal location from the world model
     def get_goal_info_from_wm(self, goal_name):
         blackboard = py_trees.Blackboard()
         wm_msg = json.loads(blackboard.wm_msg.data)["world"]
@@ -262,7 +253,7 @@ class MOVEG(py_trees.behaviour.Behaviour):
                                               self.robot_pose.x, 
                                               self.robot_pose.y)
 
-        result = TaskPlanResult()
+        result = TaskPlanResultTemp()
         result.relaxation = False
         result.robot_x = 0
         result.robot_y = 0
