@@ -318,7 +318,10 @@ class SplinteredReality(object):
         if not self.idle():
             job = self.priorities.children[0] # 'Run or Cancel?' block
                         
-            if job.status == py_trees.common.Status.SUCCESS or job.status == py_trees.common.Status.FAILURE or job.status == py_trees.common.Status.INVALID:
+            # if job.status == py_trees.common.Status.SUCCESS or \
+            #    job.status == py_trees.common.Status.FAILURE or \
+            #    job.status == py_trees.common.Status.INVALID:
+            if job.status == py_trees.common.Status.RUNNING:
                 rospy.loginfo("{0}: finished [{1}]".format(job.name, job.status))
                 print("{0}: finished [{1}]".format(job.name, job.status))
                 
