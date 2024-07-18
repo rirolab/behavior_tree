@@ -74,7 +74,7 @@ class Move(object):
                     break
 
     @staticmethod
-    def create_root(idx="1", goal=std_msgs.Empty(), controller_ns="", **kwargs):
+    def create_root(idx="1", goals=std_msgs.Empty(), controller_ns="", **kwargs):
         """
         Create the job subtree based on the incoming goal specification.
 
@@ -89,9 +89,9 @@ class Move(object):
         blackboard = py_trees.blackboard.Blackboard()
         
         # move to goal
-        if goal[idx]["primitive_action"] in ['move_to_goal']:
-            if 'goal' in goal[idx].keys():
-                goal = goal[idx]['destination']
+        if goals[idx]["primitive_action"] in ['move_to_goal']:
+            if 'goal' in goals[idx].keys():
+                goal = goals[idx]['destination']
             else:
                 rospy.logerr("No navigation goal")
                 sys.exit()
