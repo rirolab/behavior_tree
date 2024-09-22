@@ -127,11 +127,12 @@ class SplinteredReality(object):
 
     def setup(self):
         """
-        Redirect the setup function"
+        Redirect the setup function.
 
         Returns:
             :obj:`bool`: whether it timed out trying to setup
         """
+        rospy.loginfo('root node setup start')
         return self.tree.setup(timeout=15)
 
     #TODO: Consider reconfiguring the tree when a new goal comes in
@@ -145,11 +146,11 @@ class SplinteredReality(object):
         """
 
         rospy.loginfo(f"[TREE ROOT] pre_tick_handler() is adding {self.blackboard.goal_num} goal subtrees")
-        goals = self.blackboard.get('goals')
+        goals = self.blackboard.get('grnd_msg')
 
         # Check whether the tree is idle and there are goals to process
         if goals is not None:
-            goals = json.loads(goals.data)
+            goals = json.loads(goals.data)['params']
 
             # Basic setup when the tree is idle
             if not self.busy():
@@ -189,12 +190,18 @@ class SplinteredReality(object):
                 # index: insert the child at this index, pushing all children after it back one.
                 tree.insert_subtree(run_or_cancel, self.priorities.id, 0)
                 rospy.loginfo("{0}: inserted job subtree".format(run_or_cancel.name))
+            
+            # Dynamic Reconfiguration
+            else:
+                task_sequence = self.priorities.children[0].children[1].childrien[-1] # Task Sequence Node
+                        # self.jobs are holding all available job classes
 
             task_list = []
             # Configure 'task' block
-            for idx in range(self.blackboard.goal_num + 1):
+            # for idx in range(self.blackboard.goal_num + 1):
+            for idx in range(len(goals)):
                 for job in self.jobs:
-                    if job.name == goals['params'][str(idx + 1)]['primitive_action']:
+                    if job.name == goals[str(idx + 1)]['primitive_action']:
                         job_root = job.create_root(str(idx+1), goals,
                                                    self.controller_ns,
                                                    rec_topic_list=self.rec_topic_list)
@@ -213,7 +220,7 @@ class SplinteredReality(object):
             
             task_sequence.add_children(task_list)
             status2planner = Status2Planner.TASKPLANCOMM(name="Status2Planner")
-            tasks.add_children([task_sequence, status2planner])
+            tasks.add_children([status2planner, task_sequence])
 
             self.current_job = task_sequence.children[0]
             
@@ -393,15 +400,16 @@ if __name__ == '__main__':
     # Keep the default job on the top
     rospy.init_node("BT")   
     splintered_reality = SplinteredReality(jobs=['jobs.navigate_job.Move',
-                                                 'jobs.pick_job.Move',
-                                                 'jobs.place_job.Move',
-                                                 'jobs.move_job.Move',
-                                                 'jobs.handover_job.Move',
-                                                 'jobs.jog_job.Move',
-                                                 'jobs.gripper_job.Move',
-                                                 'jobs.slide_job.Move',
-                                                 'jobs.attach_job.Move',
-                                                 'jobs.touch_job.Move'],
+                                                #  'jobs.pick_job.Move',
+                                                #  'jobs.place_job.Move',
+                                                #  'jobs.move_job.Move',
+                                                #  'jobs.handover_job.Move',
+                                                #  'jobs.jog_job.Move',
+                                                #  'jobs.gripper_job.Move',
+                                                #  'jobs.slide_job.Move',
+                                                #  'jobs.attach_job.Move',
+                                                #  'jobs.touch_job.Move'
+                                                 ],
                                                  rec_topic_list=topic_list)
     rospy.on_shutdown(splintered_reality.shutdown)
 
