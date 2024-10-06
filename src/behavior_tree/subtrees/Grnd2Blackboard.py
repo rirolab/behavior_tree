@@ -30,7 +30,7 @@ class ToBlackboard(subscribers.ToBlackboard):
         # TODO: Implement world model for to replace goal_loc_dict
         self.blackboard.goal_num = 0 # To track the number of goals
         self.blackboard.current_goal_idx = 0 # To track the current goal
-        self.blackboard.list_goals = [] # To store and lookup the goals
+        self.blackboard.goals_dict = None # To store and lookup the goals
 
     def update(self):
         self.logger.debug("%s.update()" % self.__class__.__name__)
@@ -44,19 +44,21 @@ class ToBlackboard(subscribers.ToBlackboard):
                 rospy.logwarn_throttle(60, "%s: No grounding on the blackboard!" % self.name)
             grounding = json.loads(self.blackboard.grnd_msg.data)
             
-            for param_id in range(grounding['param_num']):
-                primitive_action = grounding['params'][str(param_id+1)]['primitive_action']
+            self.blackboard.goals_dict = {}
+            for i in range(grounding['param_num']):
+                primitive_action = grounding['params'][str(i+1)]['primitive_action']
                 
                 if primitive_action == "stop":
                     self.blackboard.stop_cmd = True
                     break
                 elif primitive_action == "move_to_goal":
-                    # each element is a dictionary
-                    self.blackboard.list_goals.append(grounding['params'][str(param_id+1)])
+                    
+                    self.blackboard.goals_dict[str(i + 1)] = \
+                        grounding['params'][str(i + 1)]
                 else:
                     rospy.logwarn_throttle(60, "%s: Unknown primitive action!" % self.name)
                     self.blackboard.stop_cmd = True
                     break
         
-        self.blackboard.set('grnd_msg', None)
+        #self.blackboard.set('grnd_msg', None)
         return status
