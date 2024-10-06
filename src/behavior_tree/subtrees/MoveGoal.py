@@ -11,10 +11,12 @@ import py_trees
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 from nav_msgs.msg import Odometry
 from actionlib_msgs.msg import GoalStatus
+from std_msgs.msg import String
 
 # local imports
-from riro_navigation.msg import TaskPlanResultTemp
+from riro_navigation.msg import TaskPlanResult, TaskPlanResultTemp
 from riro_navigation.srv import getRegionGoal
+import numpy as np
 
 class MOVEG(py_trees.behaviour.Behaviour):
     """
@@ -42,29 +44,21 @@ class MOVEG(py_trees.behaviour.Behaviour):
         """
         super(MOVEG, self).__init__(name=name)
 
-        # parameter settings
-        if sim == 'true' or sim == 'True':
-            self.sim = True
-            self.map_frame = 'map_carla'
-            self.relax_distance_threshold = 10
-            rospy.Subscriber("/carla/ego_vehicle/odometry", Odometry, self.robot_pose_callback)
-        elif sim == 'false' or sim == 'False':
-            self.sim = False
-            self.map_frame = 'map'
-            self.relax_distance_threshold = 3
-            rospy.Subscriber("/odom", Odometry, self.robot_pose_callback)
-        else:
-            self.sim = False
-            print("sim arg strange")
+        self.idx = idx
+        self.action_goal = action_goal # pose
+        self.destination = destination  # 'r1', 'r2', etc.
+        self.sim = sim
 
-        self.action_goal = action_goal
         self.robot_pose = None
 
         # May be deprecated
-        self.rviz_msg = None
+        # self.rviz_msg = None
 
         # Mode
         self.relaxation_set = True
+
+        self.result = None
+        self.sent_goal = False
 
 
     # setup(self) handles all other one-time initialisations of resources that are required for execution:
@@ -102,11 +96,19 @@ class MOVEG(py_trees.behaviour.Behaviour):
 
         blackboard = py_trees.Blackboard()
 
-        if self.sim:
+        # parameter settings
+        if self.sim == 'true' or self.sim == 'True':
+            self.sim = True
+            self.map_frame = 'map_carla' 
+            self.relax_distance_threshold = 10
             rospy.Subscriber("/carla/ego_vehicle/odometry", Odometry, self.robot_pose_callback)
-        elif not self.sim:
+        elif self.sim == 'false' or self.sim == 'False':
+            self.sim = False
+            self.map_frame = 'map'
+            self.relax_distance_threshold = 3
             rospy.Subscriber("/odom", Odometry, self.robot_pose_callback)
         else:
+            self.sim = False
             print("sim arg strange")
 
         # ROS client
@@ -114,7 +116,8 @@ class MOVEG(py_trees.behaviour.Behaviour):
         self.getregiongoal_client = rospy.ServiceProxy('/manage_map/get_region_goal', getRegionGoal)
 
         # ROS publihser
-        self.TaskPlanResult_temp_pub = rospy.Publisher('/nav_result_temp', TaskPlanResultTemp, queue_size=10)
+        self.nav_status_pub = rospy.Publisher('/status_to_planner', TaskPlanResult, queue_size=10)
+        self.blackboard = py_trees.blackboard.Blackboard() # Is this line necessary?
 
         rospy.loginfo('[subtree] movebase: setup() done.')
         return True
@@ -134,13 +137,7 @@ class MOVEG(py_trees.behaviour.Behaviour):
         self.logger.debug("{0}.initialise()".format(self.__class__.__name__))
         rospy.loginfo(f"{self.__class__.__name__}.intialise() called")
 
-        blackboard = py_trees.Blackboard() # Is this line necessary?
-
-        self.robot_pose = None
-        self.rviz_msg = None
-
-        # Mode
-        self.relaxation_set = True
+        self.sent_goal = False
 
     def update(self):
         """
@@ -155,105 +152,106 @@ class MOVEG(py_trees.behaviour.Behaviour):
         rospy.loginfo('[subtree] movebase: update() called.')
         self.logger.debug("%s.update()" % self.__class__.__name__)
 
-        goal_name = self.action_goal['pose'] # ex) r1, r3, etc.
-        is_last_goal, goal_loc = self.get_goal_info_from_wm(goal_name)
-        
-        # goal to send to move_base
-        goal = MoveBaseGoal()
-        goal.target_pose.header.frame_id = self.map_frame
-        goal.target_pose.header.stamp = rospy.Time.now()
+        if not self.sent_goal:
+            # Setting the goal
+            nav_goal = MoveBaseGoal()
 
-        # When the task_plan is format of 'r1,' 'r5,' etc.
-        if re.match(r'r\d+', goal_name):
-            # Get the goal from service '/manage_map/get_region_goal'
-            rospy.wait_for_service('/manage_map/get_region_goal') # In line 369 of manage_map.cpp
-            response = self.getregiongoal_client(int(goal_name[1:]))
+            # Setting MoveBaseGoal()'s header(std_msgs/Header)
+            nav_goal.target_pose.header.frame_id = self.map_frame
+            nav_goal.target_pose.header.stamp = rospy.Time.now()
 
-            goal.target_pose.pose.position.x = response.goal_x
-            goal.target_pose.pose.position.y = response.goal_y
-        else:
-            goal.target_pose.pose.position.x = goal_loc.goal_x
-            goal.target_pose.pose.position.y = goal_loc.goal_y
-        goal.target_pose.pose.position.z = 0
+            # When the task_plan is format of 'r1,' 'r5,' etc.
+            if re.match(r'r\d+', self.destination):
+                # Get the goal from service '/manage_map/get_region_goal'
+                rospy.wait_for_service('/manage_map/get_region_goal')
+                response = self.getregiongoal_client(int(self.destination[1:]))
 
-        goal.target_pose.pose.orientation.x = 0
-        goal.target_pose.pose.orientation.y = 0
-        goal.target_pose.pose.orientation.z = 0
-        goal.target_pose.pose.orientation.w = 1
+                nav_goal.target_pose.pose.position.x = response.goal_x
+                nav_goal.target_pose.pose.position.y = response.goal_y
+            else:
+                nav_goal.target_pose.pose.position.x = np.float32(self.action_goal['pose']['x'])
+                nav_goal.target_pose.pose.position.y = np.float32(self.action_goal['pose']['y'])
+            nav_goal.target_pose.pose.position.z = 0
+            
+            nav_goal.target_pose.pose.orientation.x = 0
+            nav_goal.target_pose.pose.orientation.y = 0
+            nav_goal.target_pose.pose.orientation.z = 0
+            nav_goal.target_pose.pose.orientation.w = 1
 
-        if self.sim == False:
-            rate = rospy.Rate(1)
-            rospy.loginfo(f"Navigation Plan Ready!")
-            while self.rviz_msg == None:
-                rate.sleep()
-        rospy.loginfo(f"Navigation Plan Being Executed!")
+            # if self.sim == False:
+            #     rate = rospy.Rate(1)
+            #     rospy.loginfo(f"Navigation Plan Ready!")
+            #     while self.rviz_msg == None:
+            #         rate.sleep()
+            
+            rospy.loginfo(f"Navigation Plan Being Executed!")
+            self.result = self.nav_move_base(nav_goal)
+            self.sent_goal = True
 
-        result = self.nav_move_base(goal)
+            return py_trees.common.Status.RUNNING
 
         # http://docs.ros.org/en/lunar/api/actionlib_msgs/html/msg/GoalStatus.html
         # Checking the '/move_base' action client
-        if self.nav_client.get_state() == 2: # PREEMPTED
+        state = self.nav_client.get_state()
+        if state == 2 or state == 4 or state == 5: # PREEMPTED, ABORTED, REJECTED
             print("Navigation cancelled")
-            result.nav_client_state = 2
-            if not result.relaxation:
-                self.rviz_msg = None
-            self.TaskPlanResult_temp_pub.publish(result)
-            return
-        elif self.nav_client.get_state() == 4: # ABORTED
-            print("Navigation aborted")
-            result.nav_client_state = 4
-            self.rviz_msg = None
-            self.TaskPlanResult_temp_pub.publish(result)
-            return
+            # if not self.result.relaxation:
+            #     self.rviz_msg = None
+            self.nav_status_pub.publish(self.result)
+            self.feedback_message = "FAILURE"
+            self.logger.debug("%s.update()[%s->%s][%s]" % \
+                             (self.__class__.__name__, 
+                              self.status, 
+                              py_trees.common.Status.FAILURE, 
+                              self.feedback_message))
+            return py_trees.common.Status.FAILURE
+        elif state == 3: # SUCCEEDED
+            self.nav_status_pub.publish(self.result)
+            self.feedback_message = "SUCCESSFUL"
+            self.logger.debug("%s.update()[%s->%s][%s]" % \
+                             (self.__class__.__name__, 
+                              self.status, 
+                              py_trees.common.Status.SUCCESS, 
+                              self.feedback_message))
 
-        print("Navigation succeed")
-        self.TaskPlanResult_temp_pub.publish(result)
-        rospy.loginfo(f"Navigation Plan Complete!")
-        if is_last_goal:
-            self.rviz_msg = None
-        return
+            # if self.blackboard.wm_msg['param_num'] == str(self.idx):
+            #     self.rviz_msg = None
+            return py_trees.common.Status.SUCCESS
+        else:
+            return py_trees.common.Status.RUNNING
 
-    # TODO: Implement this
     def terminate(self, new_status):
-        # msg = self.status_req()
-        # d = json.loads(msg.data)
-        # if d['state'] == GoalStatus.ACTIVE:
-        #     self.cmd_req( json.dumps({'action_type': 'cancel_goal'}) )
-        
-        # blackboard = py_trees.Blackboard()
-        # self.drive_status_update_req(blackboard.robot_name)
-        self.logger.debug("%s.terminate()[%s->%s]" % (self.__class__.__name__, self.status, new_status))
+        if self.nav_client.get_state() == 1: # Active
+            self.nav_client.cancel_goal()
+        self.logger.debug("%s.terminate()[%s->%s]" % \
+                          (self.__class__.__name__, 
+                           self.status, 
+                           new_status))
 
         return
     
-    # Returns the goal location from the world model
-    def get_goal_info_from_wm(self, goal_name):
-        blackboard = py_trees.Blackboard()
-        wm_msg = json.loads(blackboard.wm_msg.data)["world"]
-
-        goal_location = None
-
-        for wm_obj in wm_msg:
-            wm_obj_name = wm_obj["name"]
-            if wm_obj_name == goal_name:
-                goal_location = wm_obj["location"]
-                is_final_goal = wm_obj["final"] #True, False
-        
-        return is_final_goal, goal_location
-    
-    # Not used in the current implementation, just for legacy purposes
     def robot_pose_callback(self, msg):
         self.robot_pose = msg.pose.pose.position
     
     def nav_move_base(self, goal):
         self.nav_client.send_goal(goal)
+
+        if self.robot_pose is None:
+            rospy.loginfo("Robot pose not received yet!")
+             
+            # Wait for 1s for the self.robot_pose
+            while self.robot_pose is None:
+                rospy.loginfo("Waiting for robot pose...")
+                rate = rospy.Rate(1)
+                rate.sleep()
+        
         if self.relaxation_set:
             min_robot_goal = self.l1_distance(goal.target_pose.pose.position.x, 
                                               goal.target_pose.pose.position.y,
                                               self.robot_pose.x, 
                                               self.robot_pose.y)
 
-        result = TaskPlanResultTemp()
+        result = TaskPlanResult()
         result.relaxation = False
         result.robot_x = 0
         result.robot_y = 0
@@ -262,19 +260,18 @@ class MOVEG(py_trees.behaviour.Behaviour):
 
         # Wait for 1s for the response from move_base
         while not self.nav_client.wait_for_result(rospy.Duration(1.0)):
-            # Not used
-            if self.rviz_msg == "Cancel":
-                self.nav_client.cancel_goal()
-                rospy.loginfo(f"Navigation Plan Cancelled!")
-            elif self.rviz_msg == "Pause":
-                self.nav_client.cancel_goal()
-                rospy.loginfo(f"Navigation Plan Paused!")
+            # if self.rviz_msg == "Cancel":
+            #     self.nav_client.cancel_goal()
+            #     rospy.loginfo(f"Navigation Plan Cancelled!")
+            # elif self.rviz_msg == "Pause":
+            #     self.nav_client.cancel_goal()
+            #     rospy.loginfo(f"Navigation Plan Paused!")
 
             if self.relaxation_set:
                 # Check relaxation trigger
                 curr_robot_goal = self.l1_distance(goal.target_pose.pose.position.x,
                                                    goal.target_pose.pose.position.y,
-                                                   self.robot_pose.x, 
+                                                   self.robot_pose.x,
                                                    self.robot_pose.y)
                 if curr_robot_goal < min_robot_goal:
                     min_robot_goal = curr_robot_goal
@@ -285,6 +282,20 @@ class MOVEG(py_trees.behaviour.Behaviour):
                     result.goal_x = goal.target_pose.pose.position.x
                     result.goal_y = goal.target_pose.pose.position.y
                     self.nav_client.cancel_goal()
+
+        # Maybe, after the loop, we may check the state of self.nav_client to determine 
+        # if the goal was achieved or if there was an error, and handle accordingly.
+        # Will this be necessary?
+
+        # if self.rviz_msg == "Pause":
+        #     while self.rviz_msg == "Pause":
+        #         rate = rospy.Rate(1)
+        #         rate.sleep()
+        #     if self.rviz_msg == "Cancel":
+        #         rospy.loginfo(f"Navigation Plan Cancelled!!")
+        #     elif self.rviz_msg == "Execute":
+        #         rospy.loginfo(f"Navigation Plan Resumed!")
+        #         result = self.nav_move_base(goal)
 
         return result
     
