@@ -146,8 +146,9 @@ class SplinteredReality(object):
             tree (:class:`~py_trees.trees.BehaviourTree`): tree to investigate/manipulate.
         """
 
-        rospy.loginfo(f"[TREE ROOT] pre_tick_handler() is adding {self.blackboard.goal_num} goal subtrees")
         goals = self.blackboard.get('grnd_msg')
+        rospy.loginfo(f"[TREE ROOT] pre_tick_handler() is adding {len(goals)} goal subtrees")
+        
 
         # Check whether the tree is idle and there are goals to process
         if goals is not None:
@@ -194,7 +195,7 @@ class SplinteredReality(object):
             
             # Dynamic Reconfiguration
             else:
-                task_sequence = self.priorities.children[0].children[1].childrien[-1] # Task Sequence Node
+                task_sequence = self.priorities.children[0].children[1].children[0] # Task Sequence Node
 
             task_list = []
             # Configure 'task' block
@@ -202,9 +203,10 @@ class SplinteredReality(object):
             for idx in range(len(goals)):
                 for job in self.jobs:
                     if job.name == goals[str(idx + 1)]['primitive_action']:
-                        job_root = job.create_root(str(idx+1), goals,
-                                                   self.controller_ns,
-                                                   rec_topic_list=self.rec_topic_list)
+                        job_root = job.create_root(idx = str(idx+1), 
+                                                   goal = goals[str(idx+1)],
+                                                   controller_ns = self.controller_ns,
+                                                   rec_topic_list = self.rec_topic_list)
                         if job_root is None:
                             rospy.logerr("goal {0}: failed to create root".format(idx+1))
                             continue
@@ -220,8 +222,9 @@ class SplinteredReality(object):
                         break
             
             task_sequence.add_children(task_list)
-            status2planner = Status2Planner.TASKPLANCOMM(name="Status2Planner")
-            tasks.add_children([status2planner, task_sequence])
+            #status2planner = Status2Planner.TASKPLANCOMM(name="Status2Planner")
+            # tasks.add_children([task_sequence, status2planner])
+            tasks.add_children([task_sequence])
 
             self.current_job = task_sequence.children[0]
             
@@ -322,7 +325,7 @@ class SplinteredReality(object):
         if not self.idle():
             job = self.priorities.children[0] # 'Run or Cancel?' block
             
-            if job.status == py_trees.common.Status.RUNNING:
+            if job.status != py_trees.common.Status.RUNNING:
                 rospy.loginfo("{0}: finished [{1}]".format(job.name, job.status))
                 print("{0}: finished [{1}]".format(job.name, job.status))
                 
