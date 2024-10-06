@@ -44,9 +44,6 @@ class ToBlackboard(subscribers.ToBlackboard):
                 rospy.logwarn_throttle(60, "%s: No grounding on the blackboard!" % self.name)
             grounding = json.loads(self.blackboard.grnd_msg.data)
             
-            # container for commands
-            ## self.blackboard.groundings        = []
-            
             for param_id in range(grounding['param_num']):
                 primitive_action = grounding['params'][str(param_id+1)]['primitive_action']
                 
@@ -54,12 +51,12 @@ class ToBlackboard(subscribers.ToBlackboard):
                     self.blackboard.stop_cmd = True
                     break
                 elif primitive_action == "move_to_goal":
-                    self.blackboard.goal_num += 1
+                    # each element is a dictionary
                     self.blackboard.list_goals.append(grounding['params'][str(param_id+1)])
-                    break
                 else:
                     rospy.logwarn_throttle(60, "%s: Unknown primitive action!" % self.name)
                     self.blackboard.stop_cmd = True
                     break
-            
+        
+        self.blackboard.set('grnd_msg', None)
         return status
