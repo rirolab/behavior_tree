@@ -74,7 +74,7 @@ class Move(object):
                     break
 
     @staticmethod
-    def create_root(idx="1", goals=std_msgs.Empty(), controller_ns="", **kwargs):
+    def create_root(idx="1", goal=std_msgs.Empty(), controller_ns="", **kwargs):
         """
         Create the job subtree based on the incoming goal specification.
 
@@ -89,9 +89,11 @@ class Move(object):
         blackboard = py_trees.blackboard.Blackboard()
         
         # move to goal
-        if goals[idx]["primitive_action"] in ['move_to_goal']:
-            if 'goal' in goals[idx].keys():
-                goal = goals[idx]['destination']
+        if goal["primitive_action"] in ['move_to_goal']:
+            # if 'goal' in goal[idx].keys():
+            #     goal = goal[idx]['destination']
+            if goal['destination'] is not "na":
+                goal = goal['destination'] # string
             else:
                 rospy.logerr("No navigation goal")
                 sys.exit()
@@ -99,10 +101,17 @@ class Move(object):
             return None
 
         # ----------------- Navigate ---------------------
-        navigate = py_trees.composites.Sequence(name="navigate")
-        s_drive = MoveGoal.MOVEG(name = "Drive", idx=idx, destination=goal,
-                                 action_goal={'pose': goal})
-        navigate.add_children([s_drive])
+        # name: navigate_job1, navigate_job2, ...
+        navigate_job = py_trees.composites.Sequence(name="navigate_job" + idx)
 
-        root.add_children([navigate])
+        # Configure the subtree for the navigate_job
+        destination = goal
+        pose = blackboard.wm_dict[str(idx)]['location']
+        s_drive = MoveGoal.MOVEG(name = "Drive", idx = idx, 
+                                 destination = destination,
+                                 action_goal = {'pose': pose})
+        
+        navigate_job.add_children([s_drive])
+
+        root.add_children([navigate_job])
         return root
