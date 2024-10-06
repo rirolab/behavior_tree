@@ -94,7 +94,8 @@ class SplinteredReality(object):
          be used in spinning up and running the job later when requested.
 
         Args:
-            jobs ([:obj:`str`]): list of module names as strings (e.g. 'py_trees_ros.tutorials.jobs.Scan')
+            jobs ([:obj:`str`]): list of module names as strings 
+            (e.g. 'py_trees_ros.tutorials.jobs.Scan')
         """
         self.controller_ns   = rospy.get_param("controller_ns", "")
         self.rec_topic_list  = rec_topic_list
@@ -163,7 +164,7 @@ class SplinteredReality(object):
                                     )
                 cancel_seq.add_child(is_stop_requested)
 
-                # Deifine 'task' block
+                # Deifine 'Tasks' & 'Task Sequence' block
                 tasks = py_trees.composites.Parallel(name="Tasks")
                 task_sequence = py_trees.composites.Sequence(name="Task Sequence")
 
@@ -194,7 +195,6 @@ class SplinteredReality(object):
             # Dynamic Reconfiguration
             else:
                 task_sequence = self.priorities.children[0].children[1].childrien[-1] # Task Sequence Node
-                        # self.jobs are holding all available job classes
 
             task_list = []
             # Configure 'task' block
@@ -206,6 +206,7 @@ class SplinteredReality(object):
                                                    self.controller_ns,
                                                    rec_topic_list=self.rec_topic_list)
                         if job_root is None:
+                            rospy.logerr("goal {0}: failed to create root".format(idx+1))
                             continue
 
                         # Setting up i-th goal subtree
@@ -213,7 +214,7 @@ class SplinteredReality(object):
                         if not job_root.setup(timeout=15):
                             rospy.logerr("goal {0}: failed to setup".format(idx+1))
                             continue
-                        rospy.loginfo("{0}: finished setting up".format(idx+1))
+                        rospy.loginfo("goal {0}: finished setting up".format(idx+1))
 
                         task_list.append(job_root)
                         break
@@ -318,20 +319,9 @@ class SplinteredReality(object):
             tree (:class:`~py_trees.trees.BehaviourTree`): tree to investigate/manipulate.
         """
         # delete the job subtree if it is finished
-        # if self.busy():
-        #     job = self.priorities.children[-2]
-                        
-        #     if job.status == py_trees.common.Status.SUCCESS or job.status == py_trees.common.Status.FAILURE or job.status == py_trees.common.Status.INVALID:
-        #         rospy.loginfo("{0}: finished [{1}]".format(job.name, job.status))
-        #         tree.prune_subtree(job.id)
-        #         self.current_job = None
-        
         if not self.idle():
             job = self.priorities.children[0] # 'Run or Cancel?' block
-                        
-            # if job.status == py_trees.common.Status.SUCCESS or \
-            #    job.status == py_trees.common.Status.FAILURE or \
-            #    job.status == py_trees.common.Status.INVALID:
+            
             if job.status == py_trees.common.Status.RUNNING:
                 rospy.loginfo("{0}: finished [{1}]".format(job.name, job.status))
                 print("{0}: finished [{1}]".format(job.name, job.status))
@@ -386,6 +376,8 @@ if __name__ == '__main__':
                  help='use visualization code for rviz')
     p.add_option('--rec_topics', '-t', action='store', dest='topic_json',
                  default=None, help='a list of topic to record')
+    p.add_option('--robot', '-r', action='store', dest='robot',
+                 default='spot', help='type of robot.')
     opt, args = p.parse_args()
 
     # load the list of topics for recording
@@ -398,24 +390,30 @@ if __name__ == '__main__':
 
     # TODO: import a list of jobs from a json file or ROS parameter server.
     # Keep the default job on the top
-    rospy.init_node("BT")   
-    splintered_reality = SplinteredReality(jobs=['jobs.navigate_job.Move',
-                                                #  'jobs.pick_job.Move',
-                                                #  'jobs.place_job.Move',
-                                                #  'jobs.move_job.Move',
-                                                #  'jobs.handover_job.Move',
-                                                #  'jobs.jog_job.Move',
-                                                #  'jobs.gripper_job.Move',
-                                                #  'jobs.slide_job.Move',
-                                                #  'jobs.attach_job.Move',
-                                                #  'jobs.touch_job.Move'
-                                                 ],
-                                                 rec_topic_list=topic_list)
+    rospy.init_node("behavior_tree")
+    jobs = []
+    if opt.robot == 'spot':
+        jobs = ['jobs.navigate_job.Move']
+    elif opt.robot == 'manip':
+        jobs = ['jobs.pick_job.Move',
+                'jobs.place_job.Move',
+                'jobs.move_job.Move',
+                'jobs.handover_job.Move',
+                'jobs.jog_job.Move',
+                'jobs.gripper_job.Move',
+                'jobs.slide_job.Move',
+                'jobs.attach_job.Move',
+                'jobs.touch_job.Move'
+                ]
+    else:
+        print(f"Given robot type should be one of 'spot' or 'manip'. Input type: {opt.robot} ")
+        raise NotImplementedError() 
+
+    splintered_reality = SplinteredReality(jobs = jobs, rec_topic_list = topic_list)
     rospy.on_shutdown(splintered_reality.shutdown)
 
     if not splintered_reality.setup():
         console.logerror("failed to setup the tree, aborting.")
         sys.exit(1)
-    splintered_reality.tick_tock()
-
     
+    splintered_reality.tick_tock()
