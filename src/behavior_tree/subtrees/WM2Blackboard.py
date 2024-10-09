@@ -32,9 +32,9 @@ class ToBlackboard(subscribers.ToBlackboard):
                 # Save the dictionary sent by the 'wm_msg' topic
                 self.blackboard.wm_msg = json.loads(self.blackboard.wm_msg.data)
 
-                for i in self.blackboard.wm_msg['param_num']:
-                    self.blackboard.wm_dict[str[i + 1]] = \
-                        self.blackboard.wm_msg['world'][str[i + 1]]
+                for i in range(int(self.blackboard.wm_msg['param_num'])):
+                    self.blackboard.wm_dict[str(i + 1)] = \
+                        self.blackboard.wm_msg['world'][str(i + 1)]
                 
             self.feedback_message = "No world model " if self.blackboard.no_wm_warning \
                                                       else "World model is ok"
