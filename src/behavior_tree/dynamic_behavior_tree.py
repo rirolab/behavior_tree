@@ -112,6 +112,7 @@ class SplinteredReality(object):
         self.tree.add_post_tick_handler(self.post_tick_handler)
 
         self.report_publisher = rospy.Publisher("~report", std_msgs.String, queue_size=5)
+        self.have_initialised = False
 
         # Initialise the jobs given
         self.jobs = []
@@ -147,8 +148,12 @@ class SplinteredReality(object):
         """
 
         goals = self.blackboard.get('grnd_msg')
-        rospy.loginfo(f"[TREE ROOT] pre_tick_handler() is adding {len(goals)} goal subtrees")
-        
+        if goals is not None:
+            rospy.loginfo('pre_tick_handler: goals is not None')
+            print("pre_tick_handler: ", goals)
+            rospy.loginfo(f"[TREE ROOT] pre_tick_handler() is adding {goals} to goal subtrees")
+        else:
+            print("pre_tick_handler: 'goals' is None")
 
         # Check whether the tree is idle and there are goals to process
         if goals is not None:
@@ -156,6 +161,7 @@ class SplinteredReality(object):
 
             # Basic setup when the tree is idle
             if not self.busy():
+                rospy.loginfo("pre_tick_handler: tree is idle")
                 # Configure 'cancel' block
                 cancel_seq = py_trees.composites.Sequence(name="Cancel")
                 is_stop_requested = py_trees.blackboard.CheckBlackboardVariable(
@@ -195,7 +201,8 @@ class SplinteredReality(object):
             
             # Dynamic Reconfiguration
             else:
-                task_sequence = self.priorities.children[0].children[1].children[0] # Task Sequence Node
+                tasks = self.priorities.children[0].children[-1]
+                #task_sequence = self.priorities.children[0].children[1].children[0] # Task Sequence Node
 
             task_list = []
             # Configure 'task' block
