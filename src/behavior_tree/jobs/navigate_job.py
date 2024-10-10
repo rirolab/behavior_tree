@@ -14,7 +14,7 @@ from complex_action_client import misc
 from geometry_msgs.msg import PoseStamped, Point, Quaternion, Pose
 
 sys.path.insert(0,'..')
-from subtrees import MoveJoint, MovePose, MoveBase, MoveGoal, Gripper, Stop, WorldModel
+from subtrees import MoveGoal
 
 
 ##############################################################################
@@ -33,10 +33,18 @@ class Move(object):
         Tune into a channel for incoming goal requests. This is a simple
         subscriber here but more typically would be a service or action interface.
         """
+        self._name = "move_to_goal"
         self._grounding_channel = "symbol_grounding" #rospy.get_param('grounding_channel')
         self._subscriber = rospy.Subscriber(self._grounding_channel, std_msgs.String, self.incoming)
         self._goal = None
         self._lock = threading.Lock()
+
+    @property
+    def name(self):
+        return self._name
+    @name.getter
+    def name(self):
+        return self._name 
 
     @property
     def goal(self):
@@ -85,7 +93,7 @@ class Move(object):
            :class:`~py_trees.behaviour.Behaviour`: subtree root
         """
         # beahviors
-        root = py_trees.composites.Sequence(name="navigate_job"+idx)
+        root = py_trees.composites.Parallel(name="navigate_job"+idx)
         blackboard = py_trees.blackboard.Blackboard()
         
         # move to goal
@@ -102,16 +110,15 @@ class Move(object):
 
         # ----------------- Navigate ---------------------
         # name: navigate_job1, navigate_job2, ...
-        navigate_job = py_trees.composites.Sequence(name="navigate_job" + idx)
+        # navigate_job = py_trees.composites.Sequence(name='move')
 
         # Configure the subtree for the navigate_job
         destination = goal
         pose = blackboard.wm_dict[str(idx)]['location']
-        s_drive = MoveGoal.MOVEG(name = "Drive", idx = idx, 
+        s_drive = MoveGoal.MOVEG(name = "navigate", idx = idx, 
                                  destination = destination,
                                  action_goal = {'pose': pose})
         
-        navigate_job.add_children([s_drive])
+        root.add_children([s_drive])
 
-        root.add_children([navigate_job])
         return root
