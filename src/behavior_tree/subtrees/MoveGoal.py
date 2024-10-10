@@ -186,6 +186,9 @@ class MOVEG(py_trees.behaviour.Behaviour):
             
             rospy.loginfo(f"Navigation Plan Being Executed!")
             self.result = self.nav_move_base(nav_goal)
+
+            
+
             self.sent_goal = True
 
             return py_trees.common.Status.RUNNING
@@ -232,6 +235,7 @@ class MOVEG(py_trees.behaviour.Behaviour):
     
     def robot_pose_callback(self, msg):
         self.robot_pose = msg.pose.pose.position
+        rospy.loginfo(f"Robot pose received: {self.robot_pose.x}, {self.robot_pose.y}")
     
     def nav_move_base(self, goal):
         self.nav_client.send_goal(goal)
