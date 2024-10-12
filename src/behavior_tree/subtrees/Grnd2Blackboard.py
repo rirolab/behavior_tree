@@ -17,7 +17,7 @@ class ToBlackboard(subscribers.ToBlackboard):
                                            topic_name=topic_name,
                                            topic_type=std_msgs.String,
                                            blackboard_variables={"grnd_msg": None}, 
-                                           clearing_policy=py_trees.common.ClearingPolicy.ON_INITIALISE 
+                                           clearing_policy=py_trees.common.ClearingPolicy.ON_SUCCESS 
                                            )
 
         # Blackboard initialization
@@ -29,6 +29,7 @@ class ToBlackboard(subscribers.ToBlackboard):
         # Waypoint navigtation
         # TODO: Implement world model for to replace goal_loc_dict
         self.blackboard.goals_dict = None # To store and lookup the goals
+        self.blackboard.incoming_goals = None # Raw grnd_msg data
 
     def update(self):
         self.logger.debug("%s.update()" % self.__class__.__name__)
@@ -43,6 +44,8 @@ class ToBlackboard(subscribers.ToBlackboard):
             grounding = json.loads(self.blackboard.grnd_msg.data)
             
             self.blackboard.goals_dict = {}
+            self.blackboard.incoming_goals = grounding
+            rospy.loginfo(f"[ToBlackboard] Incoming goals: {self.blackboard.incoming_goals}")
             for i in range(grounding['param_num']):
                 primitive_action = grounding['params'][str(i+1)]['primitive_action']
                 
@@ -53,10 +56,10 @@ class ToBlackboard(subscribers.ToBlackboard):
                     
                     self.blackboard.goals_dict[str(i + 1)] = \
                         grounding['params'][str(i + 1)]
+                    break
                 else:
                     rospy.logwarn_throttle(60, "%s: Unknown primitive action!" % self.name)
-                    self.blackboard.stop_cmd = True
                     break
         
-        #self.blackboard.set('grnd_msg', None)
+        self.blackboard.set('grnd_msg', None)
         return status
