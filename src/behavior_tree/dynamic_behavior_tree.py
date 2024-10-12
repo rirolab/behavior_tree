@@ -152,12 +152,12 @@ class SplinteredReality(object):
         #               {self.blackboard.get('incoming_goals')}!!!")
         # incoming_goals = self.blackboard.get('incoming_goals')
         # goals = incoming_goals['params'] if incoming_goals is not None else None
-
         goals = self.blackboard.get('grnd_msg')
-        print(goals)
+        # if goal is not None:
 
         # Check whether the tree is idle and there are goals to process
         if goals is not None:
+            print(goals)
             rospy.loginfo("[dynamic_behavior_tree -> pre_tick_handler()] We've got goals")
             print(f"[dynamic_behavior_tree -> pre_tick_handler()] goals: {goals}")
             goals = json.loads(goals.data)['params']

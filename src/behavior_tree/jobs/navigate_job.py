@@ -119,6 +119,7 @@ class Move(object):
         destination = ts_state
         if ts_state is not None: 
             pose = blackboard.wm_dict[str(idx)]['location']
+            rospy.loginfo(f"\n@####  \n(navigate_job) Destination: {destination}, Pose: {pose}\n########")
             s_drive = MoveGoal.MOVEG(name = "navigate", idx = idx, 
                                     destination = destination,
                                     action_goal = {'pose': pose})
