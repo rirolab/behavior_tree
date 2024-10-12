@@ -34,8 +34,8 @@ class Move(object):
         subscriber here but more typically would be a service or action interface.
         """
         self._name = "move_to_goal"
-        self._grounding_channel = "symbol_grounding" #rospy.get_param('grounding_channel')
-        self._subscriber = rospy.Subscriber(self._grounding_channel, std_msgs.String, self.incoming)
+        # self._grounding_channel = "symbol_grounding" #rospy.get_param('grounding_channel')
+        # self._subscriber = rospy.Subscriber(self._grounding_channel, std_msgs.String, self.incoming)
         self._goal = None
         self._lock = threading.Lock()
 
@@ -93,15 +93,18 @@ class Move(object):
            :class:`~py_trees.behaviour.Behaviour`: subtree root
         """
         # beahviors
-        root = py_trees.composites.Parallel(name="navigate_job"+idx)
+        root = py_trees.composites.Sequence(name="navigate_job"+idx)
         blackboard = py_trees.blackboard.Blackboard()
+        ts_state = None
         
         # move to goal
         if goal["primitive_action"] in ['move_to_goal']:
             # if 'goal' in goal[idx].keys():
             #     goal = goal[idx]['destination']
             if goal['destination'] is not "na":
-                goal = goal['destination'] # string
+                # string, goal['destination']: r1, r2, ...
+                # These are transition states
+                ts_state = goal['destination'] 
             else:
                 rospy.logerr("No navigation goal")
                 sys.exit()
@@ -113,12 +116,13 @@ class Move(object):
         # navigate_job = py_trees.composites.Sequence(name='move')
 
         # Configure the subtree for the navigate_job
-        destination = goal
-        pose = blackboard.wm_dict[str(idx)]['location']
-        s_drive = MoveGoal.MOVEG(name = "navigate", idx = idx, 
-                                 destination = destination,
-                                 action_goal = {'pose': pose})
-        
-        root.add_children([s_drive])
+        destination = ts_state
+        if ts_state is not None: 
+            pose = blackboard.wm_dict[str(idx)]['location']
+            s_drive = MoveGoal.MOVEG(name = "navigate", idx = idx, 
+                                    destination = destination,
+                                    action_goal = {'pose': pose})
+            
+            root.add_children([s_drive])
 
         return root
