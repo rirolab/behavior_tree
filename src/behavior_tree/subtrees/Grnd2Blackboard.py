@@ -60,6 +60,7 @@ class ToBlackboard(subscribers.ToBlackboard):
                 else:
                     rospy.logwarn_throttle(60, "%s: Unknown primitive action!" % self.name)
                     break
+            return status
         
         self.blackboard.set('grnd_msg', None)
         return status

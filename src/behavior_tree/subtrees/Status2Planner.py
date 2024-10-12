@@ -1,30 +1,16 @@
 #!/usr/bin/env python3
 
-# standard imports
-import re
+# Standard imports
 import json
-import threading
 
 # ROS imports
 import rospy
-import actionlib
 import py_trees
-from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 from std_msgs.msg import String
-from std_srvs.srv import Empty
-from nav_msgs.msg import Odometry
-from actionlib_msgs.msg import GoalStatus
-
-# local imports
-from riro_navigation.msg import TaskPlanAction, TaskPlanResult, TaskPlanResultTemp
-from riro_navigation.srv import getRegionGoal
-from riro_navigation.srv import NavigationControl, NavigationControlResponse
-
+from actionlib_msgs.msg import GoalStatusArray, GoalStatus
 
 class TASKPLANCOMM(py_trees.behaviour.Behaviour):
     """
-    Move Base
-    
     Note that this behaviour will return with
     :attr:`~py_trees.common.Status.SUCCESS`. It will also send a clearing
     command to the robot if it is cancelled or interrupted by a higher
@@ -35,7 +21,7 @@ class TASKPLANCOMM(py_trees.behaviour.Behaviour):
     # No hardware connections that may not be there, e.g. usb lidars
     # No middleware connections to other software that may not be there, e.g. ROS pubs/subs/services
     # No need to fire up other needlessly heavy resources, e.g. heavy threads in the background
-    def __init__(self, name, idx='', action_goal=None, destination=None):
+    def __init__(self, name):
         """
         Minimal one-time initialisation. A good rule of thumb is
         to only include the initialisation relevant for being able
@@ -47,14 +33,15 @@ class TASKPLANCOMM(py_trees.behaviour.Behaviour):
         """
         super(TASKPLANCOMM, self).__init__(name=name)
 
-        self.task_plan = None
-        self.robot_pose = None
-        self.rviz_msg = None
+        # Variable to keep track of whether we have already notified the planner
+        self.notified_planner = False
 
-        # Mode
-        self.relaxation_set = True
+        # Store the latest status of move_base
+        self.move_base_status = None
 
-
+        # Blackboard variables
+        self.blackboard = py_trees.blackboard.Blackboard()
+    
     # setup(self) handles all other one-time initialisations of resources 
     # that are required for execution:
     # Essentially, all the things that the constructor doesn’t handle
@@ -87,26 +74,16 @@ class TASKPLANCOMM(py_trees.behaviour.Behaviour):
           - A parallel checking for a valid policy configuration after
             children have been added or removed
         """
-        rospy.loginfo('[subtree] movebase: setup() called.')
-        self.feedback_message = "{}: setup".format(self.name)
-        
-        # ROS server, subscribed by product_automata_planner.py
-        self.task_plan_server = actionlib.SimpleActionServer('task_plan', TaskPlanAction, 
-                                                             self.execute_task_plan, False)
-        self.task_plan_server.start()
+        rospy.loginfo('[Status2Planner] setup() called.')
 
-        # This waits for MoveGoal.py(subtree) to send the navigation status
-        # Maybe using ROS APIs would be more suitable, but it is not implemented yet
-        # Initially set to False
-        self.TaskPlanResult_temp_received = threading.Event()
+        # Subscribe to move_base status
+        rospy.Subscriber('/move_base/status', GoalStatusArray, self.move_base_status_callback)
 
-        # ROS Subscribers
-        rospy.Subscriber('/nav_result_temp', TaskPlanResultTemp, self.TaskPlanResult_temp_callback)
+        # Publisher to send status to planner
+        self.status_pub = rospy.Publisher('/status_to_planner', String, queue_size=10)
 
-        rospy.loginfo('[subtree] movebase: setup() done.')
         return True
 
-    # initialise(self) configures and resets the behaviour ready for (repeated) execution
     def initialise(self):
         """
         When is this called?
@@ -117,20 +94,17 @@ class TASKPLANCOMM(py_trees.behaviour.Behaviour):
           Any initialisation you need before putting your behaviour
           to work.
         """
-        rospy.loginfo('[subtree] movebase: initialise() called.')
-        self.logger.debug("{0}.initialise()".format(self.__class__.__name__))
-        rospy.loginfo(f"{self.__class__.__name__}.intialise() called")
+        rospy.loginfo('[Status2Planner] initialise() called.')
+        self.notified_planner = False
 
-        blackboard = py_trees.Blackboard()
-
-        self.task_plan = None
-        self.robot_pose = None
-        self.rviz_msg = None
-
-        self.TaskPlanResult_temp = None
-
-        # Mode
-        self.relaxation_set = True
+    def move_base_status_callback(self, msg):
+        """
+        Callback function to update the move_base status.
+        """
+        if msg.status_list:
+            self.move_base_status = msg.status_list[-1]
+        else:
+            self.move_base_status = None
 
     def update(self):
         """
@@ -142,59 +116,42 @@ class TASKPLANCOMM(py_trees.behaviour.Behaviour):
           - Set a feedback message
           - return a py_trees.common.Status.[RUNNING, SUCCESS, FAILURE]
         """
-        rospy.loginfo('[subtree] movebase: update() called.')
-        self.logger.debug("%s.update()" % self.__class__.__name__)
+        rospy.loginfo('[Status2Planner] update() called.')
 
-        if self.TaskPlanResult_temp == None:
+        # Check if we have already notified the planner
+        if self.notified_planner:
+            return py_trees.common.Status.SUCCESS
+
+        # Check move_base status
+        if self.move_base_status:
+            status = self.move_base_status.status
+            # If status is ABORTED (4) or REJECTED (5) or PREEMPTED (2), navigation failed
+            if status in [GoalStatus.ABORTED, GoalStatus.REJECTED, GoalStatus.PREEMPTED]:
+                # Access the blackboard to get the current goal index
+                current_goal_idx = self.blackboard.get('current_goal_idx', 1)
+                rospy.loginfo(f"Navigation failed at goal index {current_goal_idx}, status: {status}")
+                # Notify the planner
+                data = {
+                    'failed_goal_id': current_goal_idx,
+                    'replan_requested': True
+                }
+                self.status_pub.publish(json.dumps(data))
+                self.notified_planner = True
+                return py_trees.common.Status.FAILURE
+            elif status == GoalStatus.SUCCEEDED:
+                # Navigation succeeded
+                rospy.loginfo("Navigation succeeded.")
+                return py_trees.common.Status.SUCCESS
+            else:
+                # Navigation is ongoing
+                return py_trees.common.Status.RUNNING
+        else:
+            # No status received yet
             return py_trees.common.Status.RUNNING
 
-        # To be sent to product_automata_planner.py, asking for relaxation if necessary
-        result = TaskPlanResult()
-
-        if self.TaskPlanResult_temp.nav_client_state == 2: # PREEMPTED
-            if not self.TaskPlanResult_temp.relaxation:
-                self.rviz_msg = None
-            
-            result.relaxation = self.TaskPlanResult_temp.relaxation
-            result.robot_x = self.TaskPlanResult_temp.robot_x
-            result.robot_y = self.TaskPlanResult_temp.robot_y
-            result.goal_x = self.TaskPlanResult_temp.goal_x
-            result.goal_y = self.TaskPlanResult_temp.goal_y
-
-            self.task_plan_server.set_preempted(result)
-            return
-        
-        elif self.TaskPlanResult_temp.nav_client_state == 4: # ABORTED
-            self.rviz_msg = None
-
-            result.relaxation = self.TaskPlanResult_temp.relaxation
-            result.robot_x = self.TaskPlanResult_temp.robot_x
-            result.robot_y = self.TaskPlanResult_temp.robot_y
-            result.goal_x = self.TaskPlanResult_temp.goal_x
-            result.goal_y = self.TaskPlanResult_temp.goal_y
-
-            self.task_plan_server.set_aborted(result)
-            return
-        
-        self.task_plan_server.set_succeeded(result)
-        rospy.loginfo(f"Navigation Plan Complete!")
-
-        blackboard = py_trees.Blackboard()
-
-        if blackboard.current_goal_idx == blackboard.goal_num:
-            self.rviz_msg = None
-            return py_trees.common.Status.SUCCESS
-    
-        blackboard.current_goal_idx += 1
-        return py_trees.common.Status.SUCCESS
-
-    def TaskPlanResult_temp_callback(self, msg):
-        self.TaskPlanResult_temp = msg
-
     def terminate(self, new_status):
-        msg = self.status_req()
-        d = json.loads(msg.data)
-        if d['state'] == GoalStatus.ACTIVE:
-            self.cmd_req( json.dumps({'action_type': 'cancel_goal'}) )
-        
-        return
+        """
+        Called when the behavior transitions to a new status.
+        """
+        rospy.loginfo('[Status2Planner] terminate() called.')
+        # Clean up if necessary

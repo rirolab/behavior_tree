@@ -251,7 +251,16 @@ class MOVEG(py_trees.behaviour.Behaviour):
         # http://docs.ros.org/en/lunar/api/actionlib_msgs/html/msg/GoalStatus.html
         # Checking the '/move_base' action client
         state = self.nav_client.get_state()
-        if state == 2 or state == 4 or state == 5: # PREEMPTED, ABORTED, REJECTED
+        if state == 3: # SUCCEEDED
+            self.feedback_message = "SUCCESSFUL"
+            self.logger.debug("%s.update()[%s->%s][%s]" % \
+                             (self.__class__.__name__, 
+                              self.status, 
+                              py_trees.common.Status.SUCCESS, 
+                              self.feedback_message))
+            return py_trees.common.Status.SUCCESS
+
+        elif state == 2 or state == 4 or state == 5: # PREEMPTED, ABORTED, REJECTED
             print("Navigation cancelled")
             # if not self.result.relaxation:
             #     self.rviz_msg = None
@@ -263,18 +272,6 @@ class MOVEG(py_trees.behaviour.Behaviour):
                               py_trees.common.Status.FAILURE, 
                               self.feedback_message))
             return py_trees.common.Status.FAILURE
-        elif state == 3: # SUCCEEDED
-            self.nav_status_pub.publish(self.result)
-            self.feedback_message = "SUCCESSFUL"
-            self.logger.debug("%s.update()[%s->%s][%s]" % \
-                             (self.__class__.__name__, 
-                              self.status, 
-                              py_trees.common.Status.SUCCESS, 
-                              self.feedback_message))
-
-            # if self.blackboard.wm_msg['param_num'] == str(self.idx):
-            #     self.rviz_msg = None
-            return py_trees.common.Status.SUCCESS
         else:
             return py_trees.common.Status.RUNNING
 

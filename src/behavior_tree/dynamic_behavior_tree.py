@@ -148,16 +148,19 @@ class SplinteredReality(object):
             tree (:class:`~py_trees.trees.BehaviourTree`): tree to investigate/manipulate.
         """
 
-        rospy.loginfo(f"[TREE ROOT] pre_tick_handler() called jobs: \
-                      {self.blackboard.get('incoming_goals')}!!!")
-        incoming_goals = self.blackboard.get('incoming_goals')
-        goals = incoming_goals['params'] if incoming_goals is not None else None
+        # rospy.loginfo(f"[TREE ROOT] pre_tick_handler() called jobs: \
+        #               {self.blackboard.get('incoming_goals')}!!!")
+        # incoming_goals = self.blackboard.get('incoming_goals')
+        # goals = incoming_goals['params'] if incoming_goals is not None else None
+
+        goals = self.blackboard.get('grnd_msg')
+        print(goals)
 
         # Check whether the tree is idle and there are goals to process
         if goals is not None:
             rospy.loginfo("[dynamic_behavior_tree -> pre_tick_handler()] We've got goals")
             print(f"[dynamic_behavior_tree -> pre_tick_handler()] goals: {goals}")
-            #goals = json.loads(goals.data)['params']
+            goals = json.loads(goals.data)['params']
             task_list = []
 
             # Basic setup when the tree is idle
@@ -180,6 +183,7 @@ class SplinteredReality(object):
                 if self.n_loop <= 1 and self.enable_inf_loop is False:
                     run_or_cancel = py_trees.composites.Selector(name="Run or Cancel?")
                     run_or_cancel.add_children([cancel_seq, task_sequence])
+                    print('In the block for configuring run_or_cancel block')
                 else:
                     loop = decorators.Loop(child=task_sequence, name='Loop', n_loop=self.n_loop,
                                            enable_inf_loop=self.enable_inf_loop,
@@ -207,7 +211,6 @@ class SplinteredReality(object):
                 task_sequence = self.priorities.children[0].children[-1]
                 #task_sequence = self.priorities.children[0].children[1].children[0] # Task Sequence Node
 
-            task_list = []
             # Configure 'task' block
             # for idx in range(self.blackboard.goal_num + 1):
             
@@ -234,14 +237,12 @@ class SplinteredReality(object):
 
                         task_list.append(job_root)
                         break
-            rospy.loginfo("  !!!!!\n!!!!!\n!!!!!\n")
             task_sequence.add_children(task_list)
             for task in task_list:
                 rospy.loginfo(f"[dynamic_behavior_tree -> pre_tick_handler()] \
                               task name: {task.name }")
             rospy.loginfo("[dynamic_behavior_tree -> pre_tick_handler()] \
                       Configuring task_sequence block finished")
-            rospy.loginfo("  !!!!!\n!!!!!\n!!!!!\n")
             self.current_job = task_sequence.children[0]
             #status2planner = Status2Planner.TASKPLANCOMM(name="Status2Planner")
             # tasks.add_children([task_sequence, status2planner])
@@ -345,7 +346,7 @@ class SplinteredReality(object):
         """
         # delete the job subtree if it is finished
         if not self.idle():
-            job = self.priorities.children[0] # 'Run or Cancel?' block
+            job = self.priorities.children[0] # 'Task Sequence' Node
             
             if job.status != py_trees.common.Status.RUNNING:
                 rospy.loginfo("{0}: finished [{1}]".format(job.name, job.status))
