@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-# Copyright YYYY Massachusetts Institute of Technology 
+# Copyright YYYY Massachusetts Institute of Technology
+# Edited by: Yohan Park (farawell777@kaist.ac.kr)
 
 # Standard imports
 import sys
@@ -17,7 +18,7 @@ import std_msgs.msg as std_msgs
 import py_trees_ros
 
 # Local imports
-from subtrees import Grnd2Blackboard, WM2Blackboard, Status2Planner
+from subtrees import Grnd2Blackboard, WM2Blackboard
 import decorators
 
 def create_root(controller_ns=""):
@@ -147,21 +148,21 @@ class SplinteredReality(object):
             tree (:class:`~py_trees.trees.BehaviourTree`): tree to investigate/manipulate.
         """
 
-        goals = self.blackboard.get('grnd_msg')
-        if goals is not None:
-            rospy.loginfo('pre_tick_handler: goals is not None')
-            print("pre_tick_handler: ", goals)
-            rospy.loginfo(f"[TREE ROOT] pre_tick_handler() is adding {goals} to goal subtrees")
-        else:
-            print("pre_tick_handler: 'goals' is None")
+        rospy.loginfo(f"[TREE ROOT] pre_tick_handler() called jobs: \
+                      {self.blackboard.get('incoming_goals')}!!!")
+        incoming_goals = self.blackboard.get('incoming_goals')
+        goals = incoming_goals['params'] if incoming_goals is not None else None
 
         # Check whether the tree is idle and there are goals to process
         if goals is not None:
-            goals = json.loads(goals.data)['params']
+            rospy.loginfo("[dynamic_behavior_tree -> pre_tick_handler()] We've got goals")
+            print(f"[dynamic_behavior_tree -> pre_tick_handler()] goals: {goals}")
+            #goals = json.loads(goals.data)['params']
+            task_list = []
 
             # Basic setup when the tree is idle
-            if not self.busy():
-                rospy.loginfo("pre_tick_handler: tree is idle")
+            if self.idle():
+                rospy.loginfo("[dynamic_behavior_tree -> pre_tick_handler()] Tree is idle")
                 # Configure 'cancel' block
                 cancel_seq = py_trees.composites.Sequence(name="Cancel")
                 is_stop_requested = py_trees.blackboard.CheckBlackboardVariable(
@@ -172,15 +173,15 @@ class SplinteredReality(object):
                 cancel_seq.add_child(is_stop_requested)
 
                 # Deifine 'Tasks' & 'Task Sequence' block
-                tasks = py_trees.composites.Parallel(name="Tasks")
+                #tasks = py_trees.composites.Parallel(name="Tasks")
                 task_sequence = py_trees.composites.Sequence(name="Task Sequence")
 
                 # Configure 'run_or_cancel' block
                 if self.n_loop <= 1 and self.enable_inf_loop is False:
                     run_or_cancel = py_trees.composites.Selector(name="Run or Cancel?")
-                    run_or_cancel.add_children([cancel_seq, tasks])
+                    run_or_cancel.add_children([cancel_seq, task_sequence])
                 else:
-                    loop = decorators.Loop(child=tasks, name='Loop', n_loop=self.n_loop,
+                    loop = decorators.Loop(child=task_sequence, name='Loop', n_loop=self.n_loop,
                                            enable_inf_loop=self.enable_inf_loop,
                                            timeout=self.loop_timeout)
 
@@ -196,17 +197,23 @@ class SplinteredReality(object):
                 # child: subtree to insert
                 # unique_id: unique id of the parent
                 # index: insert the child at this index, pushing all children after it back one.
-                tree.insert_subtree(run_or_cancel, self.priorities.id, 0)
-                rospy.loginfo("{0}: inserted job subtree".format(run_or_cancel.name))
-            
+                #tree.insert_subtree(run_or_cancel, self.priorities.id, 0)
+                root = run_or_cancel
+                tree.insert_subtree(root, self.priorities.id, 0)
+                #rospy.loginfo("{0}: inserted job subtree".format(run_or_cancel.name))
+                rospy.loginfo("{0}: inserted job subtree".format(root.name))
             # Dynamic Reconfiguration
             else:
-                tasks = self.priorities.children[0].children[-1]
+                task_sequence = self.priorities.children[0].children[-1]
                 #task_sequence = self.priorities.children[0].children[1].children[0] # Task Sequence Node
 
             task_list = []
             # Configure 'task' block
             # for idx in range(self.blackboard.goal_num + 1):
+            
+            #goals: dictionary of goal_dict, key: 1, 2, 3, ...
+            rospy.loginfo("[dynamic_behavior_tree -> pre_tick_handler()] \
+                      Configuring task_sequence block")
             for idx in range(len(goals)):
                 for job in self.jobs:
                     if job.name == goals[str(idx + 1)]['primitive_action']:
@@ -227,14 +234,19 @@ class SplinteredReality(object):
 
                         task_list.append(job_root)
                         break
-            
+            rospy.loginfo("  !!!!!\n!!!!!\n!!!!!\n")
             task_sequence.add_children(task_list)
+            for task in task_list:
+                rospy.loginfo(f"[dynamic_behavior_tree -> pre_tick_handler()] \
+                              task name: {task.name }")
+            rospy.loginfo("[dynamic_behavior_tree -> pre_tick_handler()] \
+                      Configuring task_sequence block finished")
+            rospy.loginfo("  !!!!!\n!!!!!\n!!!!!\n")
+            self.current_job = task_sequence.children[0]
             #status2planner = Status2Planner.TASKPLANCOMM(name="Status2Planner")
             # tasks.add_children([task_sequence, status2planner])
-            tasks.add_children([task_sequence])
-
-            self.current_job = task_sequence.children[0]
-            
+            rospy.loginfo("[dynamic_behavior_tree -> pre_tick_handler()] \
+                           finished setting up")
             return
 
         # Dynamic Reconfiguration (Not used in this code)
@@ -319,7 +331,10 @@ class SplinteredReality(object):
                 job.goal = None
             self.current_job = job
             return 
-            
+        else:
+            rospy.logerr("[dynamic_behavior_tree -> pre_tick_handler()] 'goals' is None")
+            return
+
     def post_tick_handler(self, tree):
         """
         Check if a job is running and if it has finished. If so, prune the job subtree from the tree.
@@ -418,7 +433,7 @@ if __name__ == '__main__':
     else:
         print(f"Given robot type should be one of 'spot' or 'manip'. Input type: {opt.robot} ")
         raise NotImplementedError() 
-
+    rospy.loginfo(jobs)
     splintered_reality = SplinteredReality(jobs = jobs, rec_topic_list = topic_list)
     rospy.on_shutdown(splintered_reality.shutdown)
 
