@@ -51,9 +51,9 @@ class ToBlackboard(subscribers.ToBlackboard):
                 
                 if primitive_action == "stop":
                     self.blackboard.stop_cmd = True
+                    self.blackboard.set('grnd_msg', None)
                     break
-                elif primitive_action == "move_to_goal":
-                    
+                elif primitive_action == "waypoint_navigation":
                     self.blackboard.goals_dict[str(i + 1)] = \
                         grounding['params'][str(i + 1)]
                     break

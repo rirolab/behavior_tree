@@ -9,6 +9,7 @@ import json
 import PyKDL
 import tf
 
+
 import std_msgs.msg as std_msgs
 from complex_action_client import misc
 from geometry_msgs.msg import PoseStamped, Point, Quaternion, Pose
@@ -33,7 +34,7 @@ class Move(object):
         Tune into a channel for incoming goal requests. This is a simple
         subscriber here but more typically would be a service or action interface.
         """
-        self._name = "move_to_goal"
+        self._name = "waypoint_navigation"
         # self._grounding_channel = "symbol_grounding" #rospy.get_param('grounding_channel')
         # self._subscriber = rospy.Subscriber(self._grounding_channel, std_msgs.String, self.incoming)
         self._goal = None
@@ -77,7 +78,7 @@ class Move(object):
         else:
             grounding = json.loads(msg.data)['params']
             for i in range( len(grounding.keys()) ):
-                if grounding[str(i+1)]['primitive_action'] in ['move_to_goal']:
+                if grounding[str(i+1)]['primitive_action'] in ['waypoint_navigation']:
                     self.goal = grounding
                     break
 
@@ -93,18 +94,18 @@ class Move(object):
            :class:`~py_trees.behaviour.Behaviour`: subtree root
         """
         # beahviors
-        root = py_trees.composites.Sequence(name="navigate_job"+idx)
+        root = py_trees.composites.Sequence(name="waypoint_navigation"+idx)
         blackboard = py_trees.blackboard.Blackboard()
-        ts_state = None
+        waypoints = None
         
         # move to goal
-        if goal["primitive_action"] in ['move_to_goal']:
+        if goal["primitive_action"] in ['waypoint_navigation']:
             # if 'goal' in goal[idx].keys():
             #     goal = goal[idx]['destination']
             if goal['destination'] is not "na":
                 # string, goal['destination']: r1, r2, ...
                 # These are transition states
-                ts_state = goal['destination'] 
+                waypoints = goal['destination'] 
             else:
                 rospy.logerr("No navigation goal")
                 sys.exit()
@@ -116,14 +117,37 @@ class Move(object):
         # navigate_job = py_trees.composites.Sequence(name='move')
 
         # Configure the subtree for the navigate_job
-        destination = ts_state
-        if ts_state is not None: 
-            pose = blackboard.wm_dict[str(idx)]['location']
-            rospy.loginfo(f"\n@####  \n(navigate_job) Destination: {destination}, Pose: {pose}\n########")
-            s_drive = MoveGoal.MOVEG(name = "navigate", idx = idx, 
-                                    destination = destination,
-                                    action_goal = {'pose': pose})
-            
-            root.add_children([s_drive])
+        root_children = []
+        if waypoints is not None:
+            for wp_idx, waypoint in enumerate(waypoints):
+                pose = blackboard.wm_dict[str(wp_idx+1)]['location']
+                ##### tried to discriminate between relax and move, but it didn't work ############
+                # parallel_block = py_trees.composites.Parallel(name=f"gotopoint{wp_idx+1}",
+                #                                               policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ALL,) # TODO : change name?
+                # parallel_block.synchronise = False
+                
+                # relax = MoveGoal.RELAX(name = "relax?",
+                #                        idx = wp_idx,
+                #                        destination=waypoint,
+                #                        action_goal = {'pose': pose},
+                #                        waypoint_seq=waypoints[wp_idx:])
+                # move = MoveGoal.MOVEG(name = "navigate",
+                #                       idx = wp_idx, 
+                #                       destination = waypoint,
+                #                       action_goal = {'pose': pose},
+                #                       waypoint_seq=waypoints[wp_idx:])
+                
+                # parallel_block.add_children([relax, move])
+                # root_children.append(parallel_block)
+                ######################################################################
+                
+                
+                move = MoveGoal.MOVEG(name = f"gotopoint{wp_idx+1}",
+                                      idx = wp_idx, 
+                                      destination = waypoint,
+                                      action_goal = {'pose': pose},
+                                      waypoint_seq=waypoints[wp_idx:])
+                root_children.append(move)
+        root.add_children(root_children)
 
         return root

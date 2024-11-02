@@ -153,6 +153,7 @@ class SplinteredReality(object):
         # incoming_goals = self.blackboard.get('incoming_goals')
         # goals = incoming_goals['params'] if incoming_goals is not None else None
         goals = self.blackboard.get('grnd_msg')
+        rospy.logerr(f"current goals : {goals}")
         # if goal is not None:
 
         # Check whether the tree is idle and there are goals to process
@@ -177,11 +178,11 @@ class SplinteredReality(object):
 
                 # Deifine 'Tasks' & 'Task Sequence' block
                 #tasks = py_trees.composites.Parallel(name="Tasks")
-                task_sequence = py_trees.composites.Sequence(name="Task Sequence")
+                task_sequence = py_trees.composites.Sequence(name="Task")
 
                 # Configure 'run_or_cancel' block
                 if self.n_loop <= 1 and self.enable_inf_loop is False:
-                    run_or_cancel = py_trees.composites.Selector(name="Run or Cancel?")
+                    run_or_cancel = py_trees.composites.Selector(name="Run or Cancel?", memory=False)
                     run_or_cancel.add_children([cancel_seq, task_sequence])
                     print('In the block for configuring run_or_cancel block')
                 else:
@@ -217,6 +218,9 @@ class SplinteredReality(object):
             #goals: dictionary of goal_dict, key: 1, 2, 3, ...
             rospy.loginfo("[dynamic_behavior_tree -> pre_tick_handler()] \
                       Configuring task_sequence block")
+            # {'1': {'primitive_action': 'move_to_goal', 'direction': 'na', 'object': 'na', 'source': 'na', 'destination': 'goal1'},
+            # '2': {'primitive_action': 'move_to_goal', 'direction': 'na', 'object': 'na', 'source': 'na', 'destination': 'goal2'}}
+            
             for idx in range(len(goals)):
                 for job in self.jobs:
                     if job.name == goals[str(idx + 1)]['primitive_action']:
@@ -346,7 +350,7 @@ class SplinteredReality(object):
         """
         # delete the job subtree if it is finished
         if not self.idle():
-            job = self.priorities.children[0] # 'Task Sequence' Node
+            job = self.priorities.children[0] # 'Run or Cancel?' block
             
             if job.status != py_trees.common.Status.RUNNING:
                 rospy.loginfo("{0}: finished [{1}]".format(job.name, job.status))
