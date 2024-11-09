@@ -130,7 +130,7 @@ class MOVEG(py_trees.behaviour.Behaviour):
                          " Action Server to connect. Start the action server"
                          " before running example.")
             rospy.signal_shutdown("Timed out waiting for Action Server")
-        self.getregiongoal_client = rospy.ServiceProxy('/manage_map/get_region_goal', getRegionGoal)
+        self.getregiongoal_client = rospy.ServiceProxy('/manage_loaded_map/get_region_goal', getRegionGoal)
 
         # ROS publihser
         self.nav_status_pub = rospy.Publisher('/status_to_planner', TaskPlanResult, queue_size=1)
@@ -193,8 +193,8 @@ class MOVEG(py_trees.behaviour.Behaviour):
 
             # When the task_plan is format of 'r1,' 'r5,' etc.
             if re.match(r'r\d+', self.destination):
-                # Get the goal from service '/manage_map/get_region_goal'
-                rospy.wait_for_service('/manage_map/get_region_goal')
+                # Get the goal from service '/manage_loaded_map/get_region_goal'
+                rospy.wait_for_service('/manage_loaded_map/get_region_goal')
                 response = self.getregiongoal_client(int(self.destination[1:]))
 
                 self.nav_goal.target_pose.pose.position.x = response.goal_x
