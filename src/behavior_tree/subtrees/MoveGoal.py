@@ -17,8 +17,8 @@ from actionlib_msgs.msg import GoalStatus
 from std_msgs.msg import String
 
 # local imports
-from riro_navigation.msg import TaskPlanResult, TaskPlanResultTemp
-from riro_navigation.srv import getRegionGoal, LTLPlan
+from riro_navigation.msg import TaskPlanResult
+from riro_navigation.srv import getRegionGoal
 import numpy as np
 
 class MOVEG(py_trees.behaviour.Behaviour):
@@ -115,11 +115,19 @@ class MOVEG(py_trees.behaviour.Behaviour):
         # else:
         #     self.sim = False
         #     print("sim arg strange")
+
+        sim = rospy.get_param('sim', False)
         
-        self.sim = True
-        self.map_frame = 'map_carla' 
-        self.relax_distance_threshold = 10
-        rospy.Subscriber("/carla/ego_vehicle/odometry", Odometry, self.robot_pose_callback)
+        self.sim = sim
+        if self.sim:
+            self.map_frame = 'map_carla' 
+            self.relax_distance_threshold = 10
+            rospy.Subscriber("/carla/ego_vehicle/odometry", Odometry, self.robot_pose_callback)
+        else:
+            self.map_frame = 'custom_costmap'
+            self.relax_distance_threshold = 3
+            rospy.Subscriber("/odom_spot", Odometry, self.robot_pose_callback)
+
         rospy.Subscriber("/planner_ready", String, self.planner_ready_callback)
 
         # ROS client
