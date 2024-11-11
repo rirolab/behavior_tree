@@ -12,7 +12,7 @@ import threading
 import actionlib
 import py_trees
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
-from nav_msgs.msg import Odometry
+from nav_msgs.msg import Odometry, Path
 from actionlib_msgs.msg import GoalStatus
 from std_msgs.msg import String
 
@@ -121,6 +121,7 @@ class MOVEG(py_trees.behaviour.Behaviour):
         self.relax_distance_threshold = 10
         rospy.Subscriber("/carla/ego_vehicle/odometry", Odometry, self.robot_pose_callback)
         rospy.Subscriber("/planner_ready", String, self.planner_ready_callback)
+        rospy.Subscriber("/move_base/GlobalPlanner/plan", Path, self.global_plan_callback)
 
         # ROS client
         self.nav_client = actionlib.SimpleActionClient("/move_base", MoveBaseAction)
@@ -257,7 +258,7 @@ class MOVEG(py_trees.behaviour.Behaviour):
             return py_trees.common.Status.SUCCESS
 
         # elif state == 2 or state == 4 or state == 5: # PREEMPTED, ABORTED, REJECTED
-        elif state == 2 or state == 5: # PREEMPTED, ABORTED, REJECTED
+        elif state == 2 or state == 5: # PREEMPTED, REJECTED
             # TODO? : should we handle when the goal is preempted / rejected?
             print("Navigation cancelled")
             self.nav_status_pub.publish(self.result)
@@ -272,13 +273,31 @@ class MOVEG(py_trees.behaviour.Behaviour):
             return py_trees.common.Status.FAILURE
         elif state == 4:
             # TODO? : should we handle when the goal is aborted?
-            status_dict = {'status' : 'failure'}
+            # status_dict = {'status' : 'failure'}
+            timestamp_now = str(datetime.datetime.now())
+            ####### 1. Send stop command to product_automata_planner.py via ROS topic #######
+            taskplangoals_dict = {1: {
+                                        "primitive_action": "stop",
+                                    },
+                                }
+
+            # Create final dictionary 'd' that is to be published to Black Board
+            d = {
+                "timestamp": timestamp_now,
+                "params": taskplangoals_dict,
+                "param_num": 1
+            }
+            self.cancel_pub.publish(json.dumps(d))
+            status_dict = {'status' : 'failure',
+                              'robot_location' : {'x' : self.robot_pose.x, 'y' : self.robot_pose.y},
+                              'location' : {'x' : float(self.action_goal['pose']['x']), 'y' : float(self.action_goal['pose']['y'])}}
             self.planner_result_pub.publish(json.dumps(status_dict))
             return py_trees.common.Status.SUCCESS
         
         elif state == 1 and self.relaxation_mode:
-            curr_dist = self.l1_distance(self.robot_pose.x,self.robot_pose.y,
-                                        float(self.action_goal['pose']['x']), float(self.action_goal['pose']['y']))
+            # curr_dist = self.l1_distance(self.robot_pose.x,self.robot_pose.y,
+            #                             float(self.action_goal['pose']['x']), float(self.action_goal['pose']['y']))
+            curr_dist = self.compute_path_length(self.global_plan)
             if curr_dist < self.min_dist:
                 self.min_dist = curr_dist
                 return py_trees.common.Status.RUNNING
@@ -329,6 +348,15 @@ class MOVEG(py_trees.behaviour.Behaviour):
 
         return
     
+    def compute_path_length(self, path):
+        positions = np.array([[pose.pose.position.x, pose.pose.position.y] for pose in path.poses])
+        if positions.shape[0] < 2:
+            return 0.0
+        deltas = positions[1:] - positions[:-1]
+        segment_lengths = np.hypot(deltas[:, 0], deltas[:, 1])
+        total_length = np.sum(segment_lengths)
+        return total_length
+    
     def robot_pose_callback(self, msg):
         with self.lock:
             self.robot_pose = msg.pose.pose.position
@@ -338,6 +366,10 @@ class MOVEG(py_trees.behaviour.Behaviour):
     def planner_ready_callback(self, msg):
         with self.lock:
             self.planner_ready = True
+            
+    def global_plan_callback(self, msg):
+        with self.lock:
+            self.global_plan = msg
         
     @staticmethod
     def l1_distance(x1, y1, x2, y2):
