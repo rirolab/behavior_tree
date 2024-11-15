@@ -66,6 +66,7 @@ class MOVEG(py_trees.behaviour.Behaviour):
         self.sent_goal = False
         self.sent_goal_to_planner = False
         self.waypoint_seq = waypoint_seq
+        self.sent_result_to_planner = False
 
 
     # setup(self) handles all other one-time initialisations of resources that are required for execution:
@@ -263,6 +264,7 @@ class MOVEG(py_trees.behaviour.Behaviour):
                               self.feedback_message))
             status_dict = {'status' : 'success'}
             self.planner_result_pub.publish(json.dumps(status_dict))
+            self.sent_result_to_planner = True
             return py_trees.common.Status.SUCCESS
 
         # elif state == 2 or state == 4 or state == 5: # PREEMPTED, ABORTED, REJECTED
@@ -278,6 +280,7 @@ class MOVEG(py_trees.behaviour.Behaviour):
                               self.feedback_message))
             status_dict = {'status' : 'failure'}
             self.planner_result_pub.publish(json.dumps(status_dict))
+            self.sent_result_to_planner = True
             return py_trees.common.Status.FAILURE
         elif state == 4:
             # TODO? : should we handle when the goal is aborted?
@@ -300,6 +303,7 @@ class MOVEG(py_trees.behaviour.Behaviour):
                               'robot_location' : {'x' : self.robot_pose.x, 'y' : self.robot_pose.y},
                               'location' : {'x' : float(self.action_goal['pose']['x']), 'y' : float(self.action_goal['pose']['y'])}}
             self.planner_result_pub.publish(json.dumps(status_dict))
+            self.sent_result_to_planner = True
             return py_trees.common.Status.SUCCESS
         
         elif state == 1 and self.relaxation_mode:
@@ -330,6 +334,7 @@ class MOVEG(py_trees.behaviour.Behaviour):
                               'robot_location' : {'x' : self.robot_pose.x, 'y' : self.robot_pose.y},
                               'location' : {'x' : float(self.action_goal['pose']['x']), 'y' : float(self.action_goal['pose']['y'])}}
                 self.planner_result_pub.publish(json.dumps(status_dict))
+                self.sent_result_to_planner = True
 
                 rospy.logerr("Canceled the goal!!!!!!!")
                 return py_trees.common.Status.FAILURE
@@ -349,6 +354,11 @@ class MOVEG(py_trees.behaviour.Behaviour):
         rospy.logerr("Terminating moveGoal !!!!!!!!!!!!!!!!!!!!!!")
         if self.nav_client.get_state() == 1: # Active
             self.nav_client.cancel_goal()
+        if not self.sent_result_to_planner:
+            status_dict = {'status' : 'success'}
+            self.planner_result_pub.publish(json.dumps(status_dict))
+            self.sent_result_to_planner = True
+
         self.logger.debug("%s.terminate()[%s->%s]" % \
                           (self.__class__.__name__, 
                            self.status, 

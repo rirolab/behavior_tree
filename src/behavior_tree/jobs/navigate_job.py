@@ -118,9 +118,14 @@ class Move(object):
 
         # Configure the subtree for the navigate_job
         root_children = []
+        rospy.logerr(f"WORLD_MODEL: {blackboard.wm_dict}")
+        rospy.logerr(f"WAYPOINTS: {waypoints}")
         if waypoints is not None:
             for wp_idx, waypoint in enumerate(waypoints):
-                pose = blackboard.wm_dict[str(wp_idx+1)]['location']
+                for _, v in blackboard.wm_dict.items():
+                    if v['name'] == waypoint:
+                        pose = v['location']
+                        break
                 ##### tried to discriminate between relax and move, but it didn't work ############
                 # parallel_block = py_trees.composites.Parallel(name=f"gotopoint{wp_idx+1}",
                 #                                               policy=py_trees.common.ParallelPolicy.SUCCESS_ON_ALL,) # TODO : change name?
