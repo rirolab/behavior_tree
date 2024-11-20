@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import sys
-import numpy as np
 import json
 import importlib
 import argparse
@@ -13,7 +12,6 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 
 from riro_srvs.srv import StringGoalStatus
-from std_msgs.msg import String
 from action_msgs.msg import GoalStatus
 
 import py_trees
@@ -25,10 +23,10 @@ from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 
 
-from .subtrees import WM2Blackboard
-from .subtrees import Grnd2Blackboard
+from behavior_tree.subtrees import WM2Blackboard
+from behavior_tree.subtrees import Grnd2Blackboard
 ## from .subtrees import Status2Blackboard
-from . import decorators
+from behavior_tree import decorators
 from py_trees_ros.subscribers import ToBlackboard 
 
 

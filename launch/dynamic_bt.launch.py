@@ -15,8 +15,8 @@ def generate_launch_description():
     print("Select either simulation or real setup:")
     sim = True
     while (True):
-        print("     + Option N1: UR5 ROBOT (REAL).")
-        print("     + Option N2: UR5 ROBOT (SIMULATION).")
+        print("     + Option N1: ROBOT (REAL).")
+        print("     + Option N2: ROBOT (SIMULATION).")
         robot_config = input ("  Please select: ")
         if (robot_config == "1"):
             sim = False
