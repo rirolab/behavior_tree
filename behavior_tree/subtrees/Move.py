@@ -3,7 +3,7 @@ import json
 
 import rclpy
 from action_msgs.msg import GoalStatus
-from riro_srvs.srv import StringInt
+from riro_srvs.srv import StringGoalStatus
 
 import py_trees
 from py_trees_ros import exceptions, utilities
@@ -74,7 +74,10 @@ class MOVE(py_trees.behaviour.Behaviour):
         
         self.logger.debug("self.goal_status".format(self.blackboard.goal_status))
         if (self.goal_uuid_des == self.blackboard.goal_id).all() and \
-          self.blackboard.goal_status == GoalStatus.STATUS_EXECUTING:
+          self.blackboard.goal_status in [
+              GoalStatus.STATUS_ACCEPTED,
+              GoalStatus.STATUS_EXECUTING,
+          ]:
             req = StringGoalStatus.Request()
             req.data = json.dumps({'action_type': 'cancel_goal',
                                    'enable_wait': True})

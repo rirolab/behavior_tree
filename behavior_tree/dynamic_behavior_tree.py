@@ -431,6 +431,7 @@ def main(args=None):
                                                  'jobs.move_job.Move',
                                                  ## ## 'jobs.handover_job.Move',
                                                  ## ## 'jobs.jog_job.Move',
+                                                 'jobs.policy_job.Move',
                                                  'jobs.gripper_job.Move',
                                                  ## ## 'jobs.slide_job.Move',
                                                  ## ## 'jobs.attach_job.Move',

@@ -60,7 +60,7 @@ class Move(base_job.BaseJob):
                 
 
     @staticmethod
-    def create_root(node, action_client, idx="1", goal=std_msgs.Empty(), **kwargs):
+    def create_root(action_client, idx="1", goal=std_msgs.Empty(), **kwargs):
         """
         Create the job subtree based on the incoming goal specification.
 
@@ -71,7 +71,7 @@ class Move(base_job.BaseJob):
            :class:`~py_trees.behaviour.Behaviour`: subtree root
         """       
         # beahviors
-        root = py_trees.composites.Sequence(name="Place")
+        root = py_trees.composites.Sequence(name="Place", memory=True)
         blackboard = py_trees.blackboard.Client()
         blackboard.register_key(key="gripper_open_pos", access=py_trees.common.Access.READ)
         blackboard.register_key(key="gripper_close_pos", access=py_trees.common.Access.READ)
@@ -85,8 +85,7 @@ class Move(base_job.BaseJob):
             elif 'obj' in goal[idx].keys():
                 obj = goal[idx]['obj']
             else:
-                node.get_logger().error("MOVE: No place object")
-                sys.exit()
+                raise RuntimeError("MOVE: No place object")
                 
             destination = goal[idx]['destination']
 
@@ -102,11 +101,12 @@ class Move(base_job.BaseJob):
                                   action_goal=blackboard.init_config)
 
         # ----------------- Place ---------------------
-        place = py_trees.composites.Sequence(name="Place")
+        place = py_trees.composites.Sequence(name="Place", memory=True)
         pose_est2 = WorldModel.POSE_ESTIMATOR(name="Plan"+idx,
                                               object_dict = {'target': obj,
                                                              'destination': destination,
-                                                             'destination_offset': destination_offset})
+                                                             'destination_offset': destination_offset},
+                                              tf_buffer=kwargs['tf_buffer'])
 
         s_move21 = MovePose.MOVEP(name="Top",\
                                   action_client=action_client,\
@@ -125,5 +125,4 @@ class Move(base_job.BaseJob):
         
         place.add_children([pose_est2, s_move21, s_move22, s_move23, s_move24, s_init3])
         return place
-
 
