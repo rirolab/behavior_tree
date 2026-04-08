@@ -9,7 +9,7 @@ import py_trees.console as console
 import std_msgs.msg as std_msgs
 
 from . import base_job
-from behavior_tree.subtrees import MoveJoint, MovePose, Gripper, WorldModel
+from behavior_tree.subtrees import MoveJoint, MovePose, Gripper, Policy, WorldModel
 
 
 ##############################################################################
@@ -80,16 +80,19 @@ class Move(base_job.BaseJob):
         blackboard.register_key(key="gripper_close_force", access=py_trees.common.Access.READ)
         blackboard.register_key(key="init_config", access=py_trees.common.Access.READ)
 
-        if goal[idx]["primitive_action"] in ['pick']:
-            if 'object' in goal[idx].keys():
-                obj = goal[idx]['object']
-            elif 'obj' in goal[idx].keys():
-                obj = goal[idx]['obj']
-            else:
-                console.logerror("Pick: No pick object")
-                sys.exit()                
-        else:
+        if goal[idx]["primitive_action"] not in ['pick']:
             return None
+
+        if goal[idx].get("implementation") == "policy":
+            return Policy.create_subtree(action_client, goal[idx])
+
+        if 'object' in goal[idx].keys():
+            obj = goal[idx]['object']
+        elif 'obj' in goal[idx].keys():
+            obj = goal[idx]['obj']
+        else:
+            console.logerror("Pick: No pick object")
+            sys.exit()
         
         # ------------ Compute -------------------------
         s_init1 = MoveJoint.MOVEJ(name="Init",\

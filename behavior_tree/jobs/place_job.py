@@ -7,7 +7,7 @@ import json
 import std_msgs.msg as std_msgs
 
 from . import base_job
-from behavior_tree.subtrees import MoveJoint, MovePose, Gripper, WorldModel
+from behavior_tree.subtrees import MoveJoint, MovePose, Gripper, Policy, WorldModel
 
 
 ##############################################################################
@@ -79,22 +79,25 @@ class Move(base_job.BaseJob):
         blackboard.register_key(key="gripper_close_force", access=py_trees.common.Access.READ)
         blackboard.register_key(key="init_config", access=py_trees.common.Access.READ)
         
-        if goal[idx]["primitive_action"] in ['place']:
-            if 'object' in goal[idx].keys():
-                obj = goal[idx]['object']
-            elif 'obj' in goal[idx].keys():
-                obj = goal[idx]['obj']
-            else:
-                raise RuntimeError("MOVE: No place object")
-                
-            destination = goal[idx]['destination']
-
-            if 'destination_offset' in goal[idx].keys():
-                destination_offset = goal[idx]['destination_offset'] 
-            else:
-                destination_offset = [0,0,0,0,0,0]
-        else:
+        if goal[idx]["primitive_action"] not in ['place']:
             return None
+
+        if goal[idx].get("implementation") == "policy":
+            return Policy.create_subtree(action_client, goal[idx])
+
+        if 'object' in goal[idx].keys():
+            obj = goal[idx]['object']
+        elif 'obj' in goal[idx].keys():
+            obj = goal[idx]['obj']
+        else:
+            raise RuntimeError("MOVE: No place object")
+
+        destination = goal[idx]['destination']
+
+        if 'destination_offset' in goal[idx].keys():
+            destination_offset = goal[idx]['destination_offset'] 
+        else:
+            destination_offset = [0,0,0,0,0,0]
 
         s_init3 = MoveJoint.MOVEJ(name="Init",\
                                   action_client=action_client,\

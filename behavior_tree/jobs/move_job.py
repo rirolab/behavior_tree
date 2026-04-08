@@ -7,7 +7,7 @@ import py_trees, py_trees_ros
 import std_msgs.msg as std_msgs
 
 from . import base_job
-from behavior_tree.subtrees import MoveJoint, MovePose, Gripper, WorldModel
+from behavior_tree.subtrees import MoveJoint, MovePose, Gripper, Policy, WorldModel
 
 
 ##############################################################################
@@ -79,11 +79,14 @@ class Move(base_job.BaseJob):
         blackboard.register_key(key="gripper_close_force", access=py_trees.common.Access.READ)
         blackboard.register_key(key="init_config", access=py_trees.common.Access.READ)
 
-        if goal[idx]["primitive_action"] in ['move']:
-            obj         = goal[idx]['object']
-            destination = goal[idx]['destination']
-        else:
+        if goal[idx]["primitive_action"] not in ['move']:
             return None
+
+        if goal[idx].get("implementation") == "policy":
+            return Policy.create_subtree(action_client, goal[idx])
+
+        obj         = goal[idx]['object']
+        destination = goal[idx]['destination']
         
         # ----------------- Move Task ----------------        
         s_init3 = MoveJoint.MOVEJ(name="Init", action_client=action_client,

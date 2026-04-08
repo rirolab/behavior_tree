@@ -42,8 +42,8 @@ class Move(base_job.BaseJob):
             return None
 
         root = py_trees.composites.Sequence(name="Policy", memory=True)
-        run_policy = Policy.RUN(
-            name="RunPolicy",
+        run_policy = Policy.MOVEBYPOLICY(
+            name="MoveByPolicy",
             action_client=action_client,
             action_goal=goal[idx],
             timeout=float(goal[idx].get("timeout_sec", 5.0)),

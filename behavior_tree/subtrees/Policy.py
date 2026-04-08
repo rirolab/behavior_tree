@@ -9,13 +9,13 @@ from riro_srvs.srv import StringGoalStatus
 from . import Move
 
 
-class RUN(Move.MOVE):
+class MOVEBYPOLICY(Move.MOVE):
     """
     Execute policy through complex_action_client.
     """
 
     def __init__(self, name, action_client, action_goal=None, timeout=5.0):
-        super(RUN, self).__init__(
+        super(MOVEBYPOLICY, self).__init__(
             name=name,
             action_client=action_client,
             action_goal=action_goal,
@@ -34,7 +34,7 @@ class RUN(Move.MOVE):
             self.goal_uuid_des = np.random.randint(0, 255, size=16, dtype=np.uint8)
             cmd_str = json.dumps(
                 {
-                    "action_type": "run_policy",
+                    "action_type": "moveByPolicy",
                     "goal": self.action_goal,
                     "uuid": self.goal_uuid_des.tolist(),
                     "timeout": self.timeout,
@@ -79,3 +79,15 @@ class RUN(Move.MOVE):
 
         self.feedback_message = "running"
         return py_trees.common.Status.RUNNING
+
+
+def create_subtree(action_client, step_goal, **kwargs):
+    root = py_trees.composites.Sequence(name="Policy", memory=True)
+    run_policy = MOVEBYPOLICY(
+        name="MoveByPolicy",
+        action_client=action_client,
+        action_goal=step_goal,
+        timeout=float(step_goal.get("timeout", 5.0)),
+    )
+    root.add_child(run_policy)
+    return root
