@@ -17,10 +17,11 @@ class MOVEJ(Move.MOVE):
     command to the robot if it is cancelled or interrupted by a higher
     priority behaviour.
     """
-    def __init__(self, name, action_client, action_goal=None):
+    def __init__(self, name, action_client, action_goal=None, timeout=3.0):
         super(MOVEJ, self).__init__(name=name,
                                    action_client=action_client,
-                                   action_goal=action_goal)
+                                   action_goal=action_goal,
+                                   timeout=timeout)
         self.logger.debug("%s.__init__()" % self.__class__.__name__)
 
     def update(self):
@@ -42,7 +43,7 @@ class MOVEJ(Move.MOVE):
             cmd_str = json.dumps({'action_type': 'moveJoint',
                                   'goal': json.dumps(goal),
                                   'uuid': self.goal_uuid_des.tolist(),
-                                  'timeout': 3.,
+                                  'timeout': self.timeout,
                                   'enable_wait': False})
             req = StringGoalStatus.Request(data=cmd_str)
             self.future = self.cmd_req.call_async(req)
@@ -154,4 +155,3 @@ class MOVEJR(Move.MOVE):
         else:
             return py_trees.common.Status.RUNNING
                 
-

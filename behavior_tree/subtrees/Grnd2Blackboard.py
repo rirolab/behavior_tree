@@ -42,8 +42,9 @@ class ToBlackboard(subscribers.ToBlackboard):
                 self.node.get_logger().warning("%s: No grounding on the blackboard!" % self.name)
             grounding = json.loads(self.blackboard.grnd_msg.data)
             
-            for param_id in range(grounding['param_num']):
-                primitive_action = grounding['params'][str(param_id+1)]['primitive_action'].encode('ascii','ignore')
+            param_num = grounding.get('param_num', len(grounding.get('params', {})))
+            for param_id in range(param_num):
+                primitive_action = grounding['params'][str(param_id+1)]['primitive_action']
                 
                 if primitive_action == "stop":
                     self.blackboard.stop_cmd = True
