@@ -9,7 +9,7 @@ import std_msgs.msg as std_msgs
 from tf2_ros import TransformException
 
 from . import base_job
-from behavior_tree.subtrees import DualArmMovePose, MoveJoint, SceneCommand
+from behavior_tree.subtrees import DualArmMovePose, IsaacSceneCommand, MoveJoint
 
 
 DUAL_ACTIONS = {
@@ -839,7 +839,7 @@ class Move(base_job.BaseJob):
                     action_goal=hover_key,
                     timeout=timeout,
                 ),
-                SceneCommand.SCENE_COMMAND(
+                IsaacSceneCommand.SCENE_COMMAND(
                     name="DisableRingGravityBeforeTeleport",
                     command_topic=scene_command_topic,
                     status_topic=scene_status_topic,
@@ -860,7 +860,7 @@ class Move(base_job.BaseJob):
                     gravity_enabled=False,
                     transform_timeout=transform_timeout,
                 ),
-                SceneCommand.SCENE_COMMAND(
+                IsaacSceneCommand.SCENE_COMMAND(
                     name="TeleportRingToFingerAverageZ",
                     command_topic=scene_command_topic,
                     status_topic=scene_status_topic,
@@ -873,7 +873,7 @@ class Move(base_job.BaseJob):
                     action_type="dualGripperClose",
                     timeout=gripper_timeout,
                 ),
-                SceneCommand.SCENE_COMMAND(
+                IsaacSceneCommand.SCENE_COMMAND(
                     name="EnableRingGravityAfterGrasp",
                     command_topic=scene_command_topic,
                     status_topic=scene_status_topic,

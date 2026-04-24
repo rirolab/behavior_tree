@@ -6,7 +6,7 @@ import py_trees
 from std_msgs.msg import String
 
 
-class SCENE_COMMAND(py_trees.behaviour.Behaviour):
+class ISAAC_SCENE_COMMAND(py_trees.behaviour.Behaviour):
     def __init__(
         self,
         name,
@@ -15,7 +15,7 @@ class SCENE_COMMAND(py_trees.behaviour.Behaviour):
         command=None,
         timeout=2.0,
     ):
-        super(SCENE_COMMAND, self).__init__(name=name)
+        super(ISAAC_SCENE_COMMAND, self).__init__(name=name)
         self.command_topic = command_topic
         self.status_topic = status_topic
         self.command = command
