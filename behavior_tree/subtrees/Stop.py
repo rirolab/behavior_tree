@@ -17,10 +17,11 @@ class STOP(Move.MOVE):
     command to the robot if it is cancelled or interrupted by a higher
     priority behaviour.
     """
-    def __init__(self, name, action_client, action_goal=None):
+    def __init__(self, name, action_client, action_goal=None, robot_name=None):
         super(STOP, self).__init__(name=name,
                                    action_client=action_client,
-                                   action_goal=action_goal)
+                                   action_goal=action_goal,
+                                   robot_name=robot_name)
         
     def update(self):
         self.logger.debug("%s.update()" % self.__class__.__name__)
@@ -43,7 +44,7 @@ class STOP(Move.MOVE):
             return py_trees.common.Status.RUNNING
 
 
-        if self.blackboard.goal_status is GoalStatus.STATUS_SUCCEEDED:
+        if self.current_goal_status() is GoalStatus.STATUS_SUCCEEDED:
             self.feedback_message = "SUCCESSFUL"
             self.logger.debug("%s.update()[%s->%s][%s]" % \
                                   (self.__class__.__name__, \
@@ -59,7 +60,7 @@ class STOP(Move.MOVE):
         """ """
         self.logger.debug("%s.terminate()" % self.__class__.__name__)
 
-        if self.blackboard.goal_status == GoalStatus.STATUS_EXECUTING:
+        if self.current_goal_status() == GoalStatus.STATUS_EXECUTING:
             req = StringGoalStatus.Request()
             req.data = json.dumps({'action_type': 'cancel_goal',
                                    'enable_wait': True})

@@ -29,6 +29,7 @@ setup(
         'console_scripts': [
             'static_bt = behavior_tree.static_behavior_tree:main',
             'dynamic_bt = behavior_tree.dynamic_behavior_tree:main',
+            'multi_dynamic_bt = behavior_tree.multi_dynamic_behavior_tree:main',
             ],
     },
 )

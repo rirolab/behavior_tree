@@ -171,7 +171,7 @@ class SplinteredReality(Node):
         try:
             self.tree.setup(node=self, timeout=15.0)
         except py_trees_ros.exceptions.TimedOutError as e:
-            console.logerror("failed to setup the tree, aborting [{}]".format(str(e)))
+            console.logerror(f"failed to setup the tree, aborting [{str(e)}]")
             self.tree.shutdown()
             return False
         return True
@@ -215,7 +215,7 @@ class SplinteredReality(Node):
                                                    rec_topic_list=self.rec_topic_list)
                         if job_root is None:
                             continue
-                        console.loginfo("{0}: pre_tick_handler running to set up all subtree modules".format(idx+1))
+                        console.loginfo(f"{idx+1}: pre_tick_handler running to set up all subtree modules")
                         
                         try:
                             py_trees.trees.setup(
@@ -223,14 +223,14 @@ class SplinteredReality(Node):
                                 node=self)
                                 #job_root.setup(timeout=15)
                         except RuntimeError as e:
-                            console.logerror("RuntimeError {}".format(e))
+                            console.logerror(f"RuntimeError {e}")
                         except Exception as e:
-                            console.logerror("Exception {}".format(e))
+                            console.logerror(f"Exception {e}")
                         ## finally:
-                        ##     console.logerror("{0}: pre_tick_handler failed to setup".format(idx+1))
+                        ##     console.logerror(f"{idx+1}: pre_tick_handler failed to setup")
                             ## continue
                             
-                        console.loginfo("{0}: pre_tick_handler finished setting up".format(idx+1))
+                        console.loginfo(f"{idx+1}: pre_tick_handler finished setting up")
                         task_list.append(job_root)
                         break
 
@@ -250,7 +250,7 @@ class SplinteredReality(Node):
             
             root = run_or_cancel
             tree.insert_subtree(root, self.priorities.id, 0)
-            console.loginfo("{0}: pre_tick_handler inserted job subtree".format(root.name))
+            console.loginfo(f"{root.name}: pre_tick_handler inserted job subtree")
 
             # Reset goals
             for job in self.jobs:
@@ -279,12 +279,13 @@ class SplinteredReality(Node):
                   "primitive_action" in goal[str(len(goal)-idx+1)].keys():
                     goal[str(len(goal)-idx+1)]["action"] = goal[str(len(goal)-idx+1)]["primitive_action"]
                 
-                console.loginfo("Check: {}th plan - {}".format(str(len(goal)-idx)), \
-                  goal[str(len(goal)-idx+1)]["action"])
+                console.loginfo(
+                    f"Check: {str(len(goal)-idx)}th plan - {goal[str(len(goal)-idx+1)]['action']}"
+                )
                 
                 if len(task_node.children) >= idx and \
                   task_node.children[-idx].name == goal[str(len(goal)-idx+1)]["action"]:
-                    console.loginfo("{0}: pre_tick_handler passing to set up".format(len(goal)-idx+1))
+                    console.loginfo(f"{len(goal)-idx+1}: pre_tick_handler passing to set up")
                     continue
 
                 # check if there are removable plans
@@ -314,18 +315,18 @@ class SplinteredReality(Node):
                                                        goal=job.goal)
                             if job_root is None:
                                 continue
-                            console.loginfo("{0}: pre_tick_handler created a job root".format(len(goal)-idx+1))
+                            console.loginfo(f"{len(goal)-idx+1}: pre_tick_handler created a job root")
 
                             try:
                                 py_trees.trees.setup(
                                     root=job_root,
                                     node=self)
                             except Exception as e:
-                                console.logerror("{0}: pre_tick_handler failed to setup".format(len(goal)-idx+1))
+                                console.logerror(f"{len(goal)-idx+1}: pre_tick_handler failed to setup")
                                 continue
 
                             task_node.insert_child(job_root, len(task_node.children)-idx+1)
-                            console.loginfo("{0}: pre_tick_handler inserted child".format(len(goal)-idx+1))
+                            console.loginfo(f"{len(goal)-idx+1}: pre_tick_handler inserted child")
                             break
 
                 # remove old plans
@@ -360,7 +361,7 @@ class SplinteredReality(Node):
             job = self.priorities.children[-2]
                         
             if job.status == py_trees.common.Status.SUCCESS or job.status == py_trees.common.Status.FAILURE or job.status == py_trees.common.Status.INVALID:
-                console.loginfo("{0}: post_tick_handler finished [{1}]".format(job.name, job.status))
+                console.loginfo(f"{job.name}: post_tick_handler finished [{job.status}]")
                 tree.prune_subtree(job.id)
                 self.current_job = None
 
@@ -445,7 +446,7 @@ def main(args=None):
 
     splintered_reality.run()
     ## splintered_reality.tick_tock()
-    ## #console.loginfo("{}".format(splintered_reality.tree.count))
+    ## #console.loginfo(f"{splintered_reality.tree.count}")
 
     ## executor = MultiThreadedExecutor()    
     ## try:

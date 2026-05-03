@@ -7,6 +7,10 @@ from std_msgs.msg import String
 
 
 class ISAAC_SCENE_COMMAND(py_trees.behaviour.Behaviour):
+    """
+    Publish an Isaac scene command and wait for the matching status response.
+    """
+
     def __init__(
         self,
         name,
@@ -15,6 +19,16 @@ class ISAAC_SCENE_COMMAND(py_trees.behaviour.Behaviour):
         command=None,
         timeout=2.0,
     ):
+        """
+        Initialise a scene command behaviour.
+
+        Args:
+            name (:obj:`str`): behaviour name.
+            command_topic (:obj:`str`): topic used to publish scene commands.
+            status_topic (:obj:`str`): topic used to receive command status.
+            command: command dictionary or blackboard key.
+            timeout (:obj:`float`): command timeout in seconds.
+        """
         super(ISAAC_SCENE_COMMAND, self).__init__(name=name)
         self.command_topic = command_topic
         self.status_topic = status_topic
@@ -35,22 +49,37 @@ class ISAAC_SCENE_COMMAND(py_trees.behaviour.Behaviour):
             )
 
     def setup(self, node):
+        """
+        Create scene command publisher and status subscriber.
+
+        Args:
+            node (:class:`~rclpy.node.Node`): ROS node that owns communications.
+        """
         self.node = node
         self.publisher = node.create_publisher(String, self.command_topic, 10)
         self.subscription = node.create_subscription(
             String,
             self.status_topic,
-            self._status_callback,
+            self.status_callback,
             10,
         )
 
     def initialise(self):
+        """
+        Reset command state before each tick sequence.
+        """
         self.sent_goal = False
         self.deadline = time.monotonic() + self.timeout
         self.goal_uuid = [random.randrange(0, 256) for _ in range(16)]
         self.result_status = None
 
     def update(self):
+        """
+        Publish the command and report success after the matching status arrives.
+
+        Returns:
+            :class:`~py_trees.common.Status`: behaviour status.
+        """
         if self.publisher is None:
             self.feedback_message = "scene command publisher is not initialized"
             return py_trees.common.Status.FAILURE
@@ -63,7 +92,7 @@ class ISAAC_SCENE_COMMAND(py_trees.behaviour.Behaviour):
                 self.feedback_message = f"{self.command_topic} has no subscribers"
                 return py_trees.common.Status.FAILURE
 
-            command = dict(self._resolve_command())
+            command = dict(self.resolve_command())
             command["uuid"] = self.goal_uuid
             msg = String()
             msg.data = json.dumps(command)
@@ -84,12 +113,24 @@ class ISAAC_SCENE_COMMAND(py_trees.behaviour.Behaviour):
         self.feedback_message = "scene command timed out"
         return py_trees.common.Status.FAILURE
 
-    def _resolve_command(self):
+    def resolve_command(self):
+        """
+        Resolve the command from the blackboard or inline command value.
+
+        Returns:
+            :obj:`dict`: scene command payload.
+        """
         if isinstance(self.command, str):
             return self.blackboard.get(self.command)
         return self.command or {}
 
-    def _status_callback(self, msg):
+    def status_callback(self, msg):
+        """
+        Store status updates that match the command uuid.
+
+        Args:
+            msg (:class:`~std_msgs.msg.String`): scene command status message.
+        """
         try:
             status = json.loads(msg.data)
         except json.JSONDecodeError:

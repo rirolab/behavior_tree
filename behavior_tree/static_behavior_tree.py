@@ -109,7 +109,7 @@ def main(args=None):
     try:
         behaviour_tree.setup(node=node, timeout=15.0)
     except py_trees_ros.exceptions.TimedOutError as e:
-        node.get_logger().error("failed to setup the tree, aborting [{}]".format(str(e)))
+        node.get_logger().error(f"failed to setup the tree, aborting [{str(e)}]")
         behaviour_tree.shutdown()
         rclpy.try_shutdown()
         sys.exit(1)
@@ -127,9 +127,9 @@ def main(args=None):
 
     ## number_of_iterations = 10000
     ## behaviour_tree.tick_tock(period_ms=500, number_of_iterations=number_of_iterations)
-    ## node.get_logger().warn("-------------------------- {} : {}".format(root.status, py_trees.common.Status.RUNNING))
+    ## node.get_logger().warn(f"-------------------------- {root.status} : {py_trees.common.Status.RUNNING}")
     ## while behaviour_tree.count < number_of_iterations and root.status == py_trees.common.Status.RUNNING:
-    ##     node.get_logger().warn("{}".format(behaviour_tree.count))
+    ##     node.get_logger().warn(f"{behaviour_tree.count}")
     ##     executor.spin_once(timeout_sec=0.05)
 
     behaviour_tree.tick_tock(period_ms=1000.0)

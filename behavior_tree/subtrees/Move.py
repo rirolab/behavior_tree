@@ -18,10 +18,21 @@ class MOVE(py_trees.behaviour.Behaviour):
     priority behaviour.
     """
 
-    def __init__(self, name, action_client, action_goal=None, timeout=1):
+    def __init__(self, name, action_client, action_goal=None, timeout=1, robot_name=None,):
+        """
+        Initialise a robot action command behaviour.
+
+        Args:
+            name (:obj:`str`): behaviour name.
+            action_client (:class:`~rclpy.client.Client`): robot command client.
+            action_goal: command payload for the robot action.
+            timeout (:obj:`float`): command timeout in seconds.
+            robot_name (:obj:`str`): optional robot namespace.
+        """
         super(MOVE, self).__init__(name=name)
 
         self.arm           = None
+        self.robot_name    = robot_name
         self.action_goal   = action_goal
         self.sent_goal     = False
         self.cmd_req       = action_client
@@ -30,7 +41,11 @@ class MOVE(py_trees.behaviour.Behaviour):
         ## self.goal_status   = None
         self.timeout       = timeout
 
-        self.blackboard = self.attach_blackboard_client(name=self.name)
+        # Namespacing lets multi-robot trees keep goal state isolated per arm.
+        self.blackboard = self.attach_blackboard_client(
+            name=self.name,
+            namespace=self.robot_name,
+        )
         ## self.blackboard = py_trees.blackboard.Client()
         ## self.callback_group = ReentrantCallbackGroup() 
         self.blackboard.register_key(
@@ -44,7 +59,7 @@ class MOVE(py_trees.behaviour.Behaviour):
         
     def setup(self, node):
         """ """
-        self.feedback_message = "{}: setup".format(self.name)
+        self.feedback_message = f"{self.name}: setup"
         ## self.node = node
         ## self.node.create_subscription(GoalStatus, 'arm_client/goal_status',
         ##                              self.goal_status_callback,
@@ -54,7 +69,7 @@ class MOVE(py_trees.behaviour.Behaviour):
 
     def initialise(self):
         """ """
-        self.logger.debug("{0}.initialise()".format(self.__class__.__name__))
+        self.logger.debug(f"{self.__class__.__name__}.initialise()")
         self.sent_goal = False
 
 
@@ -64,17 +79,55 @@ class MOVE(py_trees.behaviour.Behaviour):
         self.sent_goal = True
         return py_trees.common.Status.SUCCESS
 
+    def current_goal_id(self):
+        """
+        Read the current goal id from the blackboard.
+
+        Returns:
+            goal id value or :obj:`None` if it is not available.
+        """
+        try:
+            return self.blackboard.goal_id
+        except KeyError:
+            return None
+
+    def current_goal_status(self):
+        """
+        Read the current goal status from the blackboard.
+
+        Returns:
+            goal status value or :obj:`None` if it is not available.
+        """
+        try:
+            return self.blackboard.goal_status
+        except KeyError:
+            return None
+
+    def goal_matches_blackboard(self):
+        """
+        Check whether the sent goal id matches the blackboard goal id.
+
+        Returns:
+            :obj:`bool`: whether the current status belongs to this behaviour.
+        """
+        goal_id = self.current_goal_id()
+        if goal_id is None or self.goal_uuid_des is None:
+            return False
+        match = self.goal_uuid_des == goal_id
+        return match.all() if hasattr(match, "all") else bool(match)
+
     
     def terminate(self, new_status):
         """ """
         self.logger.debug("%s.terminate()" % self.__class__.__name__)
-        if self.blackboard.goal_id is None:
+        if self.current_goal_id() is None:
             self.feedback_message = "goal_id is not available"
             return py_trees.common.Status.SUCCESS
         
-        self.logger.debug("self.goal_status".format(self.blackboard.goal_status))
-        if (self.goal_uuid_des == self.blackboard.goal_id).all() and \
-          self.blackboard.goal_status in [
+        status = self.current_goal_status()
+        self.logger.debug(f"self.goal_status")
+        if self.goal_matches_blackboard() and \
+          status in [
               GoalStatus.STATUS_ACCEPTED,
               GoalStatus.STATUS_EXECUTING,
           ]:
@@ -86,7 +139,7 @@ class MOVE(py_trees.behaviour.Behaviour):
         return py_trees.common.Status.SUCCESS
 
     ## def goal_status_callback(self, msg):
-    ##     console.loginfo("{}".format(str(msg)))
+    ##     console.loginfo(f"{str(msg)}")
     ##     self.goal_id     = msg.goal_info.goal_id
     ##     self.goal_status = msg.status
         

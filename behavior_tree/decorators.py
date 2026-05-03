@@ -46,7 +46,7 @@ class Loop(Decorator):
         current_time = time.time()
         if self.enable_inf_loop and self.duration >= 0 and current_time > self.finish_time:
             self.feedback_message = "timed out"
-            self.logger.debug("{}.update() {}".format(self.__class__.__name__, self.feedback_message))
+            self.logger.debug(f"{self.__class__.__name__}.update() {self.feedback_message}")
             # invalidate the decorated (i.e. cancel it), could also put this logic in a terminate() method
             self.decorated.stop(common.Status.INVALID)
             return common.Status.FAILURE
@@ -61,7 +61,10 @@ class Loop(Decorator):
             if self.enable_inf_loop:
                 self.feedback_message = self.decorated.feedback_message + " [Infinite loop]"
             else:
-                self.feedback_message = self.decorated.feedback_message + " [n_loop: {}/{}]".format(self.count, self.n_loop)
+                self.feedback_message = (
+                    self.decorated.feedback_message
+                    + f" [n_loop: {self.count}/{self.n_loop}]"
+                )
             return common.Status.RUNNING
 
         if self.enable_inf_loop:

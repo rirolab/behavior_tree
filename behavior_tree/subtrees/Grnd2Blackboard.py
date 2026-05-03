@@ -43,7 +43,7 @@ class ToBlackboard(subscribers.ToBlackboard):
             grounding = json.loads(self.blackboard.grnd_msg.data)
             
             for param_id in range(grounding['param_num']):
-                primitive_action = grounding['params'][str(param_id+1)]['primitive_action'].encode('ascii','ignore')
+                primitive_action = grounding['params'][str(param_id+1)]['primitive_action']
                 
                 if primitive_action == "stop":
                     self.blackboard.stop_cmd = True

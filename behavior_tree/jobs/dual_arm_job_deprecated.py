@@ -43,7 +43,7 @@ DUAL_RING_SEQUENCE_ACTIONS = {
 }
 
 
-def _list_parameter(node, name, default):
+def list_parameter(node, name, default):
     if not node.has_parameter(name):
         node.declare_parameter(name, default)
     value = node.get_parameter(name).value
@@ -52,13 +52,13 @@ def _list_parameter(node, name, default):
     return [float(v) for v in value]
 
 
-def _string_parameter(node, name, default):
+def string_parameter(node, name, default):
     if not node.has_parameter(name):
         node.declare_parameter(name, default)
     return str(node.get_parameter(name).value)
 
 
-def _string_list_parameter(node, name, default):
+def string_list_parameter(node, name, default):
     if not node.has_parameter(name):
         node.declare_parameter(name, default)
     value = node.get_parameter(name).value
@@ -70,13 +70,13 @@ def _string_list_parameter(node, name, default):
     return [str(v) for v in value]
 
 
-def _float_parameter(node, name, default):
+def float_parameter(node, name, default):
     if not node.has_parameter(name):
         node.declare_parameter(name, default)
     return float(node.get_parameter(name).value)
 
 
-def _frame_from_transform(transform):
+def frame_from_transform(transform):
     translation = transform.transform.translation
     rotation = transform.transform.rotation
     return PyKDL.Frame(
@@ -85,7 +85,7 @@ def _frame_from_transform(transform):
     )
 
 
-def _lookup_tf_frame(tf_buffer, node, target_frame, source_frame, transform_timeout):
+def lookup_tf_frame(tf_buffer, node, target_frame, source_frame, transform_timeout):
     deadline = time.monotonic() + float(transform_timeout)
     last_error = None
     while rclpy.ok() and time.monotonic() < deadline:
@@ -95,7 +95,7 @@ def _lookup_tf_frame(tf_buffer, node, target_frame, source_frame, transform_time
                 source_frame,
                 rclpy.time.Time(),
             )
-            return _frame_from_transform(transform)
+            return frame_from_transform(transform)
         except TransformException as exc:
             last_error = exc
             if node is not None:
@@ -150,7 +150,7 @@ class RING_TARGET(py_trees.behaviour.Behaviour):
 
     def update(self):
         try:
-            self.blackboard.set(self.goal_key, self._make_dual_pose_goal())
+            self.blackboard.set(self.goal_key, self.make_dual_pose_goal())
         except Exception as exc:
             self.feedback_message = f"failed to compute ring target: {exc}"
             if self.node is not None:
@@ -159,23 +159,23 @@ class RING_TARGET(py_trees.behaviour.Behaviour):
         self.feedback_message = "computed ring-relative dual pose goal"
         return py_trees.common.Status.SUCCESS
 
-    def _make_dual_pose_goal(self):
-        ring_in_world, used_ring_frame = self._lookup_ring_frame()
-        left_base_in_world = self._lookup_frame(self.world_frame, self.left_arm_base_frame)
-        right_base_in_world = self._lookup_frame(self.world_frame, self.right_arm_base_frame)
+    def make_dual_pose_goal(self):
+        ring_in_world, used_ring_frame = self.lookup_ring_frame()
+        left_base_in_world = self.lookup_frame(self.world_frame, self.left_arm_base_frame)
+        right_base_in_world = self.lookup_frame(self.world_frame, self.right_arm_base_frame)
 
         target_x = ring_in_world.p[0]
         target_y = ring_in_world.p[1]
         target_z = ring_in_world.p[2]
         target_source = used_ring_frame
         if self.target_xyz_frame:
-            xyz_frame = self._lookup_frame(self.world_frame, self.target_xyz_frame)
+            xyz_frame = self.lookup_frame(self.world_frame, self.target_xyz_frame)
             target_x = xyz_frame.p[0]
             target_y = xyz_frame.p[1]
             target_z = xyz_frame.p[2]
             target_source = f"{target_source}+xyz({self.target_xyz_frame})"
         if self.target_xy_frame:
-            xy_frame = self._lookup_frame(self.world_frame, self.target_xy_frame)
+            xy_frame = self.lookup_frame(self.world_frame, self.target_xy_frame)
             target_x = xy_frame.p[0]
             target_y = xy_frame.p[1]
             target_source = f"{target_source}+xy({self.target_xy_frame})"
@@ -228,19 +228,19 @@ class RING_TARGET(py_trees.behaviour.Behaviour):
             },
         }
 
-    def _lookup_ring_frame(self):
+    def lookup_ring_frame(self):
         try:
-            return self._lookup_frame(self.world_frame, self.ring_frame), self.ring_frame
+            return self.lookup_frame(self.world_frame, self.ring_frame), self.ring_frame
         except TransformException:
             if not self.fallback_ring_frame or self.fallback_ring_frame == self.ring_frame:
                 raise
             return (
-                self._lookup_frame(self.world_frame, self.fallback_ring_frame),
+                self.lookup_frame(self.world_frame, self.fallback_ring_frame),
                 self.fallback_ring_frame,
             )
 
-    def _lookup_frame(self, target_frame, source_frame):
-        return _lookup_tf_frame(
+    def lookup_frame(self, target_frame, source_frame):
+        return lookup_tf_frame(
             self.tf_buffer,
             self.node,
             target_frame,
@@ -284,7 +284,7 @@ class CURRENT_EE_Z_TARGET(py_trees.behaviour.Behaviour):
 
     def update(self):
         try:
-            self.blackboard.set(self.goal_key, self._make_dual_pose_goal())
+            self.blackboard.set(self.goal_key, self.make_dual_pose_goal())
         except Exception as exc:
             self.feedback_message = f"failed to compute current-ee z target: {exc}"
             if self.node is not None:
@@ -293,17 +293,17 @@ class CURRENT_EE_Z_TARGET(py_trees.behaviour.Behaviour):
         self.feedback_message = "computed current-ee z-only dual pose goal"
         return py_trees.common.Status.SUCCESS
 
-    def _make_dual_pose_goal(self):
+    def make_dual_pose_goal(self):
         if self.target_z is None and self.delta_z is None:
             raise ValueError("CURRENT_EE_Z_TARGET requires target_z or delta_z")
 
-        left_ee_in_world = self._lookup_frame(self.world_frame, self.left_ee_frame)
-        right_ee_in_world = self._lookup_frame(self.world_frame, self.right_ee_frame)
-        left_base_in_world = self._lookup_frame(self.world_frame, self.left_arm_base_frame)
-        right_base_in_world = self._lookup_frame(self.world_frame, self.right_arm_base_frame)
+        left_ee_in_world = self.lookup_frame(self.world_frame, self.left_ee_frame)
+        right_ee_in_world = self.lookup_frame(self.world_frame, self.right_ee_frame)
+        left_base_in_world = self.lookup_frame(self.world_frame, self.left_arm_base_frame)
+        right_base_in_world = self.lookup_frame(self.world_frame, self.right_arm_base_frame)
 
-        left_z = self._target_z(left_ee_in_world.p[2])
-        right_z = self._target_z(right_ee_in_world.p[2])
+        left_z = self.resolve_target_z(left_ee_in_world.p[2])
+        right_z = self.resolve_target_z(right_ee_in_world.p[2])
         left_world = PyKDL.Vector(left_ee_in_world.p[0], left_ee_in_world.p[1], left_z)
         right_world = PyKDL.Vector(right_ee_in_world.p[0], right_ee_in_world.p[1], right_z)
         left_base = left_base_in_world.Inverse() * left_world
@@ -346,13 +346,13 @@ class CURRENT_EE_Z_TARGET(py_trees.behaviour.Behaviour):
             },
         }
 
-    def _target_z(self, current_z):
+    def resolve_target_z(self, current_z):
         if self.delta_z is not None:
             return current_z + self.delta_z
         return self.target_z
 
-    def _lookup_frame(self, target_frame, source_frame):
-        return _lookup_tf_frame(
+    def lookup_frame(self, target_frame, source_frame):
+        return lookup_tf_frame(
             self.tf_buffer,
             self.node,
             target_frame,
@@ -378,8 +378,8 @@ class FINGERTIP_AVERAGE_Z_COMMAND(py_trees.behaviour.Behaviour):
         self.tf_buffer = tf_buffer
         self.command_key = command_key
         self.world_frame = world_frame
-        self.left_fingertip_frames = self._normalise_frames(left_fingertip_frames)
-        self.right_fingertip_frames = self._normalise_frames(right_fingertip_frames)
+        self.left_fingertip_frames = self.normalise_frames(left_fingertip_frames)
+        self.right_fingertip_frames = self.normalise_frames(right_fingertip_frames)
         self.fingertip_z_offset = float(fingertip_z_offset)
         self.gravity_enabled = bool(gravity_enabled)
         self.transform_timeout = float(transform_timeout)
@@ -395,8 +395,8 @@ class FINGERTIP_AVERAGE_Z_COMMAND(py_trees.behaviour.Behaviour):
 
     def update(self):
         try:
-            left_z = self._average_frame_z(self.left_fingertip_frames)
-            right_z = self._average_frame_z(self.right_fingertip_frames)
+            left_z = self.average_frame_z(self.left_fingertip_frames)
+            right_z = self.average_frame_z(self.right_fingertip_frames)
             z = 0.5 * (left_z + right_z) + self.fingertip_z_offset
             self.blackboard.set(
                 self.command_key,
@@ -417,10 +417,10 @@ class FINGERTIP_AVERAGE_Z_COMMAND(py_trees.behaviour.Behaviour):
             self.node.get_logger().info(self.feedback_message)
         return py_trees.common.Status.SUCCESS
 
-    def _average_frame_z(self, frames):
+    def average_frame_z(self, frames):
         z_values = []
         for frame in frames:
-            tip = _lookup_tf_frame(
+            tip = lookup_tf_frame(
                 self.tf_buffer,
                 self.node,
                 self.world_frame,
@@ -431,7 +431,7 @@ class FINGERTIP_AVERAGE_Z_COMMAND(py_trees.behaviour.Behaviour):
         return sum(z_values) / float(len(z_values))
 
     @staticmethod
-    def _normalise_frames(frames):
+    def normalise_frames(frames):
         if isinstance(frames, str):
             return [frames]
         return [str(frame) for frame in frames]
@@ -470,147 +470,147 @@ class Move(base_job.BaseJob):
         self.blackboard.register_key(key="dual_gripper_timeout", access=py_trees.common.Access.WRITE)
         self.blackboard.register_key(key="dual_scene_timeout", access=py_trees.common.Access.WRITE)
         self.blackboard.register_key(key="dual_init_timeout", access=py_trees.common.Access.WRITE)
-        self.blackboard.left_init_config = _list_parameter(
+        self.blackboard.left_init_config = list_parameter(
             self._node,
             "left_init_config",
             [0.0, 0.0, 0.0, -1.5, 0.0, 1.5, 0.0],
         )
-        self.blackboard.right_init_config = _list_parameter(
+        self.blackboard.right_init_config = list_parameter(
             self._node,
             "right_init_config",
             [0.0, 0.0, 0.0, -1.5, 0.0, 1.5, 0.0],
         )
-        self.blackboard.left_arm_base_frame = _string_parameter(
+        self.blackboard.left_arm_base_frame = string_parameter(
             self._node,
             "left_arm_base_frame",
             "left_fr3_link0",
         )
-        self.blackboard.right_arm_base_frame = _string_parameter(
+        self.blackboard.right_arm_base_frame = string_parameter(
             self._node,
             "right_arm_base_frame",
             "right_fr3_link0",
         )
-        self.blackboard.dual_ring_frame = _string_parameter(
+        self.blackboard.dual_ring_frame = string_parameter(
             self._node,
             "dual_ring_frame",
             "ring_00",
         )
-        self.blackboard.dual_ring_fallback_frame = _string_parameter(
+        self.blackboard.dual_ring_fallback_frame = string_parameter(
             self._node,
             "dual_ring_fallback_frame",
             "active_ring",
         )
-        self.blackboard.dual_world_frame = _string_parameter(
+        self.blackboard.dual_world_frame = string_parameter(
             self._node,
             "world_frame",
             "world",
         )
-        self.blackboard.dual_ring_left_offset = _list_parameter(
+        self.blackboard.dual_ring_left_offset = list_parameter(
             self._node,
             "dual_ring_left_offset",
             [0.0, 0.09348, 0.10]
         )
-        self.blackboard.dual_ring_right_offset = _list_parameter(
+        self.blackboard.dual_ring_right_offset = list_parameter(
             self._node,
             "dual_ring_right_offset",
             [0.0, -0.09348, 0.10]
         )
-        self.blackboard.dual_ring_timeout = _float_parameter(
+        self.blackboard.dual_ring_timeout = float_parameter(
             self._node,
             "dual_ring_timeout",
             5.0,
         )
-        self.blackboard.left_ee_frame = _string_parameter(
+        self.blackboard.left_ee_frame = string_parameter(
             self._node,
             "left_ee_frame",
             "left_fr3_hand_tcp",
         )
-        self.blackboard.right_ee_frame = _string_parameter(
+        self.blackboard.right_ee_frame = string_parameter(
             self._node,
             "right_ee_frame",
             "right_fr3_hand_tcp",
         )
-        self.blackboard.left_fingertip_frames = _string_list_parameter(
+        self.blackboard.left_fingertip_frames = string_list_parameter(
             self._node,
             "left_fingertip_frames",
             ["left_fr3_hand_tcp"],
         )
-        self.blackboard.right_fingertip_frames = _string_list_parameter(
+        self.blackboard.right_fingertip_frames = string_list_parameter(
             self._node,
             "right_fingertip_frames",
             ["right_fr3_hand_tcp"],
         )
-        self.blackboard.fingertip_z_offset = _float_parameter(
+        self.blackboard.fingertip_z_offset = float_parameter(
             self._node,
             "fingertip_z_offset",
             -0.114,
         )
-        self.blackboard.dual_mold_frame = _string_parameter(
+        self.blackboard.dual_mold_frame = string_parameter(
             self._node,
             "dual_mold_frame",
             "ring_mold",
         )
-        self.blackboard.dual_scene_command_service = _string_parameter(
+        self.blackboard.dual_scene_command_service = string_parameter(
             self._node,
             "dual_scene_command_service",
             "/scene/command",
         )
-        self.blackboard.dual_scene_status_topic = _string_parameter(
+        self.blackboard.dual_scene_status_topic = string_parameter(
             self._node,
             "dual_scene_status_topic",
             "/scene/command_status",
         )
-        self.blackboard.dual_ring_hover_left_offset = _list_parameter(
+        self.blackboard.dual_ring_hover_left_offset = list_parameter(
             self._node,
             "dual_ring_hover_left_offset",
             self.blackboard.dual_ring_left_offset,
         )
-        self.blackboard.dual_ring_hover_right_offset = _list_parameter(
+        self.blackboard.dual_ring_hover_right_offset = list_parameter(
             self._node,
             "dual_ring_hover_right_offset",
             self.blackboard.dual_ring_right_offset,
         )
-        self.blackboard.dual_ring_grasp_left_offset = _list_parameter(
+        self.blackboard.dual_ring_grasp_left_offset = list_parameter(
             self._node,
             "dual_ring_grasp_left_offset",
             [0.0, 0.09348, 0.0],
         )
-        self.blackboard.dual_ring_grasp_right_offset = _list_parameter(
+        self.blackboard.dual_ring_grasp_right_offset = list_parameter(
             self._node,
             "dual_ring_grasp_right_offset",
             [0.0, -0.09348, 0.0],
         )
-        self.blackboard.dual_ring_release_left_offset = _list_parameter(
+        self.blackboard.dual_ring_release_left_offset = list_parameter(
             self._node,
             "dual_ring_release_left_offset",
             [0.0, 0.13, 0.05],
         )
-        self.blackboard.dual_ring_release_right_offset = _list_parameter(
+        self.blackboard.dual_ring_release_right_offset = list_parameter(
             self._node,
             "dual_ring_release_right_offset",
             [0.0, -0.13, 0.05],
         )
-        self.blackboard.dual_ring_lift_delta_z = _float_parameter(
+        self.blackboard.dual_ring_lift_delta_z = float_parameter(
             self._node,
             "dual_ring_lift_delta_z",
             0.20,
         )
-        self.blackboard.dual_ring_mold_delta_z = _float_parameter(
+        self.blackboard.dual_ring_mold_delta_z = float_parameter(
             self._node,
             "dual_ring_mold_delta_z",
             0.10,
         )
-        self.blackboard.dual_gripper_timeout = _float_parameter(
+        self.blackboard.dual_gripper_timeout = float_parameter(
             self._node,
             "dual_gripper_timeout",
             1.0,
         )
-        self.blackboard.dual_scene_timeout = _float_parameter(
+        self.blackboard.dual_scene_timeout = float_parameter(
             self._node,
             "dual_scene_timeout",
             2.0,
         )
-        self.blackboard.dual_init_timeout = _float_parameter(
+        self.blackboard.dual_init_timeout = float_parameter(
             self._node,
             "dual_init_timeout",
             5.0,
@@ -674,7 +674,7 @@ class Move(base_job.BaseJob):
         blackboard.register_key(key="dual_init_timeout", access=py_trees.common.Access.READ)
 
         if action in DUAL_RING_SEQUENCE_ACTIONS:
-            return self._create_ring_insert_sequence(
+            return self.create_ring_insert_sequence(
                 action_client=action_client,
                 idx=idx,
                 command=command,
@@ -728,7 +728,7 @@ class Move(base_job.BaseJob):
         if action == "dual_init":
             positions = list(blackboard.left_init_config) + list(blackboard.right_init_config)
         elif action in DUAL_JOINT_ACTIONS:
-            positions = Move._extract_positions(command)
+            positions = Move.extract_positions(command)
         else:
             return None
 
@@ -744,7 +744,7 @@ class Move(base_job.BaseJob):
         )
         return root
 
-    def _create_ring_insert_sequence(self, action_client, idx, command, tf_buffer, blackboard):
+    def create_ring_insert_sequence(self, action_client, idx, command, tf_buffer, blackboard):
         timeout = float(command.get("timeout", command.get("timeout_sec", blackboard.dual_ring_timeout)))
         straight_timeout = float(command.get("straight_timeout", timeout))
         gripper_timeout = float(command.get("gripper_timeout", blackboard.dual_gripper_timeout))
@@ -819,7 +819,7 @@ class Move(base_job.BaseJob):
         root = py_trees.composites.Sequence(name="DualRingInsertSequence", memory=True)
         root.add_children(
             [
-                self._make_ring_target(
+                self.make_ring_target(
                     name=f"{prefix}/PlanHover",
                     goal_key=hover_key,
                     tf_buffer=tf_buffer,
@@ -832,7 +832,7 @@ class Move(base_job.BaseJob):
                     right_offset=hover_right_offset,
                     transform_timeout=transform_timeout,
                 ),
-                self._make_dual_arm_command(
+                self.make_dual_arm_command(
                     name="DualMoveNearRingTop",
                     action_client=action_client,
                     action_type="dualMovePose",
@@ -867,7 +867,7 @@ class Move(base_job.BaseJob):
                     command=fingertip_command_key,
                     timeout=scene_timeout,
                 ),
-                self._make_dual_arm_command(
+                self.make_dual_arm_command(
                     name="DualGripperClose",
                     action_client=action_client,
                     action_type="dualGripperClose",
@@ -895,15 +895,15 @@ class Move(base_job.BaseJob):
                     delta_z=lift_delta_z,
                     transform_timeout=transform_timeout,
                 ),
-                self._make_dual_arm_command(
+                self.make_dual_arm_command(
                     name="DualMoveLiftRingStraight",
                     action_client=action_client,
                     action_type="dualMovePoseStraight",
                     action_goal=lift_key,
                     timeout=straight_timeout,
-                    extra=self._straight_extra(straight_steps),
+                    extra=self.straight_extra(straight_steps),
                 ),
-                self._make_ring_target(
+                self.make_ring_target(
                     name=f"{prefix}/PlanMoldAlign",
                     goal_key=mold_key,
                     tf_buffer=tf_buffer,
@@ -919,13 +919,13 @@ class Move(base_job.BaseJob):
                     target_z_delta=mold_delta_z,
                     transform_timeout=transform_timeout,
                 ),
-                self._make_dual_arm_command(
+                self.make_dual_arm_command(
                     name="DualMoveToMoldStraight",
                     action_client=action_client,
                     action_type="dualMovePoseStraight",
                     action_goal=mold_key,
                     timeout=straight_timeout,
-                    extra=self._straight_extra(straight_steps),
+                    extra=self.straight_extra(straight_steps),
                 ),
                 # SceneCommand.SCENE_COMMAND(
                 #     name="DisableRingGravityBeforeRelease",
@@ -937,13 +937,13 @@ class Move(base_job.BaseJob):
                 #     },
                 #     timeout=scene_timeout,
                 # ),
-                self._make_dual_arm_command(
+                self.make_dual_arm_command(
                     name="DualGripperOpen",
                     action_client=action_client,
                     action_type="dualGripperOpen",
                     timeout=gripper_timeout,
                 ),
-                self._make_ring_target(
+                self.make_ring_target(
                     name=f"{prefix}/PlanRelease",
                     goal_key=release_key,
                     tf_buffer=tf_buffer,
@@ -959,7 +959,7 @@ class Move(base_job.BaseJob):
                     target_z_delta=mold_delta_z,
                     transform_timeout=transform_timeout,
                 ),
-                self._make_dual_arm_command(
+                self.make_dual_arm_command(
                     name="DualMoveRelease",
                     action_client=action_client,
                     action_type="dualMovePose",
@@ -976,7 +976,7 @@ class Move(base_job.BaseJob):
                 #     },
                 #     timeout=scene_timeout,
                 # ),
-                self._make_dual_arm_command(
+                self.make_dual_arm_command(
                     name="DualMoveInitialSeparate",
                     action_client=action_client,
                     action_type="dualMoveJointSeparate",
@@ -987,10 +987,10 @@ class Move(base_job.BaseJob):
         )
         return root
 
-    def _make_ring_target(self, **kwargs):
+    def make_ring_target(self, **kwargs):
         return RING_TARGET(**kwargs)
 
-    def _make_dual_arm_command(
+    def make_dual_arm_command(
         self,
         name,
         action_client,
@@ -1009,24 +1009,24 @@ class Move(base_job.BaseJob):
         )
 
     @staticmethod
-    def _straight_extra(straight_steps):
+    def straight_extra(straight_steps):
         if straight_steps is None:
             return None
         return {"steps": int(straight_steps)}
 
     @staticmethod
-    def _extract_positions(command):
+    def extract_positions(command):
         positions = command.get("positions")
         if positions is not None:
             if len(positions) != 14:
                 raise ValueError("positions must contain 14 values for dual-arm commands")
             return [float(value) for value in positions]
 
-        left = Move._first_present(
+        left = Move.first_present(
             command,
             ("left", "left_positions", "left_joint_positions", "left_config", "arm_l"),
         )
-        right = Move._first_present(
+        right = Move.first_present(
             command,
             ("right", "right_positions", "right_joint_positions", "right_config", "arm_r"),
         )
@@ -1037,7 +1037,7 @@ class Move(base_job.BaseJob):
         return [float(value) for value in left] + [float(value) for value in right]
 
     @staticmethod
-    def _first_present(command, keys):
+    def first_present(command, keys):
         for key in keys:
             if key in command:
                 return command[key]
