@@ -8,6 +8,7 @@ import py_trees
 import py_trees_ros
 import PyKDL
 import rclpy
+from rclpy.node import Node
 #import py_trees.console as console
 from py_trees_ros import exceptions, utilities
 from rclpy.callback_groups import ReentrantCallbackGroup, MutuallyExclusiveCallbackGroup
@@ -41,7 +42,7 @@ class REMOVE(py_trees.behaviour.Behaviour):
 
 
     def setup(self,
-              node: typing.Optional[rclpy.node.Node]=None,
+              node: typing.Optional[Node]=None,
               timeout: float=py_trees.common.Duration.INFINITE):
         self.node = node
         self.feedback_message = f"{self.name}: setup"
@@ -122,35 +123,34 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
               timeout: float=py_trees.common.Duration.INFINITE):
         """ """
         self.feedback_message = f"{self.name}: setup"
-        self.node = node
+        self.node: rclpy.Node = node
 
-        # Get global parameters
-        self._pose_srv_channel = self.node.get_parameter("pose_srv_channel").value
-        self._grasp_pose_srv_channel = self.node.get_parameter("grasp_pose_srv_channel").value
-        self._height_srv_channel = self.node.get_parameter("height_srv_channel").value
-        self._rnd_pose_srv_channel = self.node.get_parameter("rnd_pose_srv_channel").value
-        self._close_pose_srv_channel = self.node.get_parameter("close_pose_srv_channel").value
-        self._world_frame = self.node.get_parameter("world_frame").value
+        # Get global parameters using Humble-friendly prefix lookup.
+        global_parameters = self.node.get_parameters_by_prefix("")
+        self._pose_srv_channel = global_parameters["pose_srv_channel"].value
+        self._grasp_pose_srv_channel = global_parameters["grasp_pose_srv_channel"].value
+        self._height_srv_channel = global_parameters["height_srv_channel"].value
+        self._rnd_pose_srv_channel = global_parameters["rnd_pose_srv_channel"].value
+        self._close_pose_srv_channel = global_parameters["close_pose_srv_channel"].value
+        self._world_frame = global_parameters["world_frame"].value
 
-        # Get robot specific parameters (If not specified, use the global parameters)
+        # Get robot-specific parameters from each namespace; fall back to global
+        # names only when this instance is configured without a robot namespace.
         self._arm_base_frames = dict()
         self.grasp_offset_z_by_robot = dict()
         self.top_offset_z_by_robot = dict()
         for robot_name in self.robot_names:
             if robot_name is None:
-                arm_base_parameter_name = "arm_base_frame"
-                grasp_offset_parameter_name = "grasp_offset_z"
-                top_offset_parameter_name = "top_offset_z"
+                robot_parameters = global_parameters
             else:
-                arm_base_parameter_name = f"{robot_name}.arm_base_frame"
-                grasp_offset_parameter_name = f"{robot_name}.grasp_offset_z"
-                top_offset_parameter_name = f"{robot_name}.top_offset_z"
-            self._arm_base_frames[robot_name] = self.node.get_parameter(arm_base_parameter_name).value
+                robot_parameters = self.node.get_parameters_by_prefix(robot_name)
+
+            self._arm_base_frames[robot_name] = robot_parameters["arm_base_frame"].value
             self.grasp_offset_z_by_robot[robot_name] = float(
-                self.node.get_parameter(grasp_offset_parameter_name).value
+                robot_parameters["grasp_offset_z"].value
             )
             self.top_offset_z_by_robot[robot_name] = float(
-                self.node.get_parameter(top_offset_parameter_name).value
+                robot_parameters["top_offset_z"].value
             )
 
         # Setup service clients
@@ -213,11 +213,11 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         
         self.sent_goal = False
 
-        self.blackboards = {
+        self.robot_blackboards = {
             robot_name: py_trees.blackboard.Client(namespace=robot_name)
             for robot_name in self.robot_names
         }
-        for blackboard in self.blackboards.values():
+        for blackboard in self.robot_blackboards.values():
             blackboard.register_key(key=self.name +'/grasp_pose', access=py_trees.common.Access.WRITE)
             blackboard.register_key(key=self.name +'/grasp_top_pose', access=py_trees.common.Access.WRITE)
             blackboard.register_key(key=self.name +'/place_pose', access=py_trees.common.Access.WRITE)
@@ -318,7 +318,7 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                 grasp_top_pose = copy.deepcopy(grasp_pose)
                 grasp_top_pose.position.z += top_offset_z
 
-                blackboard = self.blackboards[robot_name]
+                blackboard = self.robot_blackboards[robot_name]
                 blackboard.set(self.name +'/grasp_pose', grasp_pose)
                 blackboard.set(self.name +'/grasp_top_pose', grasp_top_pose)
 

@@ -1,12 +1,22 @@
 import copy, sys
 import py_trees, py_trees_ros
 import rclpy
+from rclpy.node import Node
 import threading
 import json
 
 import std_msgs.msg as std_msgs
 from behavior_tree.utils.parameter_utils import make_string_list
 from behavior_tree.utils.validation_utils import StepValidationResult
+
+BLACKBOARD_PARAMETER_BLACKLIST = [
+    "use_sim_time",
+    "default_snapshot_stream",
+    "default_snapshot_period",
+    "default_snapshot_blackboard_data",
+    "default_snapshot_blackboard_activity",
+    "setup_timeout",
+]
 
 ##############################################################################
 # Behaviours
@@ -24,7 +34,7 @@ class BaseJob(object):
         Tune into a channel for incoming goal requests. This is a simple
         subscriber here but more typically would be a service or action interface.
         """
-        self._node = node
+        self._node: Node = node
         self._grounding_channel = "symbol_grounding"
 
         self._subscriber = self._node.create_subscription(std_msgs.String, \
@@ -139,7 +149,8 @@ class BaseJob(object):
         """
         Write node parameters to the blackboard namespaces used by this job.
         """
-        parameter_names = self._node.list_parameters([], 0).names
+        all_parameters = self._node.get_parameters_by_prefix("")
+        parameter_names = all_parameters.keys()
         robot_names = getattr(self._node, "robot_names", [])
 
         # Set up global parameters in the global blackboard namespace.
@@ -148,28 +159,29 @@ class BaseJob(object):
             parameter_name
             for parameter_name in parameter_names
             if "." not in parameter_name
+            and parameter_name not in BLACKBOARD_PARAMETER_BLACKLIST
         }
         for key in sorted(global_parameter_keys):
             global_blackboard.register_key(key=key, access=py_trees.common.Access.WRITE)
             global_blackboard.set(
                 key,
-                self._node.get_parameter(key).value,
+                all_parameters[key].value,
             )
 
         # Set up parameters for each robot namespace.
         for robot_name in robot_names:
             blackboard = py_trees.blackboard.Client(namespace=robot_name)
-            prefix = robot_name + "."
+            robot_parameters = self._node.get_parameters_by_prefix(robot_name)
             parameter_keys = {
-                parameter_name[len(prefix):]
-                for parameter_name in parameter_names
-                if parameter_name.startswith(prefix)
+                key
+                for key in robot_parameters.keys()
+                if key not in BLACKBOARD_PARAMETER_BLACKLIST
             }
             for key in sorted(parameter_keys):
                 blackboard.register_key(key=key, access=py_trees.common.Access.WRITE)
                 blackboard.set(
                     key,
-                    self._node.get_parameter(f"{robot_name}.{key}").value,
+                    robot_parameters[key].value,
                 )
         
     @property

@@ -146,6 +146,7 @@ class MultiSplinteredReality(SplinteredReality):
                     class_name,
                 )(self)
             )
+        self.current_job = None
         console.loginfo(
             f"multi_dynamic_behavior_tree: initialized for {', '.join(self.robot_names)}"
         )
@@ -323,24 +324,6 @@ class MultiSplinteredReality(SplinteredReality):
                 job.goal = None
             return
 
-    def post_tick_handler(self, tree):
-        """
-        Prune the active multi-robot job subtree when it finishes.
-
-        Args:
-            tree (:class:`~py_trees.trees.BehaviourTree`): tree to investigate/manipulate.
-        """
-        if self.busy():
-            job = self.priorities.children[-2]
-
-            if (
-                job.status == py_trees.common.Status.SUCCESS
-                or job.status == py_trees.common.Status.FAILURE
-                or job.status == py_trees.common.Status.INVALID
-            ):
-                console.loginfo(f"{job.name}: post_tick_handler finished [{job.status}]")
-                tree.prune_subtree(job.id)
-
     def validate_robot_names(self):
         """
         Validate the robot names provided in the parameters
@@ -353,20 +336,21 @@ class MultiSplinteredReality(SplinteredReality):
         # TODO: For now, we only consider robot(s) with name in the ros parameter. 
         if not self.robot_names:
             raise RuntimeError(
-                "invalid multi_dynamic_behavior_tree robot parameter: "
+                "Invalid multi_dynamic_behavior_tree robot parameter: "
                 "parameter [robot] must define at least one robot name"
             )
 
         # Case: robot names must have matching parameter namespaces.
+        parameter_names = self.get_parameters_by_prefix("").keys()
         parameter_namespaces = {
             parameter_name.split(".", 1)[0]
-            for parameter_name in self.list_parameters([], 0).names
+            for parameter_name in parameter_names
             if "." in parameter_name
         }
         robot_names_set = set(self.robot_names)
         if robot_names_set != parameter_namespaces:
             raise RuntimeError(
-                "invalid multi_dynamic_behavior_tree robot parameter: "
+                "Invalid multi_dynamic_behavior_tree robot parameter: "
                 f"parameter [robot] names {sorted(robot_names_set)} "
                 f"must match parameter namespaces {sorted(parameter_namespaces)}"
             )
@@ -377,14 +361,14 @@ class MultiSplinteredReality(SplinteredReality):
         ]
         if blank_robot_names:
             raise RuntimeError(
-                "invalid multi_dynamic_behavior_tree robot parameter: "
+                "Invalid multi_dynamic_behavior_tree robot parameter: "
                 "parameter [robot] contains an empty robot name"
             )
 
         # Case: robot names must be unique.
         if len(set(self.robot_names)) != len(self.robot_names):
             raise RuntimeError(
-                "invalid multi_dynamic_behavior_tree robot parameter: "
+                "Invalid multi_dynamic_behavior_tree robot parameter: "
                 f"parameter [robot] contains duplicate robot names: {self.robot_names}"
             )
         
@@ -429,9 +413,10 @@ class MultiSplinteredReality(SplinteredReality):
                 console.logwarn(f"{step_idx}: validate_goal rejected goal due to job validation failure")
                 return False
             
-            # Reject the goal if no job accepts this step at all. (e.g., unregistered job)
-            if StepValidationResult.ACCEPT_GOAL not in job_validation_result:
-                console.logwarn(f"{step_idx}: validate_goal rejected goal because no job accepts the step")
+            # Reject the goal unless exactly one job accepts this step.
+            accept_count = sum(result == StepValidationResult.ACCEPT_GOAL for result in job_validation_result)
+            if accept_count != 1:
+                console.logwarn(f"{step_idx}: validate_goal rejected goal because the step is accepted by {accept_count} jobs, but should be accepted by exactly one job")
                 return False
 
         return True

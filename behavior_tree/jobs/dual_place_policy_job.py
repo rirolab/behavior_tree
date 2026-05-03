@@ -115,55 +115,54 @@ class Move(base_job.BaseJob):
         straight_timeout = float(command.get("straight_timeout", move_timeout))
         plan_name = "Plan" + idx
 
-        root = py_trees.composites.Sequence(name="DualPlacePolicy", memory=True)
-        root.add_children(
-            [
-                dual.make_parameter_pose_parallel(
-                    name="DualMoveInitTogether",
-                    action_clients=action_clients,
-                    robots=robots,
-                    parameter_name="init_together",
-                    motion_type="move_straight",
-                    timeout=straight_timeout,
-                ),
-                dual.make_pose_estimator(
-                    name=plan_name,
-                    command=command,
-                    robots=robots,
-                    tf_buffer=kwargs["tf_buffer"],
-                    include_destination=True,
-                ),
-                dual.make_blackboard_pose_parallel(
-                    name="DualMovePlaceTop",
-                    action_clients=action_clients,
-                    robots=robots,
-                    pose_key=plan_name + "/place_top_pose",
-                    motion_type="move_straight",
-                    timeout=straight_timeout,
-                ),
-                dual.make_policy_parallel(
-                    name="DualPlacePolicyRun",
-                    action_clients=action_clients,
-                    robots=robots,
-                    command=command,
-                    timeout=timeout,
-                ),
-                dual.make_blackboard_pose_parallel(
-                    name="DualMovePlaceTopAfterPolicy",
-                    action_clients=action_clients,
-                    robots=robots,
-                    pose_key=plan_name + "/place_top_pose",
-                    motion_type="move_straight",
-                    timeout=straight_timeout,
-                ),
-                dual.make_parameter_pose_parallel(
-                    name="DualMoveInitPose",
-                    action_clients=action_clients,
-                    robots=robots,
-                    parameter_name="init_pose",
-                    motion_type="move_pose",
-                    timeout=move_timeout,
-                ),
-            ]
+        # ----------------- Place ---------------------
+        s_init1 = dual.make_parameter_pose_parallel(
+            name="DualMoveInitTogether",
+            action_clients=action_clients,
+            robots=robots,
+            parameter_name="init_together",
+            motion_type="move_straight",
+            timeout=straight_timeout,
         )
+        pose_est1 = dual.make_pose_estimator(
+            name=plan_name,
+            command=command,
+            robots=robots,
+            tf_buffer=kwargs["tf_buffer"],
+            include_destination=True,
+        )
+        s_move11 = dual.make_blackboard_pose_parallel(
+            name="DualMovePlaceTop",
+            action_clients=action_clients,
+            robots=robots,
+            pose_key=plan_name + "/place_top_pose",
+            motion_type="move_straight",
+            timeout=straight_timeout,
+        )
+        s_move12 = dual.make_policy_parallel(
+            name="DualPlacePolicyRun",
+            action_clients=action_clients,
+            robots=robots,
+            command=command,
+            timeout=timeout,
+        )
+        s_move13 = dual.make_blackboard_pose_parallel(
+            name="DualMovePlaceTopAfterPolicy",
+            action_clients=action_clients,
+            robots=robots,
+            pose_key=plan_name + "/place_top_pose",
+            motion_type="move_straight",
+            timeout=straight_timeout,
+        )
+        s_move14 = dual.make_parameter_pose_parallel(
+            name="DualMoveInitPose",
+            action_clients=action_clients,
+            robots=robots,
+            parameter_name="init_pose",
+            motion_type="move_pose",
+            timeout=move_timeout,
+        )
+
+        root = py_trees.composites.Sequence(name="DualPlacePolicy", memory=True)
+        root.add_children([s_init1, pose_est1, s_move11, s_move12, s_move13, s_move14])
         return root
