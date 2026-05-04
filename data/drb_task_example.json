@@ -4,17 +4,21 @@
     "1": {
       "robot": "right_arm",
       "primitive_action": "pick",
+      "object": "active_ring",
+      "source": "na",
       "implementation": "policy",
-      "policy_name": "ring_vertical_pick",
-      "object": "rubber_ring"
+      "skill_id": "learned_pick_v1",
+      "joint_index": 1,
+      "delta": 0.2,
+      "steps": 100,
+      "hold_steps": 0,
+      "timeout": 20.0
     },
     "2": {
         "robot": ["left_arm", "right_arm"],
         "primitive_action": "dual_grasp",
-        "object": "rubber_ring",
-        "source_robot": "right_arm",
-        "target_robot": "left_arm",
-        "approach_pose_name": "left_arm_ring_dual_grasp_pose",
+        "object": "active_ring",
+        "approach_pose_name": "right_arm_ring_dual_grasp_pose",
         "hold_pose_name": "horizontal_hold_pose"
     },
     "3": {

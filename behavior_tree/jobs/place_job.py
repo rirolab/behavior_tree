@@ -66,7 +66,7 @@ class Move(base_job.BaseJob):
         # Check if the step has the required parameters for place
         if self.acceptable_step(step):
             if step.get("implementation") == "policy":
-                if bool(step.get("policy_name")):
+                if bool(step.get("skill_id")):
                     return StepValidationResult.ACCEPT_GOAL
                 else:
                     return StepValidationResult.REJECT_GOAL

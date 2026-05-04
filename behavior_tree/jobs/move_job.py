@@ -67,7 +67,7 @@ class Move(base_job.BaseJob):
         if self.acceptable_step(step):
             # Case: Policy movement
             if step.get("implementation") == "policy":
-                if bool(step.get("policy_name")):
+                if bool(step.get("skill_id")):
                     return StepValidationResult.ACCEPT_GOAL
                 else:
                     return StepValidationResult.REJECT_GOAL

@@ -247,7 +247,7 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                     rclpy.spin_once(self.node, timeout_sec=0.05)
                     ## time.sleep(0.05)
                 
-                obj_pose = future.result().pose
+                obj_grasp_pose = future.result().pose
             except Exception as e:
                 self.feedback_message = "Pose Service is not available: %s"%e
                 return py_trees.common.Status.FAILURE
@@ -312,7 +312,7 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                 grasp_offset_z = self.grasp_offset_z_by_robot[robot_name]
                 top_offset_z = self.top_offset_z_by_robot[robot_name]
 
-                grasp_pose = POSE_ESTIMATOR.get_grasp_pose(obj_pose, \
+                grasp_pose = POSE_ESTIMATOR.get_grasp_pose(obj_grasp_pose, \
                                                            base2arm_baselink, \
                                                            grasp_offset_z)
                 grasp_top_pose = copy.deepcopy(grasp_pose)
@@ -395,11 +395,18 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
             PyKDL.Rotation.Quaternion(quat.x, quat.y, quat.z, quat.w),
             PyKDL.Vector(pos.x, pos.y, pos.z))
 
+    # @staticmethod
+    # def get_local_pose(obj_pose, base2arm_baselink):
+    #     """ Return the object pose in the robot arm base frame."""
+    #     base2obj = misc.pose2KDLframe(obj_pose)
+    #     arm_baselink2obj = base2arm_baselink.Inverse() * base2obj
+    #     obj_pose = misc.KDLframe2Pose(arm_baselink2obj)
+    #     return obj_pose
 
     @staticmethod
-    def get_grasp_pose(obj_pose, base2arm_baselink, grasp_offset_z):
+    def get_grasp_pose(obj_grasp_pose, base2arm_baselink, grasp_offset_z):
         """ Return the grasp pose."""
-        base2obj = misc.pose2KDLframe(obj_pose)
+        base2obj = misc.pose2KDLframe(obj_grasp_pose)
 
         # TODO: this is a fail safe code. It may need to be removed.
         # if abs(base2obj.M.UnitZ()[2]) < 0.3:
@@ -423,10 +430,10 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         return grasp_pose
 
     @staticmethod
-    def get_place_pose(obj_pose, base2arm_baselink, grasp_pose, \
+    def get_place_pose(obj_dst_pose, base2arm_baselink, grasp_pose, \
                        obj_height, grasp_offset_z):
         """ return the place pose """
-        base2obj         = misc.pose2KDLframe(obj_pose)
+        base2obj         = misc.pose2KDLframe(obj_dst_pose)
         arm_baselink2obj = base2arm_baselink.Inverse() * base2obj
         arm_baselink2obj.M = misc.pose2KDLframe(grasp_pose).M
 

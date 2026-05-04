@@ -68,7 +68,7 @@ class Move(base_job.BaseJob):
         # Check if the step has the required parameters for pick
         if self.acceptable_step(step):
             if step.get("implementation") == "policy":
-                if bool(step.get("policy_name")):
+                if bool(step.get("skill_id")):
                     return StepValidationResult.ACCEPT_GOAL
                 else:
                     return StepValidationResult.REJECT_GOAL
@@ -128,9 +128,6 @@ class Move(base_job.BaseJob):
         blackboard.register_key(key="gripper_close_force", access=py_trees.common.Access.READ)
         blackboard.register_key(key="init_config", access=py_trees.common.Access.READ)
 
-        if goal[idx].get("implementation") == "policy":
-            return Policy.create_subtree(action_client, goal[idx], robot_name=robot_name)
-
         if 'object' in goal[idx].keys():
             obj = goal[idx]['object']
         elif 'obj' in goal[idx].keys():
@@ -138,6 +135,35 @@ class Move(base_job.BaseJob):
         else:
             console.logerror("Pick: No pick object")
             sys.exit()
+
+        if goal[idx].get("implementation") == "policy":
+            pose_est1 = WorldModel.POSE_ESTIMATOR(
+                name="Plan" + idx,
+                object_dict={'target': obj},
+                tf_buffer=kwargs['tf_buffer'],
+                robot_name=robot_name,
+            )
+            s_init1 = MovePose.MOVEP(
+                name="PickInit",
+                action_client=action_client,
+                action_goal={'pose': "Plan" + idx + "/grasp_top_pose"},
+                robot_name=robot_name,
+            )
+            policy_pick = Policy.MOVEBYPOLICY(
+                name="MoveByPolicy",
+                action_client=action_client,
+                action_goal=goal[idx],
+                timeout=float(goal[idx].get("timeout", 20.0)),
+                robot_name=robot_name,
+            )
+            s_init2 = MovePose.MOVEP(
+                name="PickInit2",
+                action_client=action_client,
+                action_goal={'pose': "Plan" + idx + "/grasp_top_pose"},
+                robot_name=robot_name,
+            )
+            root.add_children([pose_est1, s_init1, policy_pick, s_init2])
+            return root
         
         # ------------ Compute -------------------------
         s_init1 = MoveJoint.MOVEJ(name="Init",\

@@ -407,10 +407,17 @@ class MultiSplinteredReality(SplinteredReality):
             
             # Reject the goal if any step is mal-formatted for any job.
             job_validation_result = []
+            rejecting_jobs = []
             for job in self.jobs:
-                job_validation_result.append(job.validate_step(step))
-            if StepValidationResult.REJECT_GOAL in job_validation_result:
-                console.logwarn(f"{step_idx}: validate_goal rejected goal due to job validation failure")
+                result = job.validate_step(step)
+                job_validation_result.append(result)
+                if result == StepValidationResult.REJECT_GOAL:
+                    rejecting_jobs.append(job.__class__.__module__.split(".")[-1])
+            if rejecting_jobs:
+                console.logwarn(
+                    f"{step_idx}: validate_goal rejected goal due to job validation failure "
+                    f"from {', '.join(rejecting_jobs)}"
+                )
                 return False
             
             # Reject the goal unless exactly one job accepts this step.
@@ -443,8 +450,9 @@ def main(args=None):
             "jobs.move_job.Move",
             "jobs.gripper_job.Move",
             "jobs.policy_job.Move",
-            "jobs.dual_pick_policy_job.Move",
-            "jobs.dual_place_policy_job.Move",
+            "jobs.dual_grasp_job.Move",
+            # "jobs.dual_pick_policy_job.Move",
+            # "jobs.dual_place_policy_job.Move",
         ],
         rec_topic_list=topic_list,
     )
