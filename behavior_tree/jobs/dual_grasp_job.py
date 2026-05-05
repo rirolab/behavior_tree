@@ -4,7 +4,7 @@ import py_trees
 import std_msgs.msg as std_msgs
 
 from . import base_job
-from behavior_tree.subtrees import MovePose, RingWorldModel
+from behavior_tree.subtrees import MoveParallel, MovePose, RingWorldModel
 from behavior_tree.utils.parameter_utils import make_string_list
 from behavior_tree.utils.validation_utils import StepValidationResult
 
@@ -149,7 +149,34 @@ class Move(base_job.BaseJob):
             robot_name=approach_robot,
         )
 
-        # Execute pose estimation first, then the two MoveP actions in sequence.
+        # Find the left/right arm names for the horizontal top grasp move.
+        left_robot = next((robot for robot in grounded_robots if "left" in robot), None)
+        right_robot = next((robot for robot in grounded_robots if "right" in robot), None)
+        if left_robot is None or right_robot is None:
+            raise RuntimeError(
+                "dual_grasp_job: expected one left robot and one right robot in the grounding"
+            )
+
+        # Move both arms to their horizontal grasp top poses in parallel.
+        move_horizontal = MoveParallel.MoveParallel(name="HorizontalGraspTop")
+        move_horizontal_right = MovePose.MOVEP(
+            name=f"{right_robot}_MoveHorizontalGraspTopRight",
+            action_client=action_clients[right_robot],
+            action_goal={"pose": plan_name + "/horizontal_grasp_top_right"},
+            timeout=move_timeout,
+            robot_name=right_robot,
+        )
+        move_horizontal_left = MovePose.MOVEP(
+            name=f"{left_robot}_MoveHorizontalGraspTopLeft",
+            action_client=action_clients[left_robot],
+            action_goal={"pose": plan_name + "/horizontal_grasp_top_left"},
+            timeout=move_timeout,
+            robot_name=left_robot,
+        )
+        move_horizontal.add_children([move_horizontal_right, move_horizontal_left])
+
+        # Execute pose estimation first, then the two MoveP actions, then the
+        # horizontal top grasp MoveP actions in parallel.
         root = py_trees.composites.Sequence(name="DualGrasp", memory=True)
-        root.add_children([pose_estimator, move_holding, move_approach])
+        root.add_children([pose_estimator, move_holding, move_approach, move_horizontal])
         return root
