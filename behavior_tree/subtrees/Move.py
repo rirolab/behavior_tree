@@ -18,7 +18,7 @@ class MOVE(py_trees.behaviour.Behaviour):
     priority behaviour.
     """
 
-    def __init__(self, name, action_client, action_goal=None, timeout=1, robot_name=None,):
+    def __init__(self, name, action_client, action_goal=None, timeout=1, robot_name=None):
         """
         Initialise a robot action command behaviour.
 

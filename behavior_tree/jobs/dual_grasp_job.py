@@ -120,6 +120,7 @@ class Move(base_job.BaseJob):
         action_clients = action_client
         plan_name = "Plan" + idx
         move_timeout = float(step.get("move_timeout", step.get("move_timeout_sec", 3.0)))
+        move_timeout_short = float(step.get("move_timeout_short_sec", 1.0))
 
         # Get the blackboard 
         approach_robot_blackboard = py_trees.blackboard.Client(namespace=approach_robot)
@@ -139,44 +140,48 @@ class Move(base_job.BaseJob):
             tf_buffer=kwargs["tf_buffer"],
         )
 
-        # Move the holding robot to the upper regrasp target pose.
+        # Move the approach robot to the lower regrasp target pose.
+        move_approach_seq = py_trees.composites.Sequence(name="MoveApproachSeq", memory=True)
+        move_approach_right_parallel = MoveParallel.MoveParallel(name="ApproachRobotRegraspDownRightParallel")
         move_holding = MovePose.MOVEP(
-            name=f"{holding_robot}_MoveRegraspUp",
+            name=f"HoldingRobotRegraspUp",
             action_client=action_clients[holding_robot],
             action_goal={"pose": plan_name + "/regrasp_target_up"},
             timeout=move_timeout,
             robot_name=holding_robot,
         )
-
-        # Move the approach robot to the lower regrasp target pose.
-        move_approach_left = MovePose.MOVEP(
-            name=f"{approach_robot}_MoveRegraspDownLeft",
+        move_approach_right = MovePose.MOVEP(
+            name=f"ApproachRobotRegraspDownRight",
             action_client=action_clients[approach_robot],
-            action_goal={"pose": plan_name + "/regrasp_target_down_right"},
+            action_goal={"pose": plan_name + "/regrasp_target_down_right"}, # TODO: currenlty predeifined
             timeout=move_timeout,
             robot_name=approach_robot,
         )
-        move_approach_left_open = Gripper.GOTO(name="Open",
+        move_approach_right_open = Gripper.GOTO(
+            name="ApproachRobotGripperOpen",
             action_client=action_clients[approach_robot],
             action_goal=approach_robot_blackboard.gripper_open_pos,
             force=approach_robot_blackboard.gripper_open_force,
             timeout=1,
             robot_name=approach_robot
         )
+        move_approach_right_parallel.add_children([move_holding, move_approach_right, move_approach_right_open])
         move_approach = MovePose.MOVEP(
-            name=f"{approach_robot}_MoveRegraspDown",
+            name=f"ApproachRobotRegraspDown",
             action_client=action_clients[approach_robot],
             action_goal={"pose": plan_name + "/regrasp_target_down"},
-            timeout=move_timeout,
+            timeout=move_timeout_short,
             robot_name=approach_robot,
         )
-        move_approach_left_close = Gripper.GOTO(name="Close",
+        move_approach_close = Gripper.GOTO(
+            name="ApproachRobotGripperClose",
             action_client=action_clients[approach_robot],
             action_goal=approach_robot_blackboard.gripper_close_pos,
             force=approach_robot_blackboard.gripper_close_force,
             timeout=1,
             robot_name=approach_robot
         )
+        move_approach_seq.add_children([move_approach_right_parallel, move_approach, move_approach_close])
 
         # Find the left/right arm names for the horizontal top grasp move.
         left_robot = next((robot for robot in grounded_robots if "left" in robot), None)
@@ -186,23 +191,32 @@ class Move(base_job.BaseJob):
                 "dual_grasp_job: expected one left robot and one right robot in the grounding"
             )
 
-        # Move both arms to their horizontal grasp top poses in parallel. (waypoint1)
-        move_horizontal_wp1 = MoveParallel.MoveParallel(name="HorizontalGraspTopWP1")
+        # Move both arms to their horizontal grasp top poses in parallel with waypoints
+        move_horizontal_wp = MoveParallel.MoveParallel(name="HorizontalGraspTopWP")
+        move_horizontal_right_wp_seq = py_trees.composites.Sequence(name="MoveApproachSeq", memory=True)
         move_horizontal_right_wp1 = MovePose.MOVEP(
             name=f"{right_robot}_MoveHorizontalGraspTopRightWP1",
+            action_client=action_clients[right_robot],
+            action_goal={"pose": plan_name + "/horizontal_grasp_top_right_wp1"},
+            timeout=move_timeout/2,
+            robot_name=right_robot,
+        )
+        move_horizontal_right_wp2 = MovePose.MOVEP(
+            name=f"{right_robot}_MoveHorizontalGraspTopRightWP2",
             action_client=action_clients[right_robot],
             action_goal={"pose": plan_name + "/horizontal_grasp_top_right_wp1"},
             timeout=move_timeout,
             robot_name=right_robot,
         )
-        move_horizontal_left_wp1 = MovePose.MOVEP(
-            name=f"{left_robot}_MoveHorizontalGraspTopLeftWP1",
+        move_horizontal_right_wp_seq.add_children([move_horizontal_right_wp1, move_horizontal_right_wp2])
+        move_horizontal_left_wp2 = MovePose.MOVEP(
+            name=f"{left_robot}_MoveHorizontalGraspTopLeftWP2",
             action_client=action_clients[left_robot],
-            action_goal={"pose": plan_name + "/horizontal_grasp_top_left_wp1"},
+            action_goal={"pose": plan_name + "/horizontal_grasp_top_left_wp2"},
             timeout=move_timeout,
             robot_name=left_robot,
         )
-        move_horizontal_wp1.add_children([move_horizontal_right_wp1, move_horizontal_left_wp1])
+        move_horizontal_wp.add_children([move_horizontal_right_wp_seq, move_horizontal_left_wp2])
 
         # Move both arms to their horizontal grasp top poses in parallel.
         move_horizontal = MoveParallel.MoveParallel(name="HorizontalGraspTop")
@@ -227,11 +241,7 @@ class Move(base_job.BaseJob):
         root = py_trees.composites.Sequence(name="DualGrasp", memory=True)
         # root.add_children([s_init1, pose_estimator, move_holding, move_approach, move_horizontal])
         root.add_children([pose_estimator, 
-                           move_holding, 
-                           move_approach_left,
-                           move_approach_left_open,
-                           move_approach,
-                           move_approach_left_close,
-                           move_horizontal_wp1, 
+                           move_approach_seq,
+                           move_horizontal_wp, 
                            move_horizontal])
         return root

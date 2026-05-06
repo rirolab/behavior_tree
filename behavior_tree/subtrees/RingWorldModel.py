@@ -40,7 +40,8 @@ class POSE_ESTIMATOR(WorldModel.POSE_ESTIMATOR):
             "horizontal_grasp_top_right",
             "horizontal_grasp_top_left",
             "horizontal_grasp_top_right_wp1",
-            "horizontal_grasp_top_left_wp1",
+            "horizontal_grasp_top_right_wp2",
+            "horizontal_grasp_top_left_wp2",
         ]
         for blackboard in self.robot_blackboards.values():
             for pose_key in BLACKBOARD_POSE_KEYS:
@@ -101,6 +102,7 @@ class POSE_ESTIMATOR(WorldModel.POSE_ESTIMATOR):
                             angle=-np.pi / 2.0,
                             tool_offset_z=grasp_offset_z,
                         )
+                        raise NotImplementedError("TODO")
 
                     # Define regrasp target down right/left pose
                     regrasp_target_down_right = copy.deepcopy(regrasp_target_down) 
@@ -109,10 +111,13 @@ class POSE_ESTIMATOR(WorldModel.POSE_ESTIMATOR):
                     regrasp_target_down_left.position.y += 0.05
 
                     # Define horizontal grasp top waypoint poses 
-                    horizontal_grasp_top_right_wp1 = copy.deepcopy(horizontal_grasp_top_right) 
-                    horizontal_grasp_top_left_wp1 = copy.deepcopy(horizontal_grasp_top_left) 
-                    horizontal_grasp_top_right_wp1.position.x = regrasp_target_up.position.x
-                    horizontal_grasp_top_left_wp1.position.x = regrasp_target_up.position.x
+                    horizontal_grasp_top_right_wp1 = copy.deepcopy(regrasp_target_down)
+                    horizontal_grasp_top_right_wp1.position.y = horizontal_grasp_top_right.position.y
+                    # TODO: horizontal_grasp_top_left_wp1
+                    horizontal_grasp_top_right_wp2 = copy.deepcopy(horizontal_grasp_top_right) 
+                    horizontal_grasp_top_right_wp2.position.x = regrasp_target_up.position.x
+                    horizontal_grasp_top_left_wp2 = copy.deepcopy(horizontal_grasp_top_left) 
+                    horizontal_grasp_top_left_wp2.position.x = regrasp_target_up.position.x
 
                     # Set regrasp target poses
                     blackboard.set(self.name + "/regrasp_target_up", regrasp_target_up)
@@ -124,7 +129,8 @@ class POSE_ESTIMATOR(WorldModel.POSE_ESTIMATOR):
                     blackboard.set(self.name + "/horizontal_grasp_top_right", horizontal_grasp_top_right)
                     blackboard.set(self.name + "/horizontal_grasp_top_left", horizontal_grasp_top_left)
                     blackboard.set(self.name + "/horizontal_grasp_top_right_wp1", horizontal_grasp_top_right_wp1)
-                    blackboard.set(self.name + "/horizontal_grasp_top_left_wp1", horizontal_grasp_top_left_wp1)
+                    blackboard.set(self.name + "/horizontal_grasp_top_right_wp2", horizontal_grasp_top_right_wp2)
+                    blackboard.set(self.name + "/horizontal_grasp_top_left_wp2", horizontal_grasp_top_left_wp2)
 
                 self.sent_goal = True
                 self.feedback_message = "RingWorldModel: successful pose estimation"
