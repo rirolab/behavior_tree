@@ -445,14 +445,13 @@ def main(args=None):
 
     splintered_reality = MultiSplinteredReality(
         jobs=[
-            "jobs.pick_job.Move",
+            # "jobs.pick_job.Move",
+            "jobs.drb_nopolicy_pick_job.Move",
             "jobs.place_job.Move",
             "jobs.move_job.Move",
             "jobs.gripper_job.Move",
             "jobs.policy_job.Move",
             "jobs.dual_grasp_job.Move",
-            # "jobs.dual_pick_policy_job.Move",
-            # "jobs.dual_place_policy_job.Move",
         ],
         rec_topic_list=topic_list,
     )
