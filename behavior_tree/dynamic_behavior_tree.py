@@ -47,19 +47,27 @@ def create_root():
     # ---------------- Root->Blackboard ------------------------
     grnd2bb = Grnd2Blackboard.ToBlackboard(name="Grnd2BB",
                                            topic_name="symbol_grounding")
-    status2bb = ToBlackboard(name="Status2BB",
-                             topic_name="arm_client/goal_status",
-                             topic_type=GoalStatus,
-                             blackboard_variables={"goal_id": "goal_info.goal_id.uuid", "goal_status": "status"},
-                             qos_profile=py_trees_ros.utilities.qos_profile_unlatched()
-)
+    status_nodes = []
+    for goal_channel in ["arm", "gripper"]:
+        status_nodes.append(
+            ToBlackboard(
+                name=f"{goal_channel}_Status2BB",
+                topic_name=f"arm_client/{goal_channel}/goal_status",
+                topic_type=GoalStatus,
+                blackboard_variables={
+                    f"{goal_channel}/goal_id": "goal_info.goal_id.uuid",
+                    f"{goal_channel}/goal_status": "status",
+                },
+                qos_profile=py_trees_ros.utilities.qos_profile_unlatched(),
+            )
+        )
     # ---------------- Root->Priorities- -----------------------
     priorities = py_trees.composites.Selector("Priorities",
                                               memory=False)
     idle       = py_trees.behaviours.Running(name="Idle")
     priorities.add_child(idle)
     
-    root.add_children([grnd2bb, status2bb, priorities])
+    root.add_children([grnd2bb] + status_nodes + [priorities])
     return root
 
 

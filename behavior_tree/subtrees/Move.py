@@ -18,7 +18,15 @@ class MOVE(py_trees.behaviour.Behaviour):
     priority behaviour.
     """
 
-    def __init__(self, name, action_client, action_goal=None, timeout=1, robot_name=None):
+    def __init__(
+        self,
+        name,
+        action_client,
+        action_goal=None,
+        timeout=1,
+        robot_name=None,
+        goal_channel="arm",
+    ):
         """
         Initialise a robot action command behaviour.
 
@@ -28,11 +36,14 @@ class MOVE(py_trees.behaviour.Behaviour):
             action_goal: command payload for the robot action.
             timeout (:obj:`float`): command timeout in seconds.
             robot_name (:obj:`str`): optional robot namespace.
+            goal_channel (:obj:`str`): action status channel, e.g. ``arm`` or
+                ``gripper``.
         """
         super(MOVE, self).__init__(name=name)
 
         self.arm           = None
         self.robot_name    = robot_name
+        self.goal_channel  = goal_channel
         self.action_goal   = action_goal
         self.sent_goal     = False
         self.cmd_req       = action_client
@@ -48,12 +59,14 @@ class MOVE(py_trees.behaviour.Behaviour):
         )
         ## self.blackboard = py_trees.blackboard.Client()
         ## self.callback_group = ReentrantCallbackGroup() 
+        self.goal_id_key = f"{self.goal_channel}/goal_id"
+        self.goal_status_key = f"{self.goal_channel}/goal_status"
         self.blackboard.register_key(
-            key="goal_id",
+            key=self.goal_id_key,
             access=py_trees.common.Access.READ,
         )
         self.blackboard.register_key(
-            key="goal_status",
+            key=self.goal_status_key,
             access=py_trees.common.Access.READ,
         )
         
@@ -87,7 +100,7 @@ class MOVE(py_trees.behaviour.Behaviour):
             goal id value or :obj:`None` if it is not available.
         """
         try:
-            return self.blackboard.goal_id
+            return self.blackboard.get(self.goal_id_key)
         except KeyError:
             return None
 
@@ -99,7 +112,7 @@ class MOVE(py_trees.behaviour.Behaviour):
             goal status value or :obj:`None` if it is not available.
         """
         try:
-            return self.blackboard.goal_status
+            return self.blackboard.get(self.goal_status_key)
         except KeyError:
             return None
 
@@ -133,6 +146,7 @@ class MOVE(py_trees.behaviour.Behaviour):
           ]:
             req = StringGoalStatus.Request()
             req.data = json.dumps({'action_type': 'cancel_goal',
+                                   'goal_channel': self.goal_channel,
                                    'enable_wait': True})
             self.future = self.cmd_req.call_async( req )
         self.logger.debug("%s.terminate()[%s->%s]" % (self.__class__.__name__, self.status, new_status))            

@@ -21,7 +21,8 @@ class GOTO(Move.MOVE):
         super(GOTO, self).__init__(name=name,
                                    action_client=action_client,
                                    action_goal=action_goal,
-                                   robot_name=robot_name)
+                                   robot_name=robot_name,
+                                   goal_channel="gripper")
 
         self.force         = force
         self.check_contact = check_contact
@@ -42,6 +43,7 @@ class GOTO(Move.MOVE):
             cmd_str = json.dumps({'action_type': 'gripperGotoPos',
                                   'goal': self.action_goal,
                                   'uuid': self.goal_uuid_des.tolist(),
+                                  'goal_channel': self.goal_channel,
                                   'force': self.force,
                                   'check_contact': self.check_contact,
                                   'timeout': self.timeout,

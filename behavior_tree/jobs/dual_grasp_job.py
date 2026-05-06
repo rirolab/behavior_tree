@@ -122,13 +122,29 @@ class Move(base_job.BaseJob):
         move_timeout = float(step.get("move_timeout", step.get("move_timeout_sec", 3.0)))
         move_timeout_short = float(step.get("move_timeout_short_sec", 1.0))
 
-        # Get the blackboard 
+        # Find the left/right arm names for the horizontal top grasp move.
+        left_robot = next((robot for robot in grounded_robots if "left" in robot), None)
+        right_robot = next((robot for robot in grounded_robots if "right" in robot), None)
+        if left_robot is None or right_robot is None:
+            raise RuntimeError("dual_grasp_job: expected one left robot and one right robot in the grounding")
+        if holding_robot not in [left_robot, right_robot] or approach_robot not in [left_robot, right_robot]:
+            raise RuntimeError("dual_grasp_job: expected holding and approach robots to be the left and right robots in the grounding")
+
+        # Get the blackboard and parameters
         approach_robot_blackboard = py_trees.blackboard.Client(namespace=approach_robot)
         approach_robot_blackboard.register_key(key="gripper_open_pos", access=py_trees.common.Access.READ)
         approach_robot_blackboard.register_key(key="gripper_close_pos", access=py_trees.common.Access.READ)
         approach_robot_blackboard.register_key(key="gripper_open_force", access=py_trees.common.Access.READ)
         approach_robot_blackboard.register_key(key="gripper_close_force", access=py_trees.common.Access.READ)
         approach_robot_blackboard.register_key(key="init_config", access=py_trees.common.Access.READ)
+        holding_robot_blackboard = py_trees.blackboard.Client(namespace=holding_robot)
+        holding_robot_blackboard.register_key(key="gripper_open_pos", access=py_trees.common.Access.READ)
+        holding_robot_blackboard.register_key(key="gripper_close_pos", access=py_trees.common.Access.READ)
+        holding_robot_blackboard.register_key(key="gripper_open_force", access=py_trees.common.Access.READ)
+        holding_robot_blackboard.register_key(key="gripper_close_force", access=py_trees.common.Access.READ)
+        holding_robot_blackboard.register_key(key="init_config", access=py_trees.common.Access.READ)
+        left_robot_blackboard = approach_robot_blackboard if left_robot == approach_robot else holding_robot_blackboard
+        right_robot_blackboard = approach_robot_blackboard if right_robot == approach_robot else holding_robot_blackboard
 
         # Estimate the regrasp target poses for both robots.
         pose_estimator = RingWorldModel.POSE_ESTIMATOR(
@@ -183,17 +199,9 @@ class Move(base_job.BaseJob):
         )
         move_approach_seq.add_children([move_approach_right_parallel, move_approach, move_approach_close])
 
-        # Find the left/right arm names for the horizontal top grasp move.
-        left_robot = next((robot for robot in grounded_robots if "left" in robot), None)
-        right_robot = next((robot for robot in grounded_robots if "right" in robot), None)
-        if left_robot is None or right_robot is None:
-            raise RuntimeError(
-                "dual_grasp_job: expected one left robot and one right robot in the grounding"
-            )
-
         # Move both arms to their horizontal grasp top poses in parallel with waypoints
         move_horizontal_wp = MoveParallel.MoveParallel(name="HorizontalGraspTopWP")
-        move_horizontal_right_wp_seq = py_trees.composites.Sequence(name="MoveApproachSeq", memory=True)
+        move_horizontal_right_wp_seq = py_trees.composites.Sequence(name="MoveHorizontalGraspTopRightWPSeq", memory=True)
         move_horizontal_right_wp1 = MovePose.MOVEP(
             name=f"{right_robot}_MoveHorizontalGraspTopRightWP1",
             action_client=action_clients[right_robot],
@@ -204,8 +212,8 @@ class Move(base_job.BaseJob):
         move_horizontal_right_wp2 = MovePose.MOVEP(
             name=f"{right_robot}_MoveHorizontalGraspTopRightWP2",
             action_client=action_clients[right_robot],
-            action_goal={"pose": plan_name + "/horizontal_grasp_top_right_wp1"},
-            timeout=move_timeout,
+            action_goal={"pose": plan_name + "/horizontal_grasp_top_right_wp2"},
+            timeout=move_timeout/2,
             robot_name=right_robot,
         )
         move_horizontal_right_wp_seq.add_children([move_horizontal_right_wp1, move_horizontal_right_wp2])
@@ -236,6 +244,26 @@ class Move(base_job.BaseJob):
         )
         move_horizontal.add_children([move_horizontal_right, move_horizontal_left])
 
+        # Open together
+        open_together = MoveParallel.MoveParallel(name="OpenTogether")
+        open_together_right = Gripper.GOTO(
+            name="OpenTogetherRight",
+            action_client=action_clients[right_robot],
+            action_goal=right_robot_blackboard.gripper_open_pos,
+            force=right_robot_blackboard.gripper_open_force,
+            timeout=1,
+            robot_name=right_robot
+        )
+        open_together_left = Gripper.GOTO(
+            name="OpenTogetherLeft",
+            action_client=action_clients[left_robot],
+            action_goal=left_robot_blackboard.gripper_open_pos,
+            force=left_robot_blackboard.gripper_open_force,
+            timeout=1,
+            robot_name=left_robot
+        )
+        open_together.add_children([open_together_right, open_together_left])
+
         # Execute pose estimation first, then the two MoveP actions, then the
         # horizontal top grasp MoveP actions in parallel.
         root = py_trees.composites.Sequence(name="DualGrasp", memory=True)
@@ -243,5 +271,6 @@ class Move(base_job.BaseJob):
         root.add_children([pose_estimator, 
                            move_approach_seq,
                            move_horizontal_wp, 
-                           move_horizontal])
+                           move_horizontal,
+                           open_together])
         return root

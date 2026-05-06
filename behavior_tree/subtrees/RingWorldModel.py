@@ -111,8 +111,27 @@ class POSE_ESTIMATOR(WorldModel.POSE_ESTIMATOR):
                     regrasp_target_down_left.position.y += 0.05
 
                     # Define horizontal grasp top waypoint poses 
-                    horizontal_grasp_top_right_wp1 = copy.deepcopy(regrasp_target_down)
-                    horizontal_grasp_top_right_wp1.position.y = horizontal_grasp_top_right.position.y
+                    # horizontal_grasp_top_right_wp1 = copy.deepcopy(regrasp_target_down)
+                    # horizontal_grasp_top_right_wp1.position.y = horizontal_grasp_top_right.position.y
+
+                    # horizontal_grasp_top_right_wp1 = copy.deepcopy(regrasp_target_down)
+                    # # horizontal_grasp_top_right_wp1.position.x += regrasp_target_up.position.x
+                    # horizontal_grasp_top_right_wp1 = self.rotate_pose_local(
+                    #         horizontal_grasp_top_right_wp1,
+                    #         axis="x",
+                    #         angle=-np.pi / 4.0, # rotate back
+                    #         tool_offset_z=grasp_offset_z,
+                    #     )
+                    # horizontal_grasp_top_right_wp1.position.x = horizontal_grasp_top_right.position.x
+                    horizontal_grasp_top_right_wp1 = copy.deepcopy(horizontal_grasp_top_right)
+                    horizontal_grasp_top_right_wp1.position.z = (regrasp_target_down.position.z + horizontal_grasp_top_right.position.z) / 2.0
+                    horizontal_grasp_top_right_wp1 = self.rotate_pose_local(
+                            horizontal_grasp_top_right_wp1,
+                            axis="x",
+                            angle=np.pi / 4.0,
+                            tool_offset_z=grasp_offset_z,
+                        )
+                    
                     # TODO: horizontal_grasp_top_left_wp1
                     horizontal_grasp_top_right_wp2 = copy.deepcopy(horizontal_grasp_top_right) 
                     horizontal_grasp_top_right_wp2.position.x = regrasp_target_up.position.x
