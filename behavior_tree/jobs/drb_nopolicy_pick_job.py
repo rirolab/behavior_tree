@@ -127,7 +127,11 @@ class Move(base_job.BaseJob):
         if not self.acceptable_step(goal[idx]):
             return None
 
-        # beahviors
+        # Time parameters
+        GRIPPER_TIME = 0.25
+        MOVE_TIME = 0.25
+
+        # behaviors
         root = py_trees.composites.Sequence(name="Pick", memory=True)
         blackboard = py_trees.blackboard.Client(namespace=robot_name)
         blackboard.register_key(key="gripper_open_pos", access=py_trees.common.Access.READ)
@@ -155,12 +159,13 @@ class Move(base_job.BaseJob):
             action_client=action_client,
             action_goal={'pose': "Plan" + idx + "/grasp_top_pose"},
             robot_name=robot_name,
+            timeout=MOVE_TIME,
         )
         s_move1 = Gripper.GOTO(name="Open",
                                 action_client=action_client,
                                 action_goal=blackboard.gripper_open_pos,
                                 force=blackboard.gripper_open_force,
-                                timeout=1,
+                                timeout=GRIPPER_TIME,
                                 robot_name=robot_name)
 
         s_scene_cmd1 = IsaacSceneCommand.ISAAC_SCENE_COMMAND(
@@ -178,7 +183,7 @@ class Move(base_job.BaseJob):
                                 action_client=action_client,
                                 action_goal=blackboard.gripper_close_pos,
                                 force=blackboard.gripper_close_force,
-                                timeout=1,
+                                timeout=GRIPPER_TIME,
                                 robot_name=robot_name)
         s_scene_cmd2 = IsaacSceneCommand.ISAAC_SCENE_COMMAND(
             name="EnableActiveRingGravityAndDeformable",

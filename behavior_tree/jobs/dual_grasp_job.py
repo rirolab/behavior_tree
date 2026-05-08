@@ -119,8 +119,11 @@ class Move(base_job.BaseJob):
         approach_robot = step["approach_robot"]
         action_clients = action_client
         plan_name = "Plan" + idx
-        move_timeout = float(step.get("move_timeout", step.get("move_timeout_sec", 3.0)))
-        move_timeout_short = float(step.get("move_timeout_short_sec", 1.0))
+        # move_timeout = float(step.get("move_timeout", step.get("move_timeout_sec", 3.0)))
+        # move_timeout_short = float(step.get("move_timeout_short_sec", 1.0))
+        GRIPPER_TIME = 0.25
+        MOVE_TIME = 0.25
+        
 
         # Find the left/right arm names for the horizontal top grasp move.
         left_robot = next((robot for robot in grounded_robots if "left" in robot), None)
@@ -163,14 +166,14 @@ class Move(base_job.BaseJob):
             name=f"HoldingRobotRegraspUp",
             action_client=action_clients[holding_robot],
             action_goal={"pose": plan_name + "/regrasp_target_up"},
-            timeout=move_timeout,
+            timeout=2*MOVE_TIME,
             robot_name=holding_robot,
         )
         move_approach_right = MovePose.MOVEP(
             name=f"ApproachRobotRegraspDownRight",
             action_client=action_clients[approach_robot],
             action_goal={"pose": plan_name + "/regrasp_target_down_right"}, # TODO: currenlty predeifined
-            timeout=move_timeout,
+            timeout=MOVE_TIME,
             robot_name=approach_robot,
         )
         move_approach_right_open = Gripper.GOTO(
@@ -178,15 +181,15 @@ class Move(base_job.BaseJob):
             action_client=action_clients[approach_robot],
             action_goal=approach_robot_blackboard.gripper_open_pos,
             force=approach_robot_blackboard.gripper_open_force,
-            timeout=1,
+            timeout=MOVE_TIME,
             robot_name=approach_robot
         )
         move_approach_right_parallel.add_children([move_holding, move_approach_right, move_approach_right_open])
         move_approach = MovePose.MOVEP(
-            name=f"ApproachRobotRegraspDown",
+            name=f"ApproachRobotRegraspDownHalfLeft",
             action_client=action_clients[approach_robot],
-            action_goal={"pose": plan_name + "/regrasp_target_down"},
-            timeout=move_timeout_short,
+            action_goal={"pose": plan_name + "/regrasp_target_down_half_left"},
+            timeout=MOVE_TIME,
             robot_name=approach_robot,
         )
         move_approach_close = Gripper.GOTO(
@@ -194,7 +197,7 @@ class Move(base_job.BaseJob):
             action_client=action_clients[approach_robot],
             action_goal=approach_robot_blackboard.gripper_close_pos,
             force=approach_robot_blackboard.gripper_close_force,
-            timeout=1,
+            timeout=GRIPPER_TIME,
             robot_name=approach_robot
         )
         move_approach_seq.add_children([move_approach_right_parallel, move_approach, move_approach_close])
@@ -206,43 +209,25 @@ class Move(base_job.BaseJob):
             name=f"{right_robot}_MoveHorizontalGraspTopRightWP1",
             action_client=action_clients[right_robot],
             action_goal={"pose": plan_name + "/horizontal_grasp_top_right_wp1"},
-            timeout=move_timeout/2,
+            timeout=3*MOVE_TIME,
             robot_name=right_robot,
         )
-        move_horizontal_right_wp2 = MovePose.MOVEP(
-            name=f"{right_robot}_MoveHorizontalGraspTopRightWP2",
-            action_client=action_clients[right_robot],
-            action_goal={"pose": plan_name + "/horizontal_grasp_top_right_wp2"},
-            timeout=move_timeout/2,
-            robot_name=right_robot,
-        )
-        move_horizontal_right_wp_seq.add_children([move_horizontal_right_wp1, move_horizontal_right_wp2])
-        move_horizontal_left_wp2 = MovePose.MOVEP(
-            name=f"{left_robot}_MoveHorizontalGraspTopLeftWP2",
-            action_client=action_clients[left_robot],
-            action_goal={"pose": plan_name + "/horizontal_grasp_top_left_wp2"},
-            timeout=move_timeout,
-            robot_name=left_robot,
-        )
-        move_horizontal_wp.add_children([move_horizontal_right_wp_seq, move_horizontal_left_wp2])
-
-        # Move both arms to their horizontal grasp top poses in parallel.
-        move_horizontal = MoveParallel.MoveParallel(name="HorizontalGraspTop")
         move_horizontal_right = MovePose.MOVEP(
             name=f"{right_robot}_MoveHorizontalGraspTopRight",
             action_client=action_clients[right_robot],
             action_goal={"pose": plan_name + "/horizontal_grasp_top_right"},
-            timeout=move_timeout,
+            timeout=3*MOVE_TIME,
             robot_name=right_robot,
         )
+        move_horizontal_right_wp_seq.add_children([move_horizontal_right_wp1, move_horizontal_right])
         move_horizontal_left = MovePose.MOVEP(
             name=f"{left_robot}_MoveHorizontalGraspTopLeft",
             action_client=action_clients[left_robot],
             action_goal={"pose": plan_name + "/horizontal_grasp_top_left"},
-            timeout=move_timeout,
+            timeout=6*MOVE_TIME,
             robot_name=left_robot,
         )
-        move_horizontal.add_children([move_horizontal_right, move_horizontal_left])
+        move_horizontal_wp.add_children([move_horizontal_right_wp_seq, move_horizontal_left])
 
         # Open together
         open_together = MoveParallel.MoveParallel(name="OpenTogether")
@@ -251,7 +236,7 @@ class Move(base_job.BaseJob):
             action_client=action_clients[right_robot],
             action_goal=right_robot_blackboard.gripper_open_pos,
             force=right_robot_blackboard.gripper_open_force,
-            timeout=1,
+            timeout=GRIPPER_TIME,
             robot_name=right_robot
         )
         open_together_left = Gripper.GOTO(
@@ -259,7 +244,7 @@ class Move(base_job.BaseJob):
             action_client=action_clients[left_robot],
             action_goal=left_robot_blackboard.gripper_open_pos,
             force=left_robot_blackboard.gripper_open_force,
-            timeout=1,
+            timeout=GRIPPER_TIME,
             robot_name=left_robot
         )
         open_together.add_children([open_together_right, open_together_left])
@@ -271,6 +256,6 @@ class Move(base_job.BaseJob):
         root.add_children([pose_estimator, 
                            move_approach_seq,
                            move_horizontal_wp, 
-                           move_horizontal,
+                        #    move_horizontal,
                            open_together])
         return root

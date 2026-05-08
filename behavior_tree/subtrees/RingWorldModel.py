@@ -37,6 +37,7 @@ class POSE_ESTIMATOR(WorldModel.POSE_ESTIMATOR):
             "regrasp_target_down",
             "regrasp_target_down_left",
             "regrasp_target_down_right",
+            "regrasp_target_down_half_left",
             "horizontal_grasp_top_right",
             "horizontal_grasp_top_left",
             "horizontal_grasp_top_right_wp1",
@@ -109,20 +110,10 @@ class POSE_ESTIMATOR(WorldModel.POSE_ESTIMATOR):
                     regrasp_target_down_right.position.y -= 0.05
                     regrasp_target_down_left = copy.deepcopy(regrasp_target_down) 
                     regrasp_target_down_left.position.y += 0.05
+                    regrasp_target_down_half_left = copy.deepcopy(regrasp_target_down) 
+                    regrasp_target_down_half_left.position.y += 0.02
 
                     # Define horizontal grasp top waypoint poses 
-                    # horizontal_grasp_top_right_wp1 = copy.deepcopy(regrasp_target_down)
-                    # horizontal_grasp_top_right_wp1.position.y = horizontal_grasp_top_right.position.y
-
-                    # horizontal_grasp_top_right_wp1 = copy.deepcopy(regrasp_target_down)
-                    # # horizontal_grasp_top_right_wp1.position.x += regrasp_target_up.position.x
-                    # horizontal_grasp_top_right_wp1 = self.rotate_pose_local(
-                    #         horizontal_grasp_top_right_wp1,
-                    #         axis="x",
-                    #         angle=-np.pi / 4.0, # rotate back
-                    #         tool_offset_z=grasp_offset_z,
-                    #     )
-                    # horizontal_grasp_top_right_wp1.position.x = horizontal_grasp_top_right.position.x
                     horizontal_grasp_top_right_wp1 = copy.deepcopy(horizontal_grasp_top_right)
                     horizontal_grasp_top_right_wp1.position.z = (regrasp_target_down.position.z + horizontal_grasp_top_right.position.z) / 2.0
                     horizontal_grasp_top_right_wp1 = self.rotate_pose_local(
@@ -143,7 +134,7 @@ class POSE_ESTIMATOR(WorldModel.POSE_ESTIMATOR):
                     blackboard.set(self.name + "/regrasp_target_down", regrasp_target_down)
                     blackboard.set(self.name + "/regrasp_target_down_right", regrasp_target_down_right)
                     blackboard.set(self.name + "/regrasp_target_down_left", regrasp_target_down_left)
-
+                    blackboard.set(self.name + "/regrasp_target_down_half_left", regrasp_target_down_half_left)
                     # Set horizontal grasp top poses
                     blackboard.set(self.name + "/horizontal_grasp_top_right", horizontal_grasp_top_right)
                     blackboard.set(self.name + "/horizontal_grasp_top_left", horizontal_grasp_top_left)
