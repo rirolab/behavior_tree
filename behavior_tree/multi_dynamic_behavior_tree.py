@@ -451,6 +451,7 @@ def main(args=None):
             "jobs.place_job.Move",
             "jobs.move_job.Move",
             "jobs.gripper_job.Move",
+            "jobs.dual_policy_job.Move",
             "jobs.policy_job.Move",
             "jobs.dual_grasp_job.Move",
         ],

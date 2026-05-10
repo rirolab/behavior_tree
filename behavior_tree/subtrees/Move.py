@@ -146,7 +146,6 @@ class MOVE(py_trees.behaviour.Behaviour):
           ]:
             req = StringGoalStatus.Request()
             req.data = json.dumps({'action_type': 'cancel_goal',
-                                   'goal_channel': self.goal_channel,
                                    'enable_wait': True})
             self.future = self.cmd_req.call_async( req )
         self.logger.debug("%s.terminate()[%s->%s]" % (self.__class__.__name__, self.status, new_status))            

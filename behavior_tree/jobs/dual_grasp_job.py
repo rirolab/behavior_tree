@@ -166,7 +166,7 @@ class Move(base_job.BaseJob):
             name=f"HoldingRobotRegraspUp",
             action_client=action_clients[holding_robot],
             action_goal={"pose": plan_name + "/regrasp_target_up"},
-            timeout=2*MOVE_TIME,
+            timeout=2.5*MOVE_TIME,
             robot_name=holding_robot,
         )
         move_approach_right = MovePose.MOVEP(
