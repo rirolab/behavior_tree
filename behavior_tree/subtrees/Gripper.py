@@ -17,11 +17,12 @@ class GOTO(Move.MOVE):
     command to the robot if it is cancelled or interrupted by a higher
     priority behaviour.
     """
-    def __init__(self, name, action_client, action_goal=None,
-                     force=1., check_contact=False, timeout=5):
+    def __init__(self, name, action_client, action_goal=None, force=1., check_contact=False, timeout=5, robot_name=None):
         super(GOTO, self).__init__(name=name,
                                    action_client=action_client,
-                                   action_goal=action_goal)
+                                   action_goal=action_goal,
+                                   robot_name=robot_name,
+                                   goal_channel="gripper")
 
         self.force         = force
         self.check_contact = check_contact
@@ -42,6 +43,7 @@ class GOTO(Move.MOVE):
             cmd_str = json.dumps({'action_type': 'gripperGotoPos',
                                   'goal': self.action_goal,
                                   'uuid': self.goal_uuid_des.tolist(),
+                                  'goal_channel': self.goal_channel,
                                   'force': self.force,
                                   'check_contact': self.check_contact,
                                   'timeout': self.timeout,
@@ -53,11 +55,11 @@ class GOTO(Move.MOVE):
             self.feedback_message = "Sending a gripper goal"
             return py_trees.common.Status.RUNNING
 
-        if self.blackboard.goal_id is None:
+        if self.current_goal_id() is None:
             return py_trees.common.Status.RUNNING
             
-        if (self.goal_uuid_des == self.blackboard.goal_id).all() and \
-           self.blackboard.goal_status in [
+        if self.goal_matches_blackboard() and \
+           self.current_goal_status() in [
                                 GoalStatus.STATUS_UNKNOWN,
                                 ]:
             self.feedback_message = "FAILURE"
@@ -68,8 +70,8 @@ class GOTO(Move.MOVE):
                                   self.feedback_message))
             return py_trees.common.Status.FAILURE
 
-        if (self.goal_uuid_des == self.blackboard.goal_id).all() and \
-           self.blackboard.goal_status in [GoalStatus.STATUS_ABORTED,
+        if self.goal_matches_blackboard() and \
+           self.current_goal_status() in [GoalStatus.STATUS_ABORTED,
                                                GoalStatus.STATUS_SUCCEEDED,
                                                GoalStatus.STATUS_CANCELING,
                                                GoalStatus.STATUS_CANCELED]:

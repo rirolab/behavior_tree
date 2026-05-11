@@ -17,10 +17,12 @@ class MOVEJ(Move.MOVE):
     command to the robot if it is cancelled or interrupted by a higher
     priority behaviour.
     """
-    def __init__(self, name, action_client, action_goal=None):
+    def __init__(self, name, action_client, action_goal=None, timeout=3.0, robot_name=None):
         super(MOVEJ, self).__init__(name=name,
                                    action_client=action_client,
-                                   action_goal=action_goal)
+                                   action_goal=action_goal,
+                                   timeout=timeout,
+                                   robot_name=robot_name)
         self.logger.debug("%s.__init__()" % self.__class__.__name__)
 
     def update(self):
@@ -42,7 +44,7 @@ class MOVEJ(Move.MOVE):
             cmd_str = json.dumps({'action_type': 'moveJoint',
                                   'goal': json.dumps(goal),
                                   'uuid': self.goal_uuid_des.tolist(),
-                                  'timeout': 3.,
+                                  'timeout': self.timeout,
                                   'enable_wait': False})
             req = StringGoalStatus.Request(data=cmd_str)
             self.future = self.cmd_req.call_async(req)
@@ -53,11 +55,11 @@ class MOVEJ(Move.MOVE):
 
         self.feedback_message = "running"
 
-        if self.blackboard.goal_id is None:
+        if self.current_goal_id() is None:
             return py_trees.common.Status.RUNNING
         
-        if (self.goal_uuid_des == self.blackboard.goal_id).all() and \
-           self.blackboard.goal_status in [GoalStatus.STATUS_ABORTED,
+        if self.goal_matches_blackboard() and \
+           self.current_goal_status() in [GoalStatus.STATUS_ABORTED,
                                 GoalStatus.STATUS_UNKNOWN,
                                 GoalStatus.STATUS_CANCELING,
                                 GoalStatus.STATUS_CANCELED]:
@@ -69,8 +71,8 @@ class MOVEJ(Move.MOVE):
                                   self.feedback_message))
             return py_trees.common.Status.FAILURE
 
-        if (self.goal_uuid_des == self.blackboard.goal_id).all() and \
-           self.blackboard.goal_status is GoalStatus.STATUS_SUCCEEDED:
+        if self.goal_matches_blackboard() and \
+           self.current_goal_status() is GoalStatus.STATUS_SUCCEEDED:
             self.feedback_message = "SUCCESSFUL"
             self.logger.debug("%s.update()[%s->%s][%s]" % \
                                   (self.__class__.__name__, \
@@ -94,10 +96,11 @@ class MOVEJR(Move.MOVE):
     priority behaviour.
     """
 
-    def __init__(self, name, action_client, action_goal=None):
-        super(MOVEA, self).__init__(name=name,
+    def __init__(self, name, action_client, action_goal=None, robot_name=None):
+        super(MOVEJR, self).__init__(name=name,
                                    action_client=action_client,
-                                   action_goal=action_goal)
+                                   action_goal=action_goal,
+                                   robot_name=robot_name)
 
     def update(self):
         self.logger.debug("%s.update()" % self.__class__.__name__)
@@ -126,11 +129,11 @@ class MOVEJR(Move.MOVE):
             self.feedback_message = "Sending a joint goal"
             return py_trees.common.Status.RUNNING
 
-        if self.blackboard.goal_id is None:
+        if self.current_goal_id() is None:
             return py_trees.common.Status.RUNNING
             
-        if (self.goal_uuid_des == self.blackboard.goal_id).all() and \
-           self.blackboard.goal_status in [GoalStatus.STATUS_ABORTED,
+        if self.goal_matches_blackboard() and \
+           self.current_goal_status() in [GoalStatus.STATUS_ABORTED,
                                 GoalStatus.STATUS_UNKNOWN,
                                 GoalStatus.STATUS_CANCELING,
                                 GoalStatus.STATUS_CANCELED]:
@@ -142,8 +145,8 @@ class MOVEJR(Move.MOVE):
                                   self.feedback_message))
             return py_trees.common.Status.FAILURE
 
-        if (self.goal_uuid_des == self.blackboard.goal_id).all() and \
-           self.blackboard.goal_status is GoalStatus.STATUS_SUCCEEDED:
+        if self.goal_matches_blackboard() and \
+           self.current_goal_status() is GoalStatus.STATUS_SUCCEEDED:
             self.feedback_message = "SUCCESSFUL"
             self.logger.debug("%s.update()[%s->%s][%s]" % \
                                   (self.__class__.__name__, \
@@ -154,4 +157,3 @@ class MOVEJR(Move.MOVE):
         else:
             return py_trees.common.Status.RUNNING
                 
-

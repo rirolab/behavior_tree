@@ -8,7 +8,12 @@ package_name = 'behavior_tree'
 setup(
     name=package_name,
     version='0.0.1',
-    packages=[package_name],
+    packages=[
+        package_name,
+        package_name + '.jobs',
+        package_name + '.subtrees',
+        package_name + '.utils',
+    ],
     data_files=[
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
@@ -24,7 +29,7 @@ setup(
         'console_scripts': [
             'static_bt = behavior_tree.static_behavior_tree:main',
             'dynamic_bt = behavior_tree.dynamic_behavior_tree:main',
+            'multi_dynamic_bt = behavior_tree.multi_dynamic_behavior_tree:main',
             ],
     },
 )
-

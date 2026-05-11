@@ -69,8 +69,7 @@ class ROSBAG(py_trees.behaviour.Behaviour):
         ##     return py_trees.Status.FAILURE
 
         if not self.sent_goal:
-            cmd_str = '/opt/ros/kinetic/lib/rosbag/record -o {} {}'.format(self.filename,
-                                                             self.topic_list)
+            cmd_str = f"/opt/ros/kinetic/lib/rosbag/record -o {self.filename} {self.topic_list}"
             self.collector = subprocess.Popen(cmd_str, shell=True, stdin=subprocess.PIPE)
             
             self.sent_goal = True
@@ -106,7 +105,7 @@ class ROSBAG(py_trees.behaviour.Behaviour):
     
 
     def terminate(self, new_status):
-        print self.collector
+        print(self.collector)
         if self.collector is not None:
             terminate_process_and_children(self.collector)
         return

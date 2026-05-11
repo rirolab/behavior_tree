@@ -1,0 +1,28 @@
+tree:
+  ros__parameters:
+    sim: True
+    robot: ["left_arm", "right_arm"]
+    pose_srv_channel: "/get_object_pose"
+    grasp_pose_srv_channel: "/get_object_grasp_pose"
+    height_srv_channel: "/get_object_height"
+    rnd_pose_srv_channel: "/get_object_rnd_pose"
+    close_pose_srv_channel: "/get_object_close_pose"
+    world_frame: "world"
+    left_arm:
+      gripper_open_pos: 0.0
+      gripper_close_pos: 0.8
+      gripper_open_force: 0.1
+      gripper_close_force: 0.001
+      init_config: [0.0, 0.0, 0.0, -1.5, 0.0, 1.5, 0.0]
+      arm_base_frame: "left_arm_base_link"
+      grasp_offset_z: 0.02
+      top_offset_z: 0.15
+    right_arm:
+      gripper_open_pos: 0.0
+      gripper_close_pos: 0.8
+      gripper_open_force: 0.1
+      gripper_close_force: 0.001
+      init_config: [0.0, 0.0, 0.0, -1.5, 0.0, 1.5, 0.0]
+      arm_base_frame: "right_arm_base_link"
+      grasp_offset_z: 0.02
+      top_offset_z: 0.15
