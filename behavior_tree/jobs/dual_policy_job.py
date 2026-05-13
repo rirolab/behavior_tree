@@ -101,6 +101,7 @@ class Move(base_job.BaseJob):
         elif not isinstance(robot_specific_goal, dict):
             return None
 
+        # Make robot-specific goal
         robot_goal = copy.deepcopy(step)
         for grounded_robot_name in robot_names:
             if grounded_robot_name in robot_goal:

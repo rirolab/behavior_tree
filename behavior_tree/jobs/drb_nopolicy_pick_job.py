@@ -148,6 +148,11 @@ class Move(base_job.BaseJob):
             console.logerror("Pick: No pick object")
             sys.exit()
 
+        init_joints = MoveJoint.MOVEJ(name="InitJoints", action_client=action_client,
+            action_goal=blackboard.init_config,
+            robot_name=robot_name,
+            timeout=MOVE_TIME
+        )
         pose_est1 = WorldModel.POSE_ESTIMATOR(
             name="Plan" + idx,
             object_dict={'target': obj},
@@ -192,7 +197,7 @@ class Move(base_job.BaseJob):
             },
             timeout=5.0,
         )
-        root.add_children([pose_est1, s_init1, s_move1, s_scene_cmd1, s_move2, s_scene_cmd2])
+        root.add_children([init_joints, pose_est1, s_init1, s_move1, s_scene_cmd1, s_move2, s_scene_cmd2])
         return root
 
     
