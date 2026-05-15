@@ -390,22 +390,35 @@ class SplinteredReality(Node):
     def tick_tock(self):
         self.tree.tick_tock(500)
 
-    def run(self):
+    def run(self, tick_hz=10.0):
+        """
+        Run the tree loop at the requested tick rate.
+
+        Args:
+            tick_hz (:obj:`float`): desired tree tick rate in Hz.
+        """
+        # Reject invalid tick rates before entering the loop.
+        if tick_hz <= 0.0:
+            raise ValueError(f"tick_hz must be positive, got {tick_hz}")
+
         number_of_iterations=py_trees.trees.CONTINUOUS_TICK_TOCK,
         self.tree.tick_tock_count = 0
-        
+
+        # Convert the requested frequency into one tick period.
+        tick_period = rclpy.duration.Duration(nanoseconds=int(1e9 / tick_hz))
+
+        # Tick the tree while continuing to spin ROS callbacks.
         start_time = self.get_clock().now()
         while rclpy.ok():
-
             rclpy.spin_once(self, timeout_sec=0)
             # Handlers are already registered on the tree; avoid calling them twice.
             self.tree.tick()
             #self.tree.tick_tock_count += 1
-            
-            # rate.sleep sleeps forever. So manually implemented..
+
+            # Wait for next tick deadline while keeping callback processing alive.
             while rclpy.ok():
                 time_now = self.get_clock().now()
-                if time_now - start_time > rclpy.duration.Duration(nanoseconds=5e+8):
+                if time_now - start_time > tick_period:
                     start_time = time_now
                     break
                 rclpy.spin_once(self, timeout_sec=0)
@@ -453,7 +466,8 @@ def main(args=None):
         sys.exit(1)
 
 
-    splintered_reality.run()
+    # Run the tree with the requested tick rate.
+    splintered_reality.run(tick_hz=args.tick_hz)
     ## splintered_reality.tick_tock()
     ## #console.loginfo(f"{splintered_reality.tree.count}")
 
@@ -475,6 +489,9 @@ def get_args(sysargv=None):
                  help='use visualization code for rviz')
     p.add_argument('--rec_topics', action='store', dest='topic_json',
                  default=None, help='a list of topic to record')
+    # Allow callers to override the tree tick rate from the CLI.
+    p.add_argument('--tick_hz', '--tick-hz', action='store', type=float, dest='tick_hz',
+                 default=2.0, help='behavior tree tick rate in Hz')
     argv = sysargv[1:] if sysargv is not None else sys.argv[1:]
     args = p.parse_known_args(argv)
     return args

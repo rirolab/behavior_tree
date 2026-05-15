@@ -4,7 +4,8 @@ import py_trees
 import std_msgs.msg as std_msgs
 
 from . import base_job
-from behavior_tree.subtrees import MoveParallel, MovePose, RingWorldModel, MoveJoint, Gripper
+from behavior_tree.subtrees import MoveParallel, MovePose, RingWorldModel, MoveJoint, Gripper, Wait
+from behavior_tree.subtrees import IsaacSceneCommand
 from behavior_tree.utils.parameter_utils import make_string_list
 from behavior_tree.utils.validation_utils import StepValidationResult
 
@@ -192,6 +193,11 @@ class Move(base_job.BaseJob):
             timeout=MOVE_TIME,
             robot_name=approach_robot,
         )
+        move_approach_wait = Wait.WAIT(
+            name="WaitAfterClose",
+            duration=1.5,
+            robot_name=approach_robot,
+        )
         move_approach_close = Gripper.GOTO(
             name="ApproachRobotGripperClose",
             action_client=action_clients[approach_robot],
@@ -200,7 +206,16 @@ class Move(base_job.BaseJob):
             timeout=GRIPPER_TIME,
             robot_name=approach_robot
         )
-        move_approach_seq.add_children([move_approach_right_parallel, move_approach, move_approach_close])
+        freeze_approach_finger = IsaacSceneCommand.ISAAC_SCENE_COMMAND(
+            name="FreezeFingerJoint",
+            command={
+                "action_type": "freezeFingerJoint",
+                "arm": approach_robot,
+                "enabled": True
+            },
+            timeout=5.0,
+        )
+        move_approach_seq.add_children([move_approach_right_parallel, move_approach, move_approach_wait, move_approach_close, freeze_approach_finger])
 
         # Move both arms to their horizontal grasp top poses in parallel with waypoints
         move_horizontal_wp = MoveParallel.MoveParallel(name="HorizontalGraspTopWP")
@@ -229,7 +244,28 @@ class Move(base_job.BaseJob):
         )
         move_horizontal_wp.add_children([move_horizontal_right_wp_seq, move_horizontal_left])
 
-        # Open together
+        # Open together        
+        open_together_seq = py_trees.composites.Sequence(name="MoveHorizontalGraspTopRightWPSeq", memory=True)
+        unfreeze_fingers = MoveParallel.MoveParallel(name="OpenTogether")
+        unfreeze_finger_left = IsaacSceneCommand.ISAAC_SCENE_COMMAND(
+            name="UnfreezeFingerJointLeft",
+            command={
+                "action_type": "freezeFingerJoint",
+                "arm": left_robot,
+                "enabled": False
+            },
+            timeout=5.0,
+        )
+        unfreeze_finger_right = IsaacSceneCommand.ISAAC_SCENE_COMMAND(
+            name="UnfreezeFingerJointRight",
+            command={
+                "action_type": "freezeFingerJoint",
+                "arm": right_robot,
+                "enabled": False
+            },
+            timeout=5.0,
+        )
+        unfreeze_fingers.add_children([unfreeze_finger_left, unfreeze_finger_right])
         open_together = MoveParallel.MoveParallel(name="OpenTogether")
         open_together_right = Gripper.GOTO(
             name="OpenTogetherRight",
@@ -248,6 +284,7 @@ class Move(base_job.BaseJob):
             robot_name=left_robot
         )
         open_together.add_children([open_together_right, open_together_left])
+        open_together_seq.add_children([unfreeze_fingers, open_together])
 
         # Execute pose estimation first, then the two MoveP actions, then the
         # horizontal top grasp MoveP actions in parallel.
@@ -256,6 +293,5 @@ class Move(base_job.BaseJob):
         root.add_children([pose_estimator, 
                            move_approach_seq,
                            move_horizontal_wp, 
-                        #    move_horizontal,
-                           open_together])
+                           open_together_seq])
         return root

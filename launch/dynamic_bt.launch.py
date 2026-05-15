@@ -38,18 +38,27 @@ def generate_launch_description():
         params_file=os.path.join(
             bt_dir, 'params', 'real_default.yaml')
 
+    # Expose the tree tick rate to the launched executable.
+    tick_hz = LaunchConfiguration('tick_hz')
+    tick_hz_arg = DeclareLaunchArgument(
+        'tick_hz',
+        default_value='2.0',
+        description='Behavior tree tick rate in Hz',
+    )
+
     bt_node = Node(
         name="tree",
         package='behavior_tree',
         executable='dynamic_bt',
         output='screen',
         emulate_tty=True,
-        arguments=[],
+        arguments=['--tick_hz', tick_hz],
         parameters=[params_file]
         )
     
     # ***** RETURN LAUNCH DESCRIPTION ***** #
     return LaunchDescription([
+        tick_hz_arg,
         bt_node, 
     ])
 
@@ -87,4 +96,3 @@ def generate_launch_description():
 ##         required="true" />
       
 ## </launch>
-

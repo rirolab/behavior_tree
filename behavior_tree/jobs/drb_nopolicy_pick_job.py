@@ -167,34 +167,38 @@ class Move(base_job.BaseJob):
             robot_name=robot_name,
             timeout=MOVE_TIME,
         )
-        s_move1 = Gripper.GOTO(name="Open",
-                                action_client=action_client,
-                                action_goal=blackboard.gripper_open_pos,
-                                force=blackboard.gripper_open_force,
-                                timeout=GRIPPER_TIME,
-                                robot_name=robot_name)
+        s_move1 = Gripper.GOTO(
+            name="Open",
+            action_client=action_client,
+            action_goal=blackboard.gripper_open_pos,
+            force=blackboard.gripper_open_force,
+            timeout=GRIPPER_TIME,
+            robot_name=robot_name
+        )
         s_scene_cmd1 = IsaacSceneCommand.ISAAC_SCENE_COMMAND(
             name="TeleportActiveRingRigidToPickPose",
             command={
                 "action_type": "teleportActiveRingRigid",
                 "target_frame": "ring_stack_anchor_grasp_top",
-                "offset_xyz": [0.0, 0.0, 0.0],
+                "offset_xyz": [0.0, 0.01, 0.0],
                 "local_axis": "x",
                 "angle_deg": 90.0,
             },
             timeout=5.0,
         )
-        s_move2 = Gripper.GOTO(name="Close",
-                                action_client=action_client,
-                                action_goal=blackboard.gripper_close_pos,
-                                force=blackboard.gripper_close_force,
-                                timeout=GRIPPER_TIME,
-                                robot_name=robot_name)
-        s_wait = Wait.WAIT(
-            name="WaitAfterClose",
-            duration=1.0,
-            robot_name=robot_name,
+        s_move2 = Gripper.GOTO(
+            name="Close",
+            action_client=action_client,
+            action_goal=blackboard.gripper_close_pos,
+            force=blackboard.gripper_close_force,
+            timeout=GRIPPER_TIME,
+            robot_name=robot_name
         )
+        # s_wait = Wait.WAIT(
+        #     name="WaitAfterClose",
+        #     duration=1.0,
+        #     robot_name=robot_name,
+        # )
         s_scene_cmd2 = IsaacSceneCommand.ISAAC_SCENE_COMMAND(
             name="EnableActiveRingGravityAndDeformable",
             command={
@@ -202,7 +206,27 @@ class Move(base_job.BaseJob):
             },
             timeout=5.0,
         )
-        root.add_children([init_joints, pose_est1, s_init1, s_move1, s_scene_cmd1, s_move2, s_wait, s_scene_cmd2])
+        s_scene_cmd3 = IsaacSceneCommand.ISAAC_SCENE_COMMAND(
+            name="FreezeFingerJoint",
+            command={
+                "action_type": "freezeFingerJoint",
+                "arm": robot_name,
+                "enabled": True
+            },
+            timeout=5.0,
+        )
+        root.add_children(
+            [
+                init_joints, 
+                pose_est1, 
+                s_init1, 
+                s_move1, 
+                s_scene_cmd1, 
+                s_move2, 
+                s_scene_cmd2,
+                s_scene_cmd3
+            ]
+        )
         return root
 
     

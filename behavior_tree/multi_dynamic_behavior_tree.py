@@ -640,7 +640,8 @@ def main(args=None):
         console.logerror("failed to setup the tree, aborting.")
         sys.exit(1)
 
-    splintered_reality.run()
+    # Run the tree with the requested tick rate.
+    splintered_reality.run(tick_hz=args.tick_hz)
     splintered_reality.shutdown()
     rclpy.try_shutdown()
 
