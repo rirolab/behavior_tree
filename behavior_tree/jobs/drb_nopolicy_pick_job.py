@@ -18,6 +18,7 @@ from behavior_tree.subtrees import (
     Policy,
     WorldModel,
     RingWorldModel,
+    Wait
 )
 
 
@@ -172,7 +173,6 @@ class Move(base_job.BaseJob):
                                 force=blackboard.gripper_open_force,
                                 timeout=GRIPPER_TIME,
                                 robot_name=robot_name)
-
         s_scene_cmd1 = IsaacSceneCommand.ISAAC_SCENE_COMMAND(
             name="TeleportActiveRingRigidToPickPose",
             command={
@@ -190,6 +190,11 @@ class Move(base_job.BaseJob):
                                 force=blackboard.gripper_close_force,
                                 timeout=GRIPPER_TIME,
                                 robot_name=robot_name)
+        s_wait = Wait.WAIT(
+            name="WaitAfterClose",
+            duration=1.0,
+            robot_name=robot_name,
+        )
         s_scene_cmd2 = IsaacSceneCommand.ISAAC_SCENE_COMMAND(
             name="EnableActiveRingGravityAndDeformable",
             command={
@@ -197,7 +202,7 @@ class Move(base_job.BaseJob):
             },
             timeout=5.0,
         )
-        root.add_children([init_joints, pose_est1, s_init1, s_move1, s_scene_cmd1, s_move2, s_scene_cmd2])
+        root.add_children([init_joints, pose_est1, s_init1, s_move1, s_scene_cmd1, s_move2, s_wait, s_scene_cmd2])
         return root
 
     

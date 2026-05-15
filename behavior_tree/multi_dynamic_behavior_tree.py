@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import copy
 import importlib
 import operator
 import sys
@@ -19,7 +20,7 @@ from riro_srvs.srv import StringGoalStatus
 
 from behavior_tree import decorators
 from behavior_tree.dynamic_behavior_tree import SplinteredReality, get_args, load_topic_list
-from behavior_tree.subtrees import Grnd2Blackboard
+from behavior_tree.subtrees import Grnd2Blackboard, PolicyPreload
 from behavior_tree.utils.parameter_utils import make_string_list
 from behavior_tree.utils.validation_utils import StepValidationResult
 
@@ -109,6 +110,8 @@ class MultiSplinteredReality(SplinteredReality):
             "rnd_pose_srv_channel": "/get_object_rnd_pose",
             "close_pose_srv_channel": "/get_object_close_pose",
             "world_frame": "world",
+            "policy_preload_enabled": True,
+            "policy_preload_timeout_sec": 60.0,
         }
         for name, value in defaults.items():
             if not self.has_parameter(name):
@@ -126,8 +129,10 @@ class MultiSplinteredReality(SplinteredReality):
         self.blackboard = py_trees.blackboard.Client()
         self.blackboard.register_key(key="edges", access=py_trees.common.Access.WRITE)
         self.blackboard.register_key(key="stop_cmd", access=py_trees.common.Access.WRITE)
+        self.blackboard.register_key(key="preloaded_policies", access=py_trees.common.Access.WRITE)
         self.blackboard.edges = None
         self.blackboard.stop_cmd = False
+        self.blackboard.preloaded_policies = []
 
         self.tree = py_trees_ros.trees.BehaviourTree(
             root=create_root(self.robot_names),
@@ -208,9 +213,18 @@ class MultiSplinteredReality(SplinteredReality):
                     job.goal = None
                 return
 
+            # Read whether policy preload branches should be attached for this task.
+            policy_preload_enabled = bool(self.get_parameter("policy_preload_enabled").value)
+
+            # Collect policy preload requests only when preload mode is enabled.
+            policy_requests = []
+            if policy_preload_enabled:
+                policy_requests = self.collect_policy_preload_requests(goal)
+            self.blackboard.preloaded_policies = []
+            policy_timeout_sec = float(self.get_parameter("policy_preload_timeout_sec").value)
+
             # Build the cancel branch that lets an incoming stop command preempt the task.
-            cancel_seq = py_trees.composites.Sequence(name="Cancel", memory=True)
-            is_stop_requested = py_trees.behaviours.CheckBlackboardVariableValue(
+            stop_cmd = py_trees.behaviours.CheckBlackboardVariableValue(
                 name="Stop?",
                 check=py_trees.common.ComparisonExpression(
                     variable="stop_cmd",
@@ -218,20 +232,41 @@ class MultiSplinteredReality(SplinteredReality):
                     operator=operator.eq,
                 ),
             )
-            cancel_seq.add_child(is_stop_requested)
-            task_list = []
+            cancel_seq = py_trees.composites.Sequence(name="Cancel", memory=True)
+            cancel_seq.add_child(stop_cmd)
+            if policy_preload_enabled and policy_requests:
+                # Build the cancel-time unload behaviour directly under the failure wrapper.
+                cancel_seq.add_child(
+                    py_trees.decorators.FailureIsSuccess(
+                        name="IgnoreUnloadFailureOnCancel",
+                        child=PolicyPreload.UNLOAD_POLICY_BATCH(
+                            name="unloadPolicy",
+                            action_clients=self.action_clients,
+                            timeout=policy_timeout_sec,
+                        ),
+                    )
+                )
 
             # Convert each step into one behaviour subtree.
+            task_list = []
+            
             for idx in range(len(goal)):
                 step_idx = str(idx + 1)
                 step = goal.get(step_idx)
 
+                # Mark policy goals before subtree creation so execution requests reuse the same step id.
+                if step.get("primitive_action") == "policy_execute" or \
+                step.get("implementation") == "policy":
+                    step["step_idx"] = step_idx
+
+                # Read the robot selection for this grounding step.
                 requested_robot_names = make_string_list(step.get("robot"))
 
                 # A missing robot field -> assign the one robot.
                 if not requested_robot_names and len(self.robot_names) == 1:
                     requested_robot_names = [self.robot_names[0]]
 
+                # Try each registered job until one builds the step subtree.
                 job_root = None
                 for job in self.jobs:
                     # Reject the step if this job does not own the goal.
@@ -283,12 +318,35 @@ class MultiSplinteredReality(SplinteredReality):
 
                 # Reject the entire goal if no job can actually build the step subtree.
                 if job_root is None:
-                    console.logwarn(
-                        f"{step_idx}: pre_tick_handler rejected goal because no job built a subtree"
-                    )
+                    console.logwarn(f"{step_idx}: pre_tick_handler rejected goal because no job built a subtree")
                     for job in self.jobs:
                         job.goal = None
                     return
+
+            # Insert policy preload/unload subtrees around the original task steps.
+            if policy_preload_enabled and policy_requests:
+                # Insert the preload behaviour directly before the task steps.
+                task_list.insert(
+                    0,
+                    PolicyPreload.LOAD_POLICY_BATCH(
+                        name="loadPolicy",
+                        action_clients=self.action_clients,
+                        policy_requests=policy_requests,
+                        timeout=policy_timeout_sec,
+                    ),
+                )
+
+                # Append the unload behaviour directly after the task steps.
+                task_list.append(
+                    py_trees.decorators.FailureIsSuccess(
+                        name="IgnoreUnloadFailureOnEnd",
+                        child=PolicyPreload.UNLOAD_POLICY_BATCH(
+                            name="unloadPolicy",
+                            action_clients=self.action_clients,
+                            timeout=policy_timeout_sec,
+                        ),
+                    )
+                )
 
             # Chain all accepted step subtrees into one task sequence.
             task = py_trees.composites.Sequence(name="Task", memory=True)
@@ -309,6 +367,8 @@ class MultiSplinteredReality(SplinteredReality):
                     enable_inf_loop=self.enable_inf_loop,
                     timeout=self.loop_timeout,
                 )
+
+                # Keep the original selector structure when loop mode is enabled.
                 run_or_cancel = py_trees.composites.Selector(
                     name="Run or Cancel?",
                     memory=False,
@@ -428,6 +488,124 @@ class MultiSplinteredReality(SplinteredReality):
                 return False
 
         return True
+    
+    def collect_policy_preload_requests(self, goal):
+        """
+        Extract all robot-specific policy goals that should be preloaded.
+
+        Args:
+            goal (:obj:`dict`): full grounding plan stored by a job.
+
+        Returns:
+            [(:obj:`str`, :obj:`dict`)]: list of ``(robot_name, robot_goal)`` preload requests.
+        """
+        requests = []
+        seen_policy_configs = set()
+
+        for idx in range(len(goal)):
+            # Read one grounding step from the ordered goal payload.
+            step_idx = str(idx + 1)
+            step = goal.get(step_idx)
+            if step is None:
+                continue
+
+            # Check only policy-related steps.
+            if (
+                step.get("primitive_action") != "policy_execute"
+                and step.get("implementation") != "policy"
+            ):
+                continue
+
+            # Resolve requested robots, with the single-robot fallback.
+            requested_robot_names = make_string_list(step.get("robot"))
+            if not requested_robot_names and len(self.robot_names) == 1:
+                requested_robot_names = [self.robot_names[0]]
+
+            # Split a shared multi-robot policy step into one per-robot preload request.
+            if step.get("primitive_action") == "policy_execute" and len(requested_robot_names) > 1:
+                for robot_name in requested_robot_names:
+                    robot_specific_goal = step.get(robot_name, {}) or {}
+
+                    robot_goal = copy.deepcopy(step)
+                    for grounded_robot_name in requested_robot_names:
+                        robot_goal.pop(grounded_robot_name, None)
+                    robot_goal.update(copy.deepcopy(robot_specific_goal))
+                    robot_goal["step_idx"] = step_idx
+                    robot_goal["robot"] = robot_name
+
+                    # Deduplicate requests per robot and dumped policy config.
+                    request_key = (robot_name, PolicyPreload.dump_policy_config(robot_goal))
+                    if request_key not in seen_policy_configs:
+                        seen_policy_configs.add(request_key)
+                        requests.append((robot_name, robot_goal))
+                continue
+            
+            else:
+                # Build the single-robot preload request directly from the step payload.
+                robot_name = requested_robot_names[0]
+                robot_goal = copy.deepcopy(step)
+                robot_goal["step_idx"] = step_idx
+                robot_goal["robot"] = robot_name
+
+            # Deduplicate requests per robot and dumped policy config.
+            request_key = (robot_name, PolicyPreload.dump_policy_config(robot_goal))
+            if request_key not in seen_policy_configs:
+                seen_policy_configs.add(request_key)
+                requests.append((robot_name, robot_goal))
+
+        return requests
+
+    def post_tick_handler(self, tree):
+        """
+        Run terminal policy cleanup if needed, then prune the finished task subtree.
+
+        Args:
+            tree (:class:`~py_trees.trees.BehaviourTree`): tree to investigate/manipulate.
+        """
+        if self.busy():
+            # The running job subtree sits just before the trailing Idle child.
+            job = self.priorities.children[-2]
+
+            # Run terminal cleanup only after the inserted job subtree has finished.
+            if job.status in [
+                py_trees.common.Status.SUCCESS,
+                py_trees.common.Status.FAILURE,
+                py_trees.common.Status.INVALID,
+            ]:
+                if self.blackboard.preloaded_policies:
+                    # Build a one-off unload subtree for policies left over after task termination.
+                    cleanup_subtree = py_trees.decorators.FailureIsSuccess(
+                        name="IgnoreUnloadFailurePostTick",
+                        child=PolicyPreload.UNLOAD_POLICY_BATCH(
+                            name="unloadPolicy",
+                            action_clients=self.action_clients,
+                            timeout=float(self.get_parameter("policy_preload_timeout_sec").value),
+                        ),
+                    )
+                    try:
+                        # Tick the cleanup subtree locally until it reaches a terminal state.
+                        py_trees.trees.setup(root=cleanup_subtree, node=self)
+                        while rclpy.ok():
+                            cleanup_subtree.tick_once()
+                            if cleanup_subtree.status in [
+                                py_trees.common.Status.SUCCESS,
+                                py_trees.common.Status.FAILURE,
+                                py_trees.common.Status.INVALID,
+                            ]:
+                                break
+                            rclpy.spin_once(self, timeout_sec=0.05)
+                    except RuntimeError as error:
+                        console.logerror(f"post_tick_handler unload setup failed: {error}")
+                    except Exception as error:
+                        console.logerror(f"post_tick_handler unload failed: {error}")
+
+                # Clear the shared cache before pruning to avoid stale policy state.
+                self.blackboard.preloaded_policies = []
+
+                # Remove the finished job subtree once cleanup has completed.
+                console.loginfo(f"{job.name}: post_tick_handler finished [{job.status}]")
+                tree.prune_subtree(job.id)
+                self.current_job = None
 
 
 def main(args=None):

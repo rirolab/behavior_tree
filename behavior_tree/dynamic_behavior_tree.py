@@ -398,7 +398,8 @@ class SplinteredReality(Node):
         while rclpy.ok():
 
             rclpy.spin_once(self, timeout_sec=0)
-            self.tree.tick(self.pre_tick_handler, self.post_tick_handler)
+            # Handlers are already registered on the tree; avoid calling them twice.
+            self.tree.tick()
             #self.tree.tick_tock_count += 1
             
             # rate.sleep sleeps forever. So manually implemented..
