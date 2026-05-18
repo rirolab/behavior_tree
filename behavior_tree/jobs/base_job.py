@@ -145,6 +145,82 @@ class BaseJob(object):
         """
         return False
 
+    def make_robot_specific_goal(self, step, robot_name, step_idx=None):
+        """
+        Build one robot-specific goal from a shared grounding step.
+
+        Args:
+            step (:obj:`dict`): one grounding step from the incoming goal.
+            robot_name (:obj:`str`): robot whose block should be merged.
+            step_idx (:obj:`str`): optional step index for policy execution.
+
+        Returns:
+            :obj:`dict`: merged robot-specific goal, or :obj:`None` if malformed.
+        """
+        # Read robot-specific override fields when present.
+        grounded_robot_names = make_string_list(step.get("robot", []))
+        robot_specific_goal = step.get(robot_name, {})
+        if robot_specific_goal is None:
+            robot_specific_goal = {}
+        elif not isinstance(robot_specific_goal, dict):
+            return None
+
+        # Merge shared fields with robot-specific fields.
+        robot_goal = copy.deepcopy(step)
+        for grounded_robot_name in grounded_robot_names:
+            robot_goal.pop(grounded_robot_name, None)
+        robot_goal.update(copy.deepcopy(robot_specific_goal))
+        robot_goal["robot"] = robot_name
+
+        # Preserve step identity when available.
+        resolved_step_idx = step.get("step_idx", step_idx)
+        if resolved_step_idx is not None:
+            robot_goal["step_idx"] = resolved_step_idx
+        return robot_goal
+
+    def make_policy_preload_requests(self, step, step_idx):
+        """
+        Build robot-specific policy preload requests from one step.
+
+        Args:
+            step (:obj:`dict`): one grounding step from the incoming goal.
+            step_idx (:obj:`str`): step index in the grounding plan.
+
+        Returns:
+            [(:obj:`str`, :obj:`dict`)]: robot-specific preload requests.
+        """
+        # Resolve requested robots with single-robot fallback.
+        grounded_robot_names = make_string_list(step.get("robot", []))
+        bt_robot_names = getattr(self._node, "robot_names", [])
+        if not grounded_robot_names and len(bt_robot_names) == 1:
+            grounded_robot_names = [bt_robot_names[0]]
+
+        # Build single-robot policy request directly from top-level fields.
+        if len(grounded_robot_names) <= 1:
+            if (
+                step.get("primitive_action") != "policy_execute"
+                and step.get("implementation") != "policy"
+            ):
+                return []
+            if not grounded_robot_names:
+                return []
+            robot_name = grounded_robot_names[0]
+            robot_goal = copy.deepcopy(step)
+            robot_goal["robot"] = robot_name
+            robot_goal["step_idx"] = step_idx
+            return [(robot_name, robot_goal)]
+
+        # Build requests only for robots that explicitly request policy execution.
+        policy_requests = []
+        for robot_name in grounded_robot_names:
+            robot_goal = self.make_robot_specific_goal(step, robot_name, step_idx)
+            if robot_goal is None:
+                return []
+            if robot_goal.get("implementation") != "policy":
+                continue
+            policy_requests.append((robot_name, robot_goal))
+        return policy_requests
+
     def init_blackboard_parameters(self):
         """
         Write node parameters to the blackboard namespaces used by this job.

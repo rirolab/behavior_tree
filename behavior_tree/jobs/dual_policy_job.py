@@ -1,11 +1,10 @@
-import copy
 import json
 
 import py_trees
 import std_msgs.msg as std_msgs
 
 from . import base_job
-from behavior_tree.subtrees import MoveParallel, Policy
+from behavior_tree.subtrees import MoveParallel, Policy, IsaacSceneCommand
 from behavior_tree.utils.parameter_utils import make_string_list
 from behavior_tree.utils.validation_utils import StepValidationResult
 
@@ -50,13 +49,22 @@ class Move(base_job.BaseJob):
         if not self.acceptable_step(step):
             return StepValidationResult.NOT_APPLICABLE
 
+        # Reject ambiguous shared implementation fields.
+        if "implementation" in step:
+            return StepValidationResult.REJECT_GOAL
+
         robot_names = make_string_list(step.get("robot", []))
         if len(robot_names) != 2 or len(set(robot_names)) != 2:
             return StepValidationResult.REJECT_GOAL
 
+        # Require per-robot policy configuration on both arms.
         for robot_name in robot_names:
-            robot_goal = self.make_robot_goal(step, robot_name)
-            if robot_goal is None or not bool(robot_goal.get("skill_id")):
+            robot_goal = self.make_robot_specific_goal(step, robot_name, step.get("step_idx"))
+            if robot_goal is None:
+                return StepValidationResult.REJECT_GOAL
+            if robot_goal.get("implementation") != "policy":
+                return StepValidationResult.REJECT_GOAL
+            if not bool(robot_goal.get("skill_id")):
                 return StepValidationResult.REJECT_GOAL
 
         return StepValidationResult.ACCEPT_GOAL
@@ -81,35 +89,6 @@ class Move(base_job.BaseJob):
                 if self.acceptable_step(step):
                     self.goal = grounding
                     break
-
-    def make_robot_goal(self, step, robot_name):
-        """
-        Build the per-robot policy goal from one shared multi-robot step.
-
-        Args:
-            step (:obj:`dict`): multi-robot grounding step.
-            robot_name (:obj:`str`): robot to build the goal for.
-
-        Returns:
-            :obj:`dict`: robot-specific goal, or :obj:`None` if malformed.
-        """
-        robot_names = make_string_list(step.get("robot", []))
-        robot_specific_goal = step.get(robot_name, {})
-
-        if robot_specific_goal is None:
-            robot_specific_goal = {}
-        elif not isinstance(robot_specific_goal, dict):
-            return None
-
-        # Make robot-specific goal
-        robot_goal = copy.deepcopy(step)
-        for grounded_robot_name in robot_names:
-            if grounded_robot_name in robot_goal:
-                robot_goal.pop(grounded_robot_name)
-
-        robot_goal.update(copy.deepcopy(robot_specific_goal))
-        robot_goal["robot"] = robot_name
-        return robot_goal
 
     def create_root(
         self,
@@ -140,10 +119,25 @@ class Move(base_job.BaseJob):
         if len(grounded_robot_names) != 2:
             raise RuntimeError("dual_policy_job: expected exactly two robots in the grounding")
 
+        scene_cmd1 = IsaacSceneCommand.ISAAC_SCENE_COMMAND(
+            name="DualSwitchController1",
+            command={
+                "action_type": "setRobotDriveGainProfileAndSwitchController",
+                "robot_drive_gain_profile": "cartesian_impedance_controller",
+                "target_arms": grounded_robot_names,
+            },
+            timeout=10.0,
+        )
+
         run_policy_parallel = MoveParallel.MoveParallel(name="RunPolicyParallel")
+        # Build one policy branch per robot from robot-specific payloads.
         for robot_name in grounded_robot_names:
-            robot_goal = self.make_robot_goal(step, robot_name)
-            if robot_goal is None or not bool(robot_goal.get("skill_id")):
+            robot_goal = self.make_robot_specific_goal(step, robot_name, idx)
+            if robot_goal is None or robot_goal.get("implementation") != "policy":
+                raise RuntimeError(
+                    f"dual_policy_job: missing policy implementation for robot [{robot_name}]"
+                )
+            if not bool(robot_goal.get("skill_id")):
                 raise RuntimeError(
                     f"dual_policy_job: missing valid policy goal for robot [{robot_name}]"
                 )
@@ -157,6 +151,16 @@ class Move(base_job.BaseJob):
             )
             run_policy_parallel.add_child(run_policy)
 
+        scene_cmd2 = IsaacSceneCommand.ISAAC_SCENE_COMMAND(
+            name="DualSwitchController2",
+            command={
+                "action_type": "setRobotDriveGainProfileAndSwitchController",
+                "robot_drive_gain_profile": "joint_trajectory_controller",
+                "target_arms": grounded_robot_names,
+            },
+            timeout=10.0,
+        )
+
         root = py_trees.composites.Sequence(name="DualPolicy", memory=True)
-        root.add_child(run_policy_parallel)
+        root.add_children([scene_cmd1, run_policy_parallel, scene_cmd2])
         return root

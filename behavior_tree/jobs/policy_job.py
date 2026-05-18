@@ -6,7 +6,7 @@ import std_msgs.msg as std_msgs
 
 from . import base_job
 from behavior_tree.utils.validation_utils import StepValidationResult
-from behavior_tree.subtrees import Policy
+from behavior_tree.subtrees import Policy, IsaacSceneCommand
 
 
 class Move(base_job.BaseJob):
@@ -93,6 +93,15 @@ class Move(base_job.BaseJob):
             return None
 
         root = py_trees.composites.Sequence(name="Policy", memory=True)
+        scene_cmd1 = IsaacSceneCommand.ISAAC_SCENE_COMMAND(
+            name="SwitchController1",
+            command={
+                "action_type": "setRobotDriveGainProfileAndSwitchController",
+                "robot_drive_gain_profile": "cartesian_impedance_controller",
+                "target_arms": robot_name,
+            },
+            timeout=10.0,
+        )
         run_policy = Policy.MOVEBYPOLICY(
             name="MoveByPolicy",
             action_client=action_client,
@@ -100,5 +109,14 @@ class Move(base_job.BaseJob):
             timeout=float(goal[idx].get("timeout", 5.0)),
             robot_name=robot_name,
         )
-        root.add_child(run_policy)
+        scene_cmd2 = IsaacSceneCommand.ISAAC_SCENE_COMMAND(
+            name="SwitchController2",
+            command={
+                "action_type": "setRobotDriveGainProfileAndSwitchController",
+                "robot_drive_gain_profile": "cartesian_impedance_controller",
+                "target_arms": robot_name,
+            },
+            timeout=10.0,
+        )
+        root.add_children([scene_cmd1, run_policy, scene_cmd2])
         return root

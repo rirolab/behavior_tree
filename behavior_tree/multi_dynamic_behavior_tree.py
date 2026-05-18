@@ -240,7 +240,7 @@ class MultiSplinteredReality(SplinteredReality):
                     py_trees.decorators.FailureIsSuccess(
                         name="IgnoreUnloadFailureOnCancel",
                         child=PolicyPreload.UNLOAD_POLICY_BATCH(
-                            name="unloadPolicy",
+                            name="UnloadPolicy",
                             action_clients=self.action_clients,
                             timeout=policy_timeout_sec,
                         ),
@@ -329,7 +329,7 @@ class MultiSplinteredReality(SplinteredReality):
                 task_list.insert(
                     0,
                     PolicyPreload.LOAD_POLICY_BATCH(
-                        name="loadPolicy",
+                        name="LoadPolicy",
                         action_clients=self.action_clients,
                         policy_requests=policy_requests,
                         timeout=policy_timeout_sec,
@@ -341,7 +341,7 @@ class MultiSplinteredReality(SplinteredReality):
                     py_trees.decorators.FailureIsSuccess(
                         name="IgnoreUnloadFailureOnEnd",
                         child=PolicyPreload.UNLOAD_POLICY_BATCH(
-                            name="unloadPolicy",
+                            name="UnloadPolicy",
                             action_clients=self.action_clients,
                             timeout=policy_timeout_sec,
                         ),
@@ -509,49 +509,18 @@ class MultiSplinteredReality(SplinteredReality):
             if step is None:
                 continue
 
-            # Check only policy-related steps.
-            if (
-                step.get("primitive_action") != "policy_execute"
-                and step.get("implementation") != "policy"
-            ):
-                continue
+            # Delegate policy extraction to the unique job that owns this step.
+            for job in self.jobs:
+                if job.validate_step(step) != StepValidationResult.ACCEPT_GOAL:
+                    continue
 
-            # Resolve requested robots, with the single-robot fallback.
-            requested_robot_names = make_string_list(step.get("robot"))
-            if not requested_robot_names and len(self.robot_names) == 1:
-                requested_robot_names = [self.robot_names[0]]
-
-            # Split a shared multi-robot policy step into one per-robot preload request.
-            if step.get("primitive_action") == "policy_execute" and len(requested_robot_names) > 1:
-                for robot_name in requested_robot_names:
-                    robot_specific_goal = step.get(robot_name, {}) or {}
-
-                    robot_goal = copy.deepcopy(step)
-                    for grounded_robot_name in requested_robot_names:
-                        robot_goal.pop(grounded_robot_name, None)
-                    robot_goal.update(copy.deepcopy(robot_specific_goal))
-                    robot_goal["step_idx"] = step_idx
-                    robot_goal["robot"] = robot_name
-
-                    # Deduplicate requests per robot and dumped policy config.
+                # Deduplicate requests per robot and dumped policy config.
+                for robot_name, robot_goal in job.make_policy_preload_requests(step, step_idx):
                     request_key = (robot_name, PolicyPreload.dump_policy_config(robot_goal))
                     if request_key not in seen_policy_configs:
                         seen_policy_configs.add(request_key)
                         requests.append((robot_name, robot_goal))
-                continue
-            
-            else:
-                # Build the single-robot preload request directly from the step payload.
-                robot_name = requested_robot_names[0]
-                robot_goal = copy.deepcopy(step)
-                robot_goal["step_idx"] = step_idx
-                robot_goal["robot"] = robot_name
-
-            # Deduplicate requests per robot and dumped policy config.
-            request_key = (robot_name, PolicyPreload.dump_policy_config(robot_goal))
-            if request_key not in seen_policy_configs:
-                seen_policy_configs.add(request_key)
-                requests.append((robot_name, robot_goal))
+                break
 
         return requests
 
@@ -577,7 +546,7 @@ class MultiSplinteredReality(SplinteredReality):
                     cleanup_subtree = py_trees.decorators.FailureIsSuccess(
                         name="IgnoreUnloadFailurePostTick",
                         child=PolicyPreload.UNLOAD_POLICY_BATCH(
-                            name="unloadPolicy",
+                            name="UnloadPolicy",
                             action_clients=self.action_clients,
                             timeout=float(self.get_parameter("policy_preload_timeout_sec").value),
                         ),
@@ -629,6 +598,8 @@ def main(args=None):
             "jobs.place_job.Move",
             "jobs.move_job.Move",
             "jobs.gripper_job.Move",
+            # Register mixed policy-plus-primitive dual-arm test job.
+            "jobs.test_dual_policy_goto_job.Move",
             "jobs.dual_policy_job.Move",
             "jobs.policy_job.Move",
             "jobs.dual_grasp_job.Move",
