@@ -111,7 +111,7 @@ class POSE_ESTIMATOR(WorldModel.POSE_ESTIMATOR):
                     regrasp_target_down_left = copy.deepcopy(regrasp_target_down) 
                     regrasp_target_down_left.position.y += 0.05
                     regrasp_target_down_half_left = copy.deepcopy(regrasp_target_down) 
-                    regrasp_target_down_half_left.position.y += 0.00
+                    regrasp_target_down_half_left.position.y += 0.01
 
                     # Define horizontal grasp top waypoint poses 
                     horizontal_grasp_top_right_wp1 = copy.deepcopy(horizontal_grasp_top_right)
