@@ -113,7 +113,7 @@ class Move(base_job.BaseJob):
             name="SwitchController2",
             command={
                 "action_type": "setRobotDriveGainProfileAndSwitchController",
-                "robot_drive_gain_profile": "cartesian_impedance_controller",
+                "robot_drive_gain_profile": "joint_trajectory_controller",
                 "target_arms": robot_name,
             },
             timeout=10.0,

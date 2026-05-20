@@ -40,7 +40,9 @@ class ISAAC_SCENE_COMMAND(py_trees.behaviour.Behaviour):
         self.sent_goal = False
         self.deadline = None
         self.goal_uuid = None
+        # Track the latest status payload for BT feedback.
         self.result_status = None
+        self.result_message = ""
         self.blackboard = self.attach_blackboard_client(name=self.name)
         if isinstance(command, str):
             self.blackboard.register_key(
@@ -71,7 +73,9 @@ class ISAAC_SCENE_COMMAND(py_trees.behaviour.Behaviour):
         self.sent_goal = False
         self.deadline = time.monotonic() + self.timeout
         self.goal_uuid = [random.randrange(0, 256) for _ in range(16)]
+        # Reset the cached status payload before sending a new command.
         self.result_status = None
+        self.result_message = ""
 
     def update(self):
         """
@@ -101,11 +105,20 @@ class ISAAC_SCENE_COMMAND(py_trees.behaviour.Behaviour):
             self.feedback_message = f"sent scene command {command.get('action_type')}"
             return py_trees.common.Status.RUNNING
 
+        # Surface the command status message in BT feedback when available.
         if self.result_status == "succeeded":
-            self.feedback_message = "scene command succeeded"
+            self.feedback_message = (
+                f"scene command succeeded: {self.result_message}"
+                if self.result_message
+                else "scene command succeeded"
+            )
             return py_trees.common.Status.SUCCESS
         if self.result_status == "aborted":
-            self.feedback_message = "scene command failed"
+            self.feedback_message = (
+                f"scene command failed: {self.result_message}"
+                if self.result_message
+                else "scene command failed"
+            )
             return py_trees.common.Status.FAILURE
 
         if time.monotonic() < self.deadline:
@@ -136,4 +149,6 @@ class ISAAC_SCENE_COMMAND(py_trees.behaviour.Behaviour):
         except json.JSONDecodeError:
             return
         if status.get("uuid") == self.goal_uuid:
+            # Cache the matching status payload for the next BT tick.
             self.result_status = status.get("status")
+            self.result_message = str(status.get("message", "") or "")

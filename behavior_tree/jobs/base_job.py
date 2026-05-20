@@ -195,10 +195,13 @@ class BaseJob(object):
         if not grounded_robot_names and len(bt_robot_names) == 1:
             grounded_robot_names = [bt_robot_names[0]]
 
+        # Detect policy_execute steps once for both single and multi robot paths.
+        is_policy_execute = step.get("primitive_action") == "policy_execute"
+
         # Build single-robot policy request directly from top-level fields.
         if len(grounded_robot_names) <= 1:
             if (
-                step.get("primitive_action") != "policy_execute"
+                not is_policy_execute
                 and step.get("implementation") != "policy"
             ):
                 return []
@@ -210,13 +213,15 @@ class BaseJob(object):
             robot_goal["step_idx"] = step_idx
             return [(robot_name, robot_goal)]
 
-        # Build requests only for robots that explicitly request policy execution.
+        # Build per-robot policy requests for multi-robot steps.
         policy_requests = []
         for robot_name in grounded_robot_names:
+            # Build one robot-specific payload from shared and robot-specific fields.
             robot_goal = self.make_robot_specific_goal(step, robot_name, step_idx)
             if robot_goal is None:
                 return []
-            if robot_goal.get("implementation") != "policy":
+            # Keep implementation filter only for non-policy_execute steps.
+            if not is_policy_execute and robot_goal.get("implementation") != "policy":
                 continue
             policy_requests.append((robot_name, robot_goal))
         return policy_requests

@@ -194,8 +194,8 @@ class Move(base_job.BaseJob):
             robot_name=approach_robot,
         )
         move_approach_wait = Wait.WAIT(
-            name="WaitAfterClose",
-            duration=1.5,
+            name="WaitBeforeClose",
+            duration=5.0,
             robot_name=approach_robot,
         )
         move_approach_close = Gripper.GOTO(

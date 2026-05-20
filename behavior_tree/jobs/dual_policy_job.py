@@ -49,10 +49,6 @@ class Move(base_job.BaseJob):
         if not self.acceptable_step(step):
             return StepValidationResult.NOT_APPLICABLE
 
-        # Reject ambiguous shared implementation fields.
-        if "implementation" in step:
-            return StepValidationResult.REJECT_GOAL
-
         robot_names = make_string_list(step.get("robot", []))
         if len(robot_names) != 2 or len(set(robot_names)) != 2:
             return StepValidationResult.REJECT_GOAL
@@ -61,8 +57,6 @@ class Move(base_job.BaseJob):
         for robot_name in robot_names:
             robot_goal = self.make_robot_specific_goal(step, robot_name, step.get("step_idx"))
             if robot_goal is None:
-                return StepValidationResult.REJECT_GOAL
-            if robot_goal.get("implementation") != "policy":
                 return StepValidationResult.REJECT_GOAL
             if not bool(robot_goal.get("skill_id")):
                 return StepValidationResult.REJECT_GOAL
@@ -133,10 +127,6 @@ class Move(base_job.BaseJob):
         # Build one policy branch per robot from robot-specific payloads.
         for robot_name in grounded_robot_names:
             robot_goal = self.make_robot_specific_goal(step, robot_name, idx)
-            if robot_goal is None or robot_goal.get("implementation") != "policy":
-                raise RuntimeError(
-                    f"dual_policy_job: missing policy implementation for robot [{robot_name}]"
-                )
             if not bool(robot_goal.get("skill_id")):
                 raise RuntimeError(
                     f"dual_policy_job: missing valid policy goal for robot [{robot_name}]"
