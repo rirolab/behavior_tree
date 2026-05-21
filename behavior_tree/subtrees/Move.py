@@ -25,7 +25,6 @@ class MOVE(py_trees.behaviour.Behaviour):
         action_goal=None,
         timeout=1,
         robot_name=None,
-        goal_channel="arm",
     ):
         """
         Initialise a robot action command behaviour.
@@ -36,14 +35,11 @@ class MOVE(py_trees.behaviour.Behaviour):
             action_goal: command payload for the robot action.
             timeout (:obj:`float`): command timeout in seconds.
             robot_name (:obj:`str`): optional robot namespace.
-            goal_channel (:obj:`str`): action status channel, e.g. ``arm`` or
-                ``gripper``.
         """
         super(MOVE, self).__init__(name=name)
 
         self.arm           = None
         self.robot_name    = robot_name
-        self.goal_channel  = goal_channel
         self.action_goal   = action_goal
         self.sent_goal     = False
         self.cmd_req       = action_client
@@ -52,15 +48,18 @@ class MOVE(py_trees.behaviour.Behaviour):
         ## self.goal_status   = None
         self.timeout       = timeout
 
-        # Namespacing lets multi-robot trees keep goal state isolated per arm.
+        # Single-channel cac interface: arm_client publishes ONE goal_status
+        # topic per robot, written to flat blackboard keys "goal_id"/"goal_status".
+        # Namespacing by robot_name keeps multi-robot goal state isolated per arm
+        # (resolves to "{robot}/goal_id" / "{robot}/goal_status").
         self.blackboard = self.attach_blackboard_client(
             name=self.name,
             namespace=self.robot_name,
         )
         ## self.blackboard = py_trees.blackboard.Client()
-        ## self.callback_group = ReentrantCallbackGroup() 
-        self.goal_id_key = f"{self.goal_channel}/goal_id"
-        self.goal_status_key = f"{self.goal_channel}/goal_status"
+        ## self.callback_group = ReentrantCallbackGroup()
+        self.goal_id_key = "goal_id"
+        self.goal_status_key = "goal_status"
         self.blackboard.register_key(
             key=self.goal_id_key,
             access=py_trees.common.Access.READ,
@@ -146,7 +145,6 @@ class MOVE(py_trees.behaviour.Behaviour):
           ]:
             req = StringGoalStatus.Request()
             req.data = json.dumps({'action_type': 'cancel_goal',
-                                   'goal_channel': self.goal_channel,
                                    'enable_wait': True})
             self.future = self.cmd_req.call_async( req )
         self.logger.debug("%s.terminate()[%s->%s]" % (self.__class__.__name__, self.status, new_status))            

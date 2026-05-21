@@ -137,16 +137,24 @@ class Move(base_job.BaseJob):
             sys.exit()
 
         if goal[idx].get("implementation") == "policy":
-            pose_est1 = WorldModel.POSE_ESTIMATOR(
-                name="Plan" + idx,
-                object_dict={'target': obj},
-                tf_buffer=kwargs['tf_buffer'],
+            # Real-deploy: wrap the learned pick policy with joint-space waypoints
+            # (pre_init -> init -> policy -> return) instead of pose-estimated
+            # MoveP approaches, which are unreliable before a learned policy on
+            # the real robot.
+            init_config = blackboard.init_config
+            pre_init_config = self._read_optional_config(robot_name, "pre_init_config")
+            if pre_init_config is None:
+                pre_init_config = init_config
+            s_pre_init = MoveJoint.MOVEJ(
+                name="PreInit",
+                action_client=action_client,
+                action_goal=pre_init_config,
                 robot_name=robot_name,
             )
-            s_init1 = MovePose.MOVEP(
-                name="PickInit",
+            s_init = MoveJoint.MOVEJ(
+                name="Init",
                 action_client=action_client,
-                action_goal={'pose': "Plan" + idx + "/grasp_top_pose"},
+                action_goal=init_config,
                 robot_name=robot_name,
             )
             policy_pick = Policy.MOVEBYPOLICY(
@@ -156,13 +164,13 @@ class Move(base_job.BaseJob):
                 timeout=float(goal[idx].get("timeout", 20.0)),
                 robot_name=robot_name,
             )
-            s_init2 = MovePose.MOVEP(
-                name="PickInit2",
+            s_return = MoveJoint.MOVEJ(
+                name="Return",
                 action_client=action_client,
-                action_goal={'pose': "Plan" + idx + "/grasp_top_pose"},
+                action_goal=init_config,
                 robot_name=robot_name,
             )
-            root.add_children([pose_est1, s_init1, policy_pick, s_init2])
+            root.add_children([s_pre_init, s_init, policy_pick, s_return])
             return root
         
         # ------------ Compute -------------------------

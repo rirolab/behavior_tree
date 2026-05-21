@@ -46,22 +46,26 @@ def create_root(robot_names):
         topic_name="symbol_grounding",
     )
 
-    # Define arm/gripper goal state per robot in blackboard.
+    # Define goal state per robot in blackboard.
+    # Our arm_client publishes a SINGLE goal_status channel per robot
+    # ("{robot}/arm_client/goal_status"), mirroring how dynamic_behavior_tree.py
+    # reads "arm_client/goal_status" into flat goal_id/goal_status. Here we keep
+    # per-robot namespacing so each arm's goal state stays isolated, feeding the
+    # "{robot}/goal_id" / "{robot}/goal_status" keys read by Move.MOVE.
     status_nodes = []
     for robot_name in robot_names:
-        for goal_channel in ["arm", "gripper"]:
-            status_nodes.append(
-                ToBlackboard(
-                    name=f"{robot_name}_{goal_channel}_Status2BB",
-                    topic_name=f"{robot_name}/arm_client/{goal_channel}/goal_status",
-                    topic_type=GoalStatus,
-                    blackboard_variables={
-                        f"{robot_name}/{goal_channel}/goal_id": "goal_info.goal_id.uuid",
-                        f"{robot_name}/{goal_channel}/goal_status": "status",
-                    },
-                    qos_profile=py_trees_ros.utilities.qos_profile_unlatched(),
-                )
+        status_nodes.append(
+            ToBlackboard(
+                name=f"{robot_name}_Status2BB",
+                topic_name=f"{robot_name}/arm_client/goal_status",
+                topic_type=GoalStatus,
+                blackboard_variables={
+                    f"{robot_name}/goal_id": "goal_info.goal_id.uuid",
+                    f"{robot_name}/goal_status": "status",
+                },
+                qos_profile=py_trees_ros.utilities.qos_profile_unlatched(),
             )
+        )
 
     priorities = py_trees.composites.Selector("Priorities", memory=False)
     priorities.add_child(py_trees.behaviours.Running(name="Idle"))

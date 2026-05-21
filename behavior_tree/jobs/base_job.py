@@ -183,7 +183,35 @@ class BaseJob(object):
                     key,
                     robot_parameters[key].value,
                 )
-        
+
+    def _read_optional_config(self, robot_name, key):
+        """
+        Read an optional joint-config parameter from a robot's blackboard namespace.
+
+        Optional real-deploy waypoints (``pre_init_config``, ``place_config``,
+        ``home_config``) are loaded by :meth:`init_blackboard_parameters` when
+        present in the yaml. Sim configs may omit them, so missing/None values
+        are returned as :obj:`None` rather than raising.
+
+        Args:
+            robot_name (:obj:`str`): robot namespace (``None`` for single-arm).
+            key (:obj:`str`): parameter/blackboard key to read.
+
+        Returns:
+            the parameter value, or :obj:`None` if it was not provided.
+        """
+        blackboard = py_trees.blackboard.Client(namespace=robot_name)
+        blackboard.register_key(key=key, access=py_trees.common.Access.READ)
+        try:
+            value = blackboard.get(key)
+        except KeyError:
+            return None
+        if value is None:
+            return None
+        if isinstance(value, str):
+            value = eval(value)
+        return value
+
     @property
     def goal(self):
         """

@@ -127,7 +127,44 @@ class Move(base_job.BaseJob):
         blackboard.register_key(key="init_config", access=py_trees.common.Access.READ)
 
         if goal[idx].get("implementation") == "policy":
-            return Policy.create_subtree(action_client, goal[idx], robot_name=robot_name)
+            # Real-deploy: wrap the learned policy with joint-space waypoints.
+            # Sandwich: pre_init -> init -> policy -> init -> place -> open -> init -> pre_init -> home
+            # The policy deposits the object, then the arm places/retreats home.
+            init_config = blackboard.init_config
+            pre_init_config = self._read_optional_config(robot_name, "pre_init_config")
+            if pre_init_config is None:
+                pre_init_config = init_config
+            place_config = self._read_optional_config(robot_name, "place_config")
+            home_config = self._read_optional_config(robot_name, "home_config")
+            if place_config is None or home_config is None:
+                raise RuntimeError(
+                    "move_job policy branch requires 'place_config' and "
+                    "'home_config' parameters"
+                )
+            s_pre_init_1 = MoveJoint.MOVEJ(name="PreInit", action_client=action_client,
+                                           action_goal=pre_init_config, robot_name=robot_name)
+            s_init_1 = MoveJoint.MOVEJ(name="Init", action_client=action_client,
+                                       action_goal=init_config, robot_name=robot_name)
+            policy = Policy.create_subtree(action_client, goal[idx], robot_name=robot_name)
+            s_init_2 = MoveJoint.MOVEJ(name="Init2", action_client=action_client,
+                                       action_goal=init_config, robot_name=robot_name)
+            s_place = MoveJoint.MOVEJ(name="Place", action_client=action_client,
+                                      action_goal=place_config, robot_name=robot_name)
+            s_open = Gripper.GOTO_VIA_ARM(name="Open", action_client=action_client,
+                                          action_goal=blackboard.gripper_open_pos,
+                                          timeout=2.0, robot_name=robot_name)
+            s_init_3 = MoveJoint.MOVEJ(name="Init3", action_client=action_client,
+                                       action_goal=init_config, robot_name=robot_name)
+            s_pre_init_2 = MoveJoint.MOVEJ(name="PreInit2", action_client=action_client,
+                                           action_goal=pre_init_config, robot_name=robot_name)
+            s_home = MoveJoint.MOVEJ(name="Home", action_client=action_client,
+                                     action_goal=home_config, robot_name=robot_name)
+            wrapped = py_trees.composites.Sequence(name="MovePolicy", memory=True)
+            wrapped.add_children([
+                s_pre_init_1, s_init_1, policy,
+                s_init_2, s_place, s_open, s_init_3, s_pre_init_2, s_home,
+            ])
+            return wrapped
 
         obj         = goal[idx]['object']
         destination = goal[idx]['destination']

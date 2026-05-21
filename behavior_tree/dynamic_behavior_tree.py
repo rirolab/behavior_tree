@@ -47,27 +47,21 @@ def create_root():
     # ---------------- Root->Blackboard ------------------------
     grnd2bb = Grnd2Blackboard.ToBlackboard(name="Grnd2BB",
                                            topic_name="symbol_grounding")
-    status_nodes = []
-    for goal_channel in ["arm", "gripper"]:
-        status_nodes.append(
-            ToBlackboard(
-                name=f"{goal_channel}_Status2BB",
-                topic_name=f"arm_client/{goal_channel}/goal_status",
-                topic_type=GoalStatus,
-                blackboard_variables={
-                    f"{goal_channel}/goal_id": "goal_info.goal_id.uuid",
-                    f"{goal_channel}/goal_status": "status",
-                },
-                qos_profile=py_trees_ros.utilities.qos_profile_unlatched(),
-            )
-        )
+    # Single-channel cac interface: arm_client publishes ONE goal_status topic
+    # that feeds the flat "goal_id"/"goal_status" blackboard keys read by Move.MOVE.
+    status2bb = ToBlackboard(name="Status2BB",
+                             topic_name="arm_client/goal_status",
+                             topic_type=GoalStatus,
+                             blackboard_variables={"goal_id": "goal_info.goal_id.uuid",
+                                                   "goal_status": "status"},
+                             qos_profile=py_trees_ros.utilities.qos_profile_unlatched())
     # ---------------- Root->Priorities- -----------------------
     priorities = py_trees.composites.Selector("Priorities",
                                               memory=False)
     idle       = py_trees.behaviours.Running(name="Idle")
     priorities.add_child(idle)
-    
-    root.add_children([grnd2bb] + status_nodes + [priorities])
+
+    root.add_children([grnd2bb, status2bb, priorities])
     return root
 
 
@@ -115,6 +109,26 @@ class SplinteredReality(Node):
                 ("grasp_offset_z", Parameter.Type.DOUBLE),
                 ("top_offset_z", Parameter.Type.DOUBLE),
                 ]
+        )
+
+        # Optional waypoints for policy deploys. Fall back to init_config in the
+        # jobs when not provided, so sim yamls that don't declare them still
+        # launch cleanly.
+        from rcl_interfaces.msg import ParameterDescriptor
+        self.declare_parameter(
+            "pre_init_config",
+            None,
+            ParameterDescriptor(dynamic_typing=True),
+        )
+        self.declare_parameter(
+            "place_config",
+            None,
+            ParameterDescriptor(dynamic_typing=True),
+        )
+        self.declare_parameter(
+            "home_config",
+            None,
+            ParameterDescriptor(dynamic_typing=True),
         )
 
         self.rec_topic_list  = rec_topic_list
@@ -441,6 +455,7 @@ def main(args=None):
                                                  ## ## 'jobs.handover_job.Move',
                                                  ## ## 'jobs.jog_job.Move',
                                                  'jobs.gripper_job.Move',
+                                                 'jobs.policy_job.Move',
                                                  ## ## 'jobs.slide_job.Move',
                                                  ## ## 'jobs.attach_job.Move',
                                                  ## ## 'jobs.touch_job.Move'
