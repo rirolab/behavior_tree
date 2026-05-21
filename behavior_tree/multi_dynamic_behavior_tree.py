@@ -67,10 +67,24 @@ def create_root(robot_names):
             )
         )
 
+    # Single dual-arm policy node publishes one goal-status channel
+    # ("dual_arm_client/goal_status"), read into the shared "dual/goal_id" /
+    # "dual/goal_status" keys consumed by PolicyDual.MOVEBYPOLICYDUAL.
+    dual_status_node = ToBlackboard(
+        name="dual_Status2BB",
+        topic_name="dual_arm_client/goal_status",
+        topic_type=GoalStatus,
+        blackboard_variables={
+            "dual/goal_id": "goal_info.goal_id.uuid",
+            "dual/goal_status": "status",
+        },
+        qos_profile=py_trees_ros.utilities.qos_profile_unlatched(),
+    )
+
     priorities = py_trees.composites.Selector("Priorities", memory=False)
     priorities.add_child(py_trees.behaviours.Running(name="Idle"))
 
-    root.add_children([grnd2bb] + status_nodes + [priorities])
+    root.add_children([grnd2bb] + status_nodes + [dual_status_node, priorities])
     return root
 
 
@@ -181,6 +195,15 @@ class MultiSplinteredReality(SplinteredReality):
                 )
             self.action_clients[robot_name] = client
 
+        # Single dual-arm policy client. A dual_policy_execute step triggers ONE
+        # dual policy node (not the per-arm arm_client clients above) through
+        # this shared "dual_arm_client/command" service.
+        self.dual_action_client = self.create_client(
+            StringGoalStatus,
+            "dual_arm_client/command",
+            qos_profile=qos_profile,
+        )
+
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(
             buffer=self.tf_buffer,
@@ -254,6 +277,9 @@ class MultiSplinteredReality(SplinteredReality):
                         )
 
                     # Case: multi-robot step -> pass a mapping of robot_name to client.
+                    # The dual policy client is passed alongside for jobs that
+                    # trigger a single dual node (dual_policy_job); jobs that use
+                    # the per-arm clients simply absorb it via **kwargs.
                     else:
                         job_root = job.create_root(
                             {
@@ -265,6 +291,7 @@ class MultiSplinteredReality(SplinteredReality):
                             tf_buffer=self.tf_buffer,
                             rec_topic_list=self.rec_topic_list,
                             robot_names=requested_robot_names,
+                            dual_action_client=self.dual_action_client,
                         )
 
                     # Case: this job cannot handle the step -> try the next job.
@@ -456,6 +483,7 @@ def main(args=None):
             "jobs.gripper_job.Move",
             "jobs.policy_job.Move",
             "jobs.dual_move_job.Move",
+            "jobs.dual_policy_job.Move",
         ],
         rec_topic_list=topic_list,
     )
