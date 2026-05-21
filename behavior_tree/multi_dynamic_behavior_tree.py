@@ -484,6 +484,7 @@ def main(args=None):
             "jobs.policy_job.Move",
             "jobs.dual_move_job.Move",
             "jobs.dual_policy_job.Move",
+            "jobs.parallel_policy_job.Move",
         ],
         rec_topic_list=topic_list,
     )
