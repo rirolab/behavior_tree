@@ -6,7 +6,7 @@ import threading
 import json
 
 import std_msgs.msg as std_msgs
-from behavior_tree.utils.parameter_utils import make_string_list
+from behavior_tree.utils.parameter_utils import make_nested_parameter_dict, make_string_list
 from behavior_tree.utils.validation_utils import StepValidationResult
 
 BLACKBOARD_PARAMETER_BLACKLIST = [
@@ -16,6 +16,7 @@ BLACKBOARD_PARAMETER_BLACKLIST = [
     "default_snapshot_blackboard_data",
     "default_snapshot_blackboard_activity",
     "setup_timeout",
+    "additional_parameter_roots",
 ]
 
 ##############################################################################
@@ -233,6 +234,14 @@ class BaseJob(object):
         all_parameters = self._node.get_parameters_by_prefix("")
         parameter_names = all_parameters.keys()
         robot_names = getattr(self._node, "robot_names", [])
+        additional_parameter_roots = []
+        if self._node.has_parameter("additional_parameter_roots"):
+            # Read the configured nested global parameter roots once.
+            additional_parameter_roots = [
+                key.strip()
+                for key in make_string_list(self._node.get_parameter("additional_parameter_roots").value)
+                if key.strip()
+            ]
 
         # Set up global parameters in the global blackboard namespace.
         global_blackboard = py_trees.blackboard.Client()
@@ -247,6 +256,20 @@ class BaseJob(object):
             global_blackboard.set(
                 key,
                 all_parameters[key].value,
+            )
+
+        # Mirror only configured nested global parameter roots on the global blackboard.
+        for key in sorted(set(additional_parameter_roots)):
+            # Skip robot names or blacklists
+            if key in robot_names or key in BLACKBOARD_PARAMETER_BLACKLIST:
+                continue
+            nested_parameters = self._node.get_parameters_by_prefix(key)
+            if not nested_parameters:
+                continue
+            global_blackboard.register_key(key=key, access=py_trees.common.Access.WRITE)
+            global_blackboard.set(
+                key,
+                make_nested_parameter_dict(nested_parameters),
             )
 
         # Set up parameters for each robot namespace.

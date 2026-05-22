@@ -52,7 +52,7 @@ class Move(base_job.BaseJob):
             :obj:`bool`: whether this job can take ownership of the step.
         """
         # Check if the primitive action is pick
-        if step.get("primitive_action") != "pick":
+        if step.get("primitive_action") != "drb_nopolicy_pick":
             return False
 
         # Check if the step has the number of robots required for this job
@@ -132,7 +132,7 @@ class Move(base_job.BaseJob):
         GRIPPER_TIME = 0.25
         MOVE_TIME = 0.25
 
-        # behaviors
+        # Behaviors
         root = py_trees.composites.Sequence(name="Pick", memory=True)
         blackboard = py_trees.blackboard.Client(namespace=robot_name)
         blackboard.register_key(key="gripper_open_pos", access=py_trees.common.Access.READ)

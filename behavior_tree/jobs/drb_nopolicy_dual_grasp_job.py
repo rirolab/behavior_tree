@@ -30,7 +30,7 @@ class Move(base_job.BaseJob):
         Returns:
             :obj:`bool`: whether this job can take ownership of the step.
         """
-        if step.get("primitive_action") != "dual_grasp":
+        if step.get("primitive_action") != "drb_nopolicy_dual_grasp":
             return False
         elif not self.check_robot_count(step, num_robot_required=2):
             return False

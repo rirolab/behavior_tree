@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import copy
+from datetime import datetime
 import importlib
 import operator
 import sys
@@ -112,6 +113,8 @@ class MultiSplinteredReality(SplinteredReality):
             "world_frame": "world",
             "policy_preload_enabled": True,
             "policy_preload_timeout_sec": 60.0,
+            "additional_parameter_roots": ["pose_presets"],
+            "drb_mode": "teleport_ring" # "teleport_ring", or "policy"
         }
         for name, value in defaults.items():
             if not self.has_parameter(name):
@@ -130,9 +133,11 @@ class MultiSplinteredReality(SplinteredReality):
         self.blackboard.register_key(key="edges", access=py_trees.common.Access.WRITE)
         self.blackboard.register_key(key="stop_cmd", access=py_trees.common.Access.WRITE)
         self.blackboard.register_key(key="preloaded_policies", access=py_trees.common.Access.WRITE)
+        self.blackboard.register_key(key="bt_start_time", access=py_trees.common.Access.WRITE)
         self.blackboard.edges = None
         self.blackboard.stop_cmd = False
         self.blackboard.preloaded_policies = []
+        self.blackboard.bt_start_time = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
 
         self.tree = py_trees_ros.trees.BehaviourTree(
             root=create_root(self.robot_names),
@@ -401,12 +406,20 @@ class MultiSplinteredReality(SplinteredReality):
                 "parameter [robot] must define at least one robot name"
             )
 
-        # Case: robot names must have matching parameter namespaces.
+        # Case: robot names must have matching robot parameter namespaces.
         parameter_names = self.get_parameters_by_prefix("").keys()
+        additional_parameter_roots = {
+            parameter_root.strip()
+            for parameter_root in make_string_list(
+                self.get_parameter("additional_parameter_roots").value
+            )
+            if parameter_root.strip()
+        }
         parameter_namespaces = {
             parameter_name.split(".", 1)[0]
             for parameter_name in parameter_names
             if "." in parameter_name
+            and parameter_name.split(".", 1)[0] not in additional_parameter_roots
         }
         robot_names_set = set(self.robot_names)
         if robot_names_set != parameter_namespaces:
@@ -594,15 +607,16 @@ def main(args=None):
     splintered_reality = MultiSplinteredReality(
         jobs=[
             # "jobs.pick_job.Move",
-            "jobs.drb_nopolicy_pick_job.Move",
             "jobs.place_job.Move",
             "jobs.move_job.Move",
             "jobs.gripper_job.Move",
-            # Register mixed policy-plus-primitive dual-arm test job.
-            "jobs.test_dual_policy_goto_job.Move",
-            "jobs.dual_policy_job.Move",
             "jobs.policy_job.Move",
-            "jobs.dual_grasp_job.Move",
+            # DRB task related new jobs
+            "jobs.drb_nopolicy_dual_grasp_job.Move",
+            "jobs.drb_nopolicy_pick_job.Move",
+            "jobs.drb_dual_grasp_job.Move",
+            "jobs.drb_pick_job.Move",
+            "jobs.test_dual_policy_goto_job.Move",
         ],
         rec_topic_list=topic_list,
     )
