@@ -81,7 +81,10 @@ class Move(base_job.BaseJob):
             robot_goal = self.make_robot_specific_goal(step, robot_name, step.get("step_idx"))
             if robot_goal is None:
                 return StepValidationResult.REJECT_GOAL
-            if robot_goal.get("implementation") == "policy" and not bool(robot_goal.get("skill_id")):
+            if robot_goal.get("implementation") == "policy" and (
+                not bool(robot_goal.get("skill_id"))
+                or not bool(robot_goal.get("scenario_name"))
+            ):
                 return StepValidationResult.REJECT_GOAL
 
         return StepValidationResult.ACCEPT_GOAL
@@ -181,11 +184,6 @@ class Move(base_job.BaseJob):
         action_clients = action_client
         MOVE_TIME = 0.25
         GRIPPER_TIME = 0.25
-        # is_last_joint_offset = False
-        # if is_last_joint_offset:
-        #     last_joint_offset = -45 / 180 * np.pi
-        # else: 
-        #     last_joint_offset = 0.0
             
         # Resolve the grounded left/right robot names for parallel moves.
         grounded_robot_names = make_string_list(step.get("robot", []))
@@ -251,7 +249,7 @@ class Move(base_job.BaseJob):
         )
 
         # Resolve stack_side_start joint targets.
-        stack_side_start = global_blackboard.pose_presets.get("stack_side_start")
+        stack_side_start = global_blackboard.pose_presets.get("stack_side_start2")
         if stack_side_start is None:
             console.logerror("Pick: Missing pose preset [stack_side_start]")
             return None
@@ -299,11 +297,19 @@ class Move(base_job.BaseJob):
             name="LeftPolicyReturnSeq",
             memory=True,
         )
+        left_switch_reward_profile = IsaacSceneCommand.ISAAC_SCENE_COMMAND(
+            name="LeftSwitchRewardProfile",
+            command={
+                "action_type": "setRewardProfile",
+                "reward_profile": step[left_robot].get("scenario_name"),
+            },
+            timeout=10.0,
+        )
         left_switch_controller_in = IsaacSceneCommand.ISAAC_SCENE_COMMAND(
             name="LeftSwitchControllerIn",
             command={
                 "action_type": "setRobotDriveGainProfileAndSwitchController",
-                "robot_drive_gain_profile": "cartesian_impedance_controller",
+                "robot_drive_gain_profile": "cartesian_motion_controller",
                 "target_arms": left_robot,
             },
             timeout=10.0,
@@ -325,17 +331,35 @@ class Move(base_job.BaseJob):
             timeout=10.0,
         )
         wait_after_left_switch_controller_out = Wait.WAIT(
-            name="WaitBeforeReturn",
-            duration=2.0,
+            name="WaitAfterReturn",
+            duration=1.0,
             robot_name=left_robot,
+        )
+        scene_cmd_temp = IsaacSceneCommand.ISAAC_SCENE_COMMAND(
+            name=f"{left_robot}_FreezeFingerJoint",
+            command={
+                "action_type": "freezeFingerJoint",
+                "arm": left_robot,
+                "enabled": True
+            },
+            timeout=5.0,
         )
         left_policy_return_seq.add_children(
             [
+                left_switch_reward_profile,
                 left_switch_controller_in,
                 left_run_policy,
                 left_switch_controller_out,
                 wait_after_left_switch_controller_out,
+                scene_cmd_temp
             ]
+        )
+        left_base_start_again = MoveJoint.MOVEJ(
+                    name=f"{left_robot}_BaseStartAgain",
+                    action_client=action_clients[left_robot],
+                    action_goal=base_start_left_joint_goal,
+                    robot_name=left_robot,
+                    timeout=MOVE_TIME,
         )
 
         root = py_trees.composites.Sequence(name="Pick", memory=True)
@@ -344,7 +368,8 @@ class Move(base_job.BaseJob):
                 base_start_parallel, 
                 pose_estimator, 
                 stack_side_start_parallel, 
-                left_policy_return_seq
+                left_policy_return_seq,
+                left_base_start_again
             ]
         )
 

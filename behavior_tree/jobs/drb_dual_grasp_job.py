@@ -245,7 +245,7 @@ class Move(base_job.BaseJob):
             name=f"HoldingRobotRegraspUp",
             action_client=action_clients[holding_robot],
             action_goal={"pose": plan_name + "/regrasp_target_up"},
-            timeout=2.5*MOVE_TIME,
+            timeout=MOVE_TIME,
             robot_name=holding_robot,
             joint_logger_kwargs=joint_logger_kwargs,
         )
@@ -276,7 +276,7 @@ class Move(base_job.BaseJob):
         )
         move_approach_wait = Wait.WAIT(
             name="WaitBeforeClose",
-            duration=5.0,
+            duration=3.0,
             robot_name=approach_robot,
         )
         move_approach_close = Gripper.GOTO(
@@ -492,7 +492,7 @@ class Move(base_job.BaseJob):
                 # move_horizontal_wp, 
                 above_mold_start_parallel,
                 unfreeze_fingers,
-                dual_policy_seq,
+                # dual_policy_seq, # for pick-only dry run...
                 base_start_parallel])
 
         return root

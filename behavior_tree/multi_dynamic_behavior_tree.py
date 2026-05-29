@@ -114,7 +114,7 @@ class MultiSplinteredReality(SplinteredReality):
             "policy_preload_enabled": True,
             "policy_preload_timeout_sec": 60.0,
             "additional_parameter_roots": ["pose_presets"],
-            "drb_mode": "teleport_ring" # "teleport_ring", or "policy"
+            "drb_mode": "policy" # "teleport_ring", or "policy"
         }
         for name, value in defaults.items():
             if not self.has_parameter(name):
