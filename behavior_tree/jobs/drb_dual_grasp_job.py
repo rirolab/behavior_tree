@@ -217,6 +217,17 @@ class Move(base_job.BaseJob):
         left_robot_blackboard = approach_robot_blackboard if left_robot == approach_robot else holding_robot_blackboard
         right_robot_blackboard = approach_robot_blackboard if right_robot == approach_robot else holding_robot_blackboard
 
+        # Resolve base_start joint targets.
+        base_start = global_blackboard.pose_presets.get("base_start")
+        if base_start is None:
+            console.logerror("Pick: Missing pose preset [base_start]")
+            return None
+        base_start_left_joint_goal = base_start.get("left_joint_pos")
+        base_start_right_joint_goal = base_start.get("right_joint_pos")
+        if base_start_left_joint_goal is None or base_start_right_joint_goal is None:
+            console.logerror("Pick: Missing left/right joint preset in pose preset [base_start]")
+            return None
+
         # Resolve above_mold_start joint targets.
         above_mold_start = global_blackboard.pose_presets.get("above_mold_start")
         if above_mold_start is None:
@@ -226,6 +237,16 @@ class Move(base_job.BaseJob):
         above_mold_start_right_joint_goal = above_mold_start.get("right_joint_pos")
         if above_mold_start_left_joint_goal is None or above_mold_start_right_joint_goal is None:
             console.logerror("Pick: Missing left/right joint preset in pose preset [above_mold_start]")
+            return None
+
+        # Resolve holding_robot_regrasp_up left joint target.
+        holding_robot_regrasp_up = global_blackboard.pose_presets.get("holding_robot_regrasp_up")
+        if holding_robot_regrasp_up is None:
+            console.logerror("Pick: Missing pose preset [holding_robot_regrasp_up]")
+            return None
+        holding_robot_regrasp_up_left_joint_goal = holding_robot_regrasp_up.get("left_joint_pos")
+        if holding_robot_regrasp_up_left_joint_goal is None:
+            console.logerror("Pick: Missing left joint preset in pose preset [holding_robot_regrasp_up]")
             return None
         
         # Estimate the regrasp target poses for both robots.
@@ -241,13 +262,23 @@ class Move(base_job.BaseJob):
         # Move the approach robot to the lower regrasp target pose.
         move_approach_seq = py_trees.composites.Sequence(name="MoveApproachSeq", memory=True)
         move_approach_right_parallel = MoveParallel.MoveParallel(name="ApproachRobotRegraspDownRightParallel")
-        move_holding = self.make_move_pose_with_logger(
-            name=f"HoldingRobotRegraspUp",
+        # move_holding = self.make_move_pose_with_logger(
+        #     name=f"HoldingRobotRegraspUp",
+        #     action_client=action_clients[holding_robot],
+        #     action_goal={"pose": plan_name + "/regrasp_target_up"},
+        #     timeout=MOVE_TIME,
+        #     robot_name=holding_robot,
+        #     joint_logger_kwargs=joint_logger_kwargs,
+        # )
+        move_holding_trajectory = MoveJoint.MOVEJT(
+            name=f"HoldingRobotRegraspUpTrajectory",
             action_client=action_clients[holding_robot],
-            action_goal={"pose": plan_name + "/regrasp_target_up"},
-            timeout=MOVE_TIME,
+            action_goal=[
+                base_start_left_joint_goal,
+                holding_robot_regrasp_up_left_joint_goal,
+            ],
             robot_name=holding_robot,
-            joint_logger_kwargs=joint_logger_kwargs,
+            timeout=6*MOVE_TIME,
         )
         move_approach_right = self.make_move_pose_with_logger(
             name=f"ApproachRobotRegraspDownRight",
@@ -265,7 +296,7 @@ class Move(base_job.BaseJob):
             timeout=MOVE_TIME,
             robot_name=approach_robot
         )
-        move_approach_right_parallel.add_children([move_holding, move_approach_right, move_approach_right_open])
+        move_approach_right_parallel.add_children([move_holding_trajectory, move_approach_right, move_approach_right_open])
         move_approach = self.make_move_pose_with_logger(
             name=f"ApproachRobotRegraspDownHalfLeft",
             action_client=action_clients[approach_robot],
@@ -432,16 +463,7 @@ class Move(base_job.BaseJob):
         dual_policy_seq = py_trees.composites.Sequence(name="DualPolicySeq", memory=True)
         dual_policy_seq.add_children([dual_switch_controller_in, run_policy_parallel, dual_switch_controller_out])
 
-        # Resolve base_start joint targets.
-        base_start = global_blackboard.pose_presets.get("base_start")
-        if base_start is None:
-            console.logerror("Pick: Missing pose preset [base_start]")
-            return None
-        base_start_left_joint_goal = base_start.get("left_joint_pos")
-        base_start_right_joint_goal = base_start.get("right_joint_pos")
-        if base_start_left_joint_goal is None or base_start_right_joint_goal is None:
-            console.logerror("Pick: Missing left/right joint preset in pose preset [base_start]")
-            return None
+        # Queue both arms back to base_start after the regrasp stage.
         base_start_parallel = MoveParallel.MoveParallel(name="BaseStartParallel")
         base_start_parallel.add_children(
             [

@@ -369,7 +369,7 @@ class Move(base_job.BaseJob):
                 pose_estimator, 
                 stack_side_start_parallel, 
                 left_policy_return_seq,
-                left_base_start_again
+                # left_base_start_again
             ]
         )
 
