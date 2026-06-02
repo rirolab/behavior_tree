@@ -16,12 +16,11 @@ from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 
 from py_trees_ros import exceptions
-from py_trees_ros.subscribers import ToBlackboard
 from riro_srvs.srv import StringGoalStatus
 
 from behavior_tree import decorators
 from behavior_tree.dynamic_behavior_tree import SplinteredReality, get_args, load_topic_list
-from behavior_tree.subtrees import Grnd2Blackboard, PolicyPreload
+from behavior_tree.subtrees import Grnd2Blackboard, PolicyPreload, Status2Blackboard
 from behavior_tree.utils.parameter_utils import make_string_list
 from behavior_tree.utils.validation_utils import StepValidationResult
 
@@ -53,14 +52,11 @@ def create_root(robot_names):
     for robot_name in robot_names:
         for goal_channel in ["arm", "gripper"]:
             status_nodes.append(
-                ToBlackboard(
+                Status2Blackboard.ToBlackboard(
                     name=f"{robot_name}_{goal_channel}_Status2BB",
                     topic_name=f"{robot_name}/arm_client/{goal_channel}/goal_status",
-                    topic_type=GoalStatus,
-                    blackboard_variables={
-                        f"{robot_name}/{goal_channel}/goal_id": "goal_info.goal_id.uuid",
-                        f"{robot_name}/{goal_channel}/goal_status": "status",
-                    },
+                    robot_name=robot_name,
+                    goal_channel=goal_channel,
                     qos_profile=py_trees_ros.utilities.qos_profile_unlatched(),
                 )
             )
@@ -617,7 +613,8 @@ def main(args=None):
             "jobs.drb_dual_grasp_job.Move",
             "jobs.drb_pick_job.Move",
             "jobs.test_dual_policy_goto_job.Move",
-            "jobs.real_drb_dual_test_job.Move",
+            "jobs.real_drb_dual_grasp_job.Move",
+            "jobs.real_drb_pick_job.Move",
         ],
         rec_topic_list=topic_list,
     )

@@ -1,5 +1,6 @@
 import typing
 import json
+import time
 
 import rclpy
 from action_msgs.msg import GoalStatus
@@ -8,6 +9,10 @@ from riro_srvs.srv import StringGoalStatus
 import py_trees
 from py_trees_ros import exceptions, utilities
 import py_trees.console as console
+from behavior_tree.utils.debug_file_logger import (
+    get_debug_file_logger,
+    make_debug_snapshot,
+)
 ## from rclpy.callback_groups import ReentrantCallbackGroup
 
 class MOVE(py_trees.behaviour.Behaviour):
@@ -69,6 +74,9 @@ class MOVE(py_trees.behaviour.Behaviour):
             key=self.goal_status_key,
             access=py_trees.common.Access.READ,
         )
+        self._debug_logger = get_debug_file_logger("bt", "tree")
+        self._last_debug_snapshot = None
+        self._last_debug_snapshot_time = 0.0
         
     def setup(self, node):
         """ """
@@ -91,6 +99,53 @@ class MOVE(py_trees.behaviour.Behaviour):
         self.logger.debug("%s.update()" % self.__class__.__name__)
         self.sent_goal = True
         return py_trees.common.Status.SUCCESS
+
+    @staticmethod
+    def goal_status_to_string(status):
+        if status == GoalStatus.STATUS_ACCEPTED:
+            return "ACCEPTED"
+        if status == GoalStatus.STATUS_EXECUTING:
+            return "EXECUTING"
+        if status == GoalStatus.STATUS_CANCELING:
+            return "CANCELING"
+        if status == GoalStatus.STATUS_SUCCEEDED:
+            return "SUCCEEDED"
+        if status == GoalStatus.STATUS_CANCELED:
+            return "CANCELED"
+        if status == GoalStatus.STATUS_ABORTED:
+            return "ABORTED"
+        if status == GoalStatus.STATUS_UNKNOWN:
+            return "UNKNOWN"
+        return str(status)
+
+    def debug_log(self, event, **fields):
+        self._debug_logger.log(
+            event,
+            behaviour_name=self.name,
+            behaviour_class=self.__class__.__name__,
+            robot_name=self.robot_name,
+            goal_channel=self.goal_channel,
+            expected_goal_id=self.goal_uuid_des,
+            **fields,
+        )
+
+    def debug_log_snapshot(self, event, interval_sec=2.0, **fields):
+        snapshot = make_debug_snapshot(
+            {
+                "event": event,
+                "behaviour_name": self.name,
+                "goal_channel": self.goal_channel,
+                "fields": fields,
+            }
+        )
+        now = time.monotonic()
+        if (
+            snapshot != self._last_debug_snapshot
+            or now - self._last_debug_snapshot_time >= interval_sec
+        ):
+            self._last_debug_snapshot = snapshot
+            self._last_debug_snapshot_time = now
+            self.debug_log(event, **fields)
 
     def current_goal_id(self):
         """

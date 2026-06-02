@@ -53,16 +53,49 @@ class GOTO(Move.MOVE):
             
             self.sent_goal = True
             self.feedback_message = "Sending a gripper goal"
+            self.debug_log(
+                "gripper_command_requested",
+                action_goal=self.action_goal,
+                force=self.force,
+                check_contact=self.check_contact,
+                timeout=self.timeout,
+            )
             return py_trees.common.Status.RUNNING
 
-        if self.current_goal_id() is None:
+        current_goal_id = self.current_goal_id()
+        current_goal_status = self.current_goal_status()
+
+        if current_goal_id is None:
+            self.debug_log_snapshot(
+                "gripper_waiting_for_blackboard_goal",
+                blackboard_goal_id=None,
+                blackboard_goal_status=current_goal_status,
+                blackboard_goal_status_name=self.goal_status_to_string(current_goal_status),
+                goal_matches=False,
+            )
             return py_trees.common.Status.RUNNING
-            
-        if self.goal_matches_blackboard() and \
-           self.current_goal_status() in [
+
+        goal_matches = self.goal_matches_blackboard()
+        self.debug_log_snapshot(
+            "gripper_blackboard_state",
+            blackboard_goal_id=current_goal_id,
+            blackboard_goal_status=current_goal_status,
+            blackboard_goal_status_name=self.goal_status_to_string(current_goal_status),
+            goal_matches=goal_matches,
+        )
+
+        if goal_matches and \
+           current_goal_status in [
                                 GoalStatus.STATUS_UNKNOWN,
                                 ]:
             self.feedback_message = "FAILURE"
+            self.debug_log(
+                "gripper_terminal_failure",
+                blackboard_goal_id=current_goal_id,
+                blackboard_goal_status=current_goal_status,
+                blackboard_goal_status_name=self.goal_status_to_string(current_goal_status),
+                goal_matches=goal_matches,
+            )
             self.logger.debug("%s.update()[%s->%s][%s]" % \
                                   (self.__class__.__name__, \
                                    self.status, \
@@ -70,12 +103,19 @@ class GOTO(Move.MOVE):
                                   self.feedback_message))
             return py_trees.common.Status.FAILURE
 
-        if self.goal_matches_blackboard() and \
-           self.current_goal_status() in [GoalStatus.STATUS_ABORTED,
-                                               GoalStatus.STATUS_SUCCEEDED,
-                                               GoalStatus.STATUS_CANCELING,
-                                               GoalStatus.STATUS_CANCELED]:
+        if goal_matches and \
+           current_goal_status in [GoalStatus.STATUS_ABORTED,
+                                   GoalStatus.STATUS_SUCCEEDED,
+                                   GoalStatus.STATUS_CANCELING,
+                                   GoalStatus.STATUS_CANCELED]:
             self.feedback_message = "SUCCESSFUL"
+            self.debug_log(
+                "gripper_terminal_success",
+                blackboard_goal_id=current_goal_id,
+                blackboard_goal_status=current_goal_status,
+                blackboard_goal_status_name=self.goal_status_to_string(current_goal_status),
+                goal_matches=goal_matches,
+            )
             self.logger.debug("%s.update()[%s->%s][%s]" % \
                                   (self.__class__.__name__, \
                                        self.status, \

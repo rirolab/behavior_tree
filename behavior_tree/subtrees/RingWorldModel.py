@@ -38,6 +38,7 @@ class POSE_ESTIMATOR(WorldModel.POSE_ESTIMATOR):
             "regrasp_target_down_left",
             "regrasp_target_down_right",
             "regrasp_target_down_half_left",
+            "real_regrasp_target_down_half_left",
             "horizontal_grasp_top_right",
             "horizontal_grasp_top_left",
             "horizontal_grasp_top_right_wp1",
@@ -112,6 +113,8 @@ class POSE_ESTIMATOR(WorldModel.POSE_ESTIMATOR):
                     regrasp_target_down_left.position.y += 0.05
                     regrasp_target_down_half_left = copy.deepcopy(regrasp_target_down) 
                     regrasp_target_down_half_left.position.y += 0.01
+                    real_regrasp_target_down_half_left = copy.deepcopy(regrasp_target_down) 
+                    real_regrasp_target_down_half_left.position.y += 0.025
 
                     # Define horizontal grasp top waypoint poses 
                     horizontal_grasp_top_right_wp1 = copy.deepcopy(horizontal_grasp_top_right)
@@ -135,6 +138,7 @@ class POSE_ESTIMATOR(WorldModel.POSE_ESTIMATOR):
                     blackboard.set(self.name + "/regrasp_target_down_right", regrasp_target_down_right)
                     blackboard.set(self.name + "/regrasp_target_down_left", regrasp_target_down_left)
                     blackboard.set(self.name + "/regrasp_target_down_half_left", regrasp_target_down_half_left)
+                    blackboard.set(self.name + "/real_regrasp_target_down_half_left", real_regrasp_target_down_half_left)
                     # Set horizontal grasp top poses
                     blackboard.set(self.name + "/horizontal_grasp_top_right", horizontal_grasp_top_right)
                     blackboard.set(self.name + "/horizontal_grasp_top_left", horizontal_grasp_top_left)

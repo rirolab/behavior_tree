@@ -368,15 +368,27 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         Returns:
             :class:`PyKDL.Frame`: transform from the world frame to the arm base frame.
         """
+        wait_log_interval_sec = 2.0
+        next_wait_log_time = time.monotonic() + wait_log_interval_sec
+
         # Wait until TF reports that the requested transform is available.
         future = self.tf_buffer.wait_for_transform_async(self._world_frame,
                                                          arm_base_frame,
                                                          rclpy.time.Time())
         while rclpy.ok():
-            if future.done(): break
+            if future.done():
+                break
+            now = time.monotonic()
+            if now >= next_wait_log_time:
+                self.node.get_logger().warning(
+                    f"WorldModel: waiting for TF availability "
+                    f"[{self._world_frame} -> {arm_base_frame}]"
+                )
+                next_wait_log_time = now + wait_log_interval_sec
             rclpy.spin_once(self.node, timeout_sec=0.5)
 
         # Repeatedly try the actual TF lookup until a transform is returned.
+        next_wait_log_time = time.monotonic() + wait_log_interval_sec
         while rclpy.ok():
             try:
                 t = self.tf_buffer.lookup_transform(self._world_frame,
@@ -384,8 +396,23 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                                                     rclpy.time.Time())
             except TransformException as ex:
                 self.feedback_message = "WorldModel: Exception from TF"
+                now = time.monotonic()
+                if now >= next_wait_log_time:
+                    self.node.get_logger().warning(
+                        f"WorldModel: TF lookup still failing "
+                        f"[{self._world_frame} -> {arm_base_frame}]: {str(ex)}"
+                    )
+                    next_wait_log_time = now + wait_log_interval_sec
                 continue
-            if t is not None: break
+            if t is not None:
+                break
+            now = time.monotonic()
+            if now >= next_wait_log_time:
+                self.node.get_logger().warning(
+                    f"WorldModel: TF lookup returned no transform yet "
+                    f"[{self._world_frame} -> {arm_base_frame}]"
+                )
+                next_wait_log_time = now + wait_log_interval_sec
             rclpy.spin_once(self.node, timeout_sec=0.5)
 
         # Convert the ROS transform message into a PyKDL frame for pose math.
