@@ -45,6 +45,16 @@ def _slugify(value):
     return slug.strip("._") or "debug"
 
 
+def _workspace_log_root():
+    env_log_root = os.environ.get("DRB_WS_LOG_DIR")
+    if env_log_root:
+        return Path(env_log_root).expanduser()
+    for parent in Path(__file__).resolve().parents:
+        if parent.name == "drb_ws":
+            return parent / "logs"
+    return Path(__file__).resolve().parents[2] / "logs"
+
+
 class DebugFileLogger:
     def __init__(self, path):
         self.path = Path(path)
@@ -70,7 +80,7 @@ def get_debug_file_logger(subdir, prefix):
     with _LOGGER_CACHE_LOCK:
         if cache_key not in _LOGGER_CACHE:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-            filename = f"{_slugify(prefix)}_{timestamp}_pid{os.getpid()}.jsonl"
-            log_root = Path(__file__).resolve().parents[2] / "logs" / str(subdir)
+            filename = f"{_slugify(prefix)}_{timestamp}.jsonl"
+            log_root = _workspace_log_root() / str(subdir)
             _LOGGER_CACHE[cache_key] = DebugFileLogger(log_root / filename)
         return _LOGGER_CACHE[cache_key]

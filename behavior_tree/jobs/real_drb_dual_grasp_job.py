@@ -268,6 +268,18 @@ class Move(base_job.BaseJob):
             )
             return None
 
+        # Resolve above_mold_start joint targets.
+        above_mold_start = global_blackboard.pose_presets.get("above_mold_start")
+        if above_mold_start is None:
+            console.logerror("RealDrbDualGrasp: Missing pose preset [above_mold_start]")
+            return None
+        above_mold_start_left_joint_goal = above_mold_start.get("left_joint_pos")
+        above_mold_start_right_joint_goal = above_mold_start.get("right_joint_pos")
+        if above_mold_start_left_joint_goal is None or above_mold_start_right_joint_goal is None:
+            console.logerror("RealDrbDualGrasp: Missing left/right joint preset in pose preset [above_mold_start]")
+            return None
+
+
         # Estimate the regrasp target poses for both robots.
         pose_estimator = RingWorldModel.POSE_ESTIMATOR(
             name=plan_name,
@@ -348,9 +360,30 @@ class Move(base_job.BaseJob):
             [
                 move_approach_right_parallel,
                 move_approach,
-                # move_approach_wait,
-                move_approach_wait_until_trigger,
+                move_approach_wait,
+                # move_approach_wait_until_trigger,
                 move_approach_close,
+            ]
+        )
+
+        # Queue above_mold_start as one left/right parallel stage.
+        above_mold_start_parallel = MoveParallel.MoveParallel(name="Preset_above_mold_start")
+        above_mold_start_parallel.add_children(
+            [
+                MoveJoint.MOVEJ(
+                    name=f"{left_robot}_above_mold_start",
+                    action_client=action_clients[left_robot],
+                    action_goal=above_mold_start_left_joint_goal,
+                    robot_name=left_robot,
+                    timeout=2*MOVE_TIME,
+                ),
+                MoveJoint.MOVEJ(
+                    name=f"{right_robot}_above_mold_start",
+                    action_client=action_clients[right_robot],
+                    action_goal=above_mold_start_right_joint_goal,
+                    robot_name=right_robot,
+                    timeout=2*MOVE_TIME,
+                ),
             ]
         )
 
@@ -360,6 +393,7 @@ class Move(base_job.BaseJob):
             [
                 pose_estimator,
                 move_approach_seq,
+                above_mold_start_parallel
             ]
         )
         return root
