@@ -215,7 +215,7 @@ class Move(base_job.BaseJob):
         # Hold the cartesian impedance mode briefly so the switch can be observed.
         wait_after_switch = Wait.WAIT(
             name="WaitAfterCartesianImpedanceSwitch",
-            duration=5.0,
+            duration=10.0,
         )
 
         # Switch both arms back onto their joint trajectory controllers.
