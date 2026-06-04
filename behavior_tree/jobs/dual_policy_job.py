@@ -4,7 +4,7 @@ import py_trees
 import std_msgs.msg as std_msgs
 
 from . import base_job
-from behavior_tree.subtrees import MoveParallel, Policy, IsaacSceneCommand
+from behavior_tree.subtrees import IsaacSceneCommand, MoveParallel, Policy, RealControllerCommand
 from behavior_tree.utils.parameter_utils import make_string_list
 from behavior_tree.utils.validation_utils import StepValidationResult
 
@@ -16,6 +16,14 @@ class Move(base_job.BaseJob):
 
     def __init__(self, node):
         super(Move, self).__init__(node)
+        try:
+            is_sim = bool(self._node.get_parameter("sim").value)
+        except Exception:
+            is_sim = True
+        if is_sim:
+            self.controller_command = IsaacSceneCommand.ISAAC_SCENE_COMMAND
+        else:
+            self.controller_command = RealControllerCommand.REAL_CONTROLLER_COMMAND
 
     def acceptable_step(self, step):
         """
@@ -113,7 +121,7 @@ class Move(base_job.BaseJob):
         if len(grounded_robot_names) != 2:
             raise RuntimeError("dual_policy_job: expected exactly two robots in the grounding")
 
-        scene_cmd1 = IsaacSceneCommand.ISAAC_SCENE_COMMAND(
+        scene_cmd1 = self.controller_command(
             name="DualSwitchController1",
             command={
                 "action_type": "setRobotDriveGainProfileAndSwitchController",
@@ -141,7 +149,7 @@ class Move(base_job.BaseJob):
             )
             run_policy_parallel.add_child(run_policy)
 
-        scene_cmd2 = IsaacSceneCommand.ISAAC_SCENE_COMMAND(
+        scene_cmd2 = self.controller_command(
             name="DualSwitchController2",
             command={
                 "action_type": "setRobotDriveGainProfileAndSwitchController",

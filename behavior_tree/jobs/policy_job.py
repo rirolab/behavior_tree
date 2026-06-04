@@ -6,7 +6,7 @@ import std_msgs.msg as std_msgs
 
 from . import base_job
 from behavior_tree.utils.validation_utils import StepValidationResult
-from behavior_tree.subtrees import Policy, IsaacSceneCommand
+from behavior_tree.subtrees import IsaacSceneCommand, Policy, RealControllerCommand
 
 
 class Move(base_job.BaseJob):
@@ -16,6 +16,14 @@ class Move(base_job.BaseJob):
 
     def __init__(self, node):
         super(Move, self).__init__(node)
+        try:
+            is_sim = bool(self._node.get_parameter("sim").value)
+        except Exception:
+            is_sim = True
+        if is_sim:
+            self.controller_command = IsaacSceneCommand.ISAAC_SCENE_COMMAND
+        else:
+            self.controller_command = RealControllerCommand.REAL_CONTROLLER_COMMAND
 
     def acceptable_step(self, step):
         """
@@ -93,7 +101,7 @@ class Move(base_job.BaseJob):
             return None
 
         root = py_trees.composites.Sequence(name="Policy", memory=True)
-        scene_cmd1 = IsaacSceneCommand.ISAAC_SCENE_COMMAND(
+        scene_cmd1 = self.controller_command(
             name="SwitchController1",
             command={
                 "action_type": "setRobotDriveGainProfileAndSwitchController",
@@ -109,7 +117,7 @@ class Move(base_job.BaseJob):
             timeout=float(goal[idx].get("timeout", 5.0)),
             robot_name=robot_name,
         )
-        scene_cmd2 = IsaacSceneCommand.ISAAC_SCENE_COMMAND(
+        scene_cmd2 = self.controller_command(
             name="SwitchController2",
             command={
                 "action_type": "setRobotDriveGainProfileAndSwitchController",
