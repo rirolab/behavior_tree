@@ -614,6 +614,8 @@ def main(args=None):
             "jobs.drb_pick_job.Move",
             "jobs.test_dual_policy_goto_job.Move",
             "jobs.real_controller_switch_test_job.Move",
+            "jobs.real_left_controller_switch_test_job.Move",
+            "jobs.real_left_controller_right_toggle_test_job.Move",
             "jobs.real_drb_dual_grasp_job.Move",
             "jobs.real_drb_pick_job.Move",
         ],
