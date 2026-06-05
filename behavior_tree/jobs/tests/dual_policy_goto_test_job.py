@@ -3,7 +3,7 @@ import json
 import py_trees
 import std_msgs.msg as std_msgs
 
-from . import base_job
+from .. import base_job
 from behavior_tree.subtrees import (
     IsaacSceneCommand,
     MoveJoint,
@@ -37,7 +37,7 @@ class Move(base_job.BaseJob):
             :obj:`bool`: whether this job can take ownership of the step.
         """
         # Accept only dedicated two-arm test steps.
-        if step.get("primitive_action") != "test_dual_policy_goto":
+        if step.get("primitive_action") != "dual_policy_goto_test":
             return False
         elif not self.check_robot_count(step, num_robot_required=2):
             return False
@@ -135,7 +135,7 @@ class Move(base_job.BaseJob):
         """
         if self.goal:
             self._node.get_logger().error(
-                "test_dual_policy_goto_job: rejecting new goal, previous still in the pipeline"
+                "dual_policy_goto_test_job: rejecting new goal, previous still in the pipeline"
             )
         else:
             # Cache full grounding when one step belongs to this job.
@@ -167,7 +167,7 @@ class Move(base_job.BaseJob):
         """
         # Require robot list for dual-arm job creation.
         if robot_names is None:
-            raise RuntimeError("test_dual_policy_goto_job: robot_names must be provided")
+            raise RuntimeError("dual_policy_goto_test_job: robot_names must be provided")
 
         # Ignore steps not owned by this job.
         if not self.acceptable_step(goal[idx]):
@@ -177,7 +177,7 @@ class Move(base_job.BaseJob):
         step = goal[idx]
         left_robot, right_robot = self.resolve_left_right_robots(step)
         if left_robot is None or right_robot is None or left_robot == right_robot:
-            raise RuntimeError("test_dual_policy_goto_job: expected one left robot and one right robot")
+            raise RuntimeError("dual_policy_goto_test_job: expected one left robot and one right robot")
         action_clients = action_client
         plan_name = "Plan" + idx
 
@@ -191,7 +191,7 @@ class Move(base_job.BaseJob):
         # Build right-arm policy payload from shared step.
         policy_goal = self.make_policy_goal(step, right_robot, idx)
         if policy_goal is None or not bool(policy_goal.get("skill_id")):
-            raise RuntimeError("test_dual_policy_goto_job: missing valid right-arm policy goal")
+            raise RuntimeError("dual_policy_goto_test_job: missing valid right-arm policy goal")
 
         # Publish regrasp target poses for primitive goto branch.
         pose_estimator = RingWorldModel.POSE_ESTIMATOR(

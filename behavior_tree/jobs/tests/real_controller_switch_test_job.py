@@ -4,19 +4,15 @@ import py_trees
 import py_trees.console as console
 import std_msgs.msg as std_msgs
 
-from . import base_job
-from behavior_tree.subtrees import (
-    MoveJoint,
-    RealControllerCommand,
-    Wait,
-)
+from .. import base_job
+from behavior_tree.subtrees import MoveJoint, MoveParallel, RealControllerCommand, Wait
 from behavior_tree.utils.parameter_utils import make_string_list
 from behavior_tree.utils.validation_utils import StepValidationResult
 
 
 class Move(base_job.BaseJob):
     """
-    Test job that keeps left CTC active while toggling the right JTC inactive/active.
+    Test job that switches both arms to cartesian impedance, waits, then switches back.
     """
 
     def __init__(self, node):
@@ -31,7 +27,7 @@ class Move(base_job.BaseJob):
 
     def acceptable_step(self, step):
         """
-        Check whether this job should accept the right-controller-toggle experiment step.
+        Check whether this job should accept a dedicated real controller switch step.
 
         Args:
             step (:obj:`dict`): one grounding step from the incoming goal.
@@ -41,7 +37,7 @@ class Move(base_job.BaseJob):
         """
         if self.is_sim:
             return False
-        if step.get("primitive_action") != "real_left_controller_right_toggle_test":
+        if step.get("primitive_action") != "real_controller_switch_test":
             return False
         elif not self.check_robot_count(step, num_robot_required=2):
             return False
@@ -50,8 +46,8 @@ class Move(base_job.BaseJob):
 
     def validate_step(self, step):
         """
-        Validate whether an acceptable right-controller-toggle step is well-formed enough
-        to keep the overall goal.
+        Validate whether an acceptable controller-switch step is well-formed enough to
+        keep the overall goal.
 
         Args:
             step (:obj:`dict`): one grounding step from the incoming goal.
@@ -79,7 +75,7 @@ class Move(base_job.BaseJob):
         """
         if self.goal:
             self._node.get_logger().error(
-                "real_left_controller_right_toggle_test_job: rejecting new goal, previous still in the pipeline"
+                "real_controller_switch_test_job: rejecting new goal, previous still in the pipeline"
             )
         else:
             grounding = json.loads(msg.data)["params"]
@@ -109,26 +105,24 @@ class Move(base_job.BaseJob):
            :class:`~py_trees.behaviour.Behaviour`: subtree root
         """
         MOVE_TIME = 5.0
-        WAIT_BEFORE_RIGHT_DEACTIVATE_SEC = 3.0
-        WAIT_AFTER_RIGHT_DEACTIVATE_SEC = 5.0
-        WAIT_AFTER_RIGHT_ACTIVATE_SEC = 5.0
 
         if not self.acceptable_step(goal[idx]):
             return None
         if robot_names is None:
             raise RuntimeError(
-                "real_left_controller_right_toggle_test_job: robot_names must be provided"
+                "real_controller_switch_test_job: robot_names must be provided"
             )
+        # Multi-robot jobs receive one action-client mapping keyed by robot name.
         if not isinstance(action_client, dict):
             raise RuntimeError(
-                "real_left_controller_right_toggle_test_job: action_clients mapping must be provided"
+                "real_controller_switch_test_job: action_clients mapping must be provided"
             )
 
         # Resolve the grounded left/right arm names once for all later subtree blocks.
         grounded_robot_names = make_string_list(goal[idx].get("robot", []))
         if set(grounded_robot_names) != {"left_arm", "right_arm"}:
             raise RuntimeError(
-                "real_left_controller_right_toggle_test_job: expected grounded robots [left_arm, right_arm]"
+                "real_controller_switch_test_job: expected grounded robots [left_arm, right_arm]"
             )
         left_robot = next(
             (robot_name for robot_name in grounded_robot_names if "left" in robot_name),
@@ -140,10 +134,10 @@ class Move(base_job.BaseJob):
         )
         if left_robot is None or right_robot is None:
             raise RuntimeError(
-                "real_left_controller_right_toggle_test_job: expected grounded left/right robots"
+                "real_controller_switch_test_job: expected grounded left/right robots"
             )
 
-        # Read the shared base_start preset and keep only the left-arm joint goal.
+        # Read the shared base_start preset from the global blackboard.
         global_blackboard = py_trees.blackboard.Client()
         global_blackboard.register_key(
             key="pose_presets",
@@ -152,127 +146,119 @@ class Move(base_job.BaseJob):
         base_start = global_blackboard.pose_presets.get("base_start")
         if base_start is None:
             console.logerror(
-                "real_left_controller_right_toggle_test_job: Missing pose preset [base_start]"
+                "real_controller_switch_test_job: Missing pose preset [base_start]"
             )
             return None
         base_start_left_joint_goal = base_start.get("left_joint_pos")
-        if base_start_left_joint_goal is None:
+        base_start_right_joint_goal = base_start.get("right_joint_pos")
+        if base_start_left_joint_goal is None or base_start_right_joint_goal is None:
             console.logerror(
-                "real_left_controller_right_toggle_test_job: Missing left joint preset in pose preset [base_start]"
+                "real_controller_switch_test_job: Missing left/right joint preset in pose preset [base_start]"
             )
             return None
 
-        # Read the left arm init_config so the test can return the same arm home afterward.
+        # Read each arm's init_config so the test can return to the configured home pose.
         left_blackboard = py_trees.blackboard.Client(namespace=left_robot)
         left_blackboard.register_key(
             key="init_config",
             access=py_trees.common.Access.READ,
         )
-        if left_blackboard.init_config is None:
+        right_blackboard = py_trees.blackboard.Client(namespace=right_robot)
+        right_blackboard.register_key(
+            key="init_config",
+            access=py_trees.common.Access.READ,
+        )
+        if left_blackboard.init_config is None or right_blackboard.init_config is None:
             console.logerror(
-                "real_left_controller_right_toggle_test_job: Missing left init_config"
+                "real_controller_switch_test_job: Missing left/right init_config"
             )
             return None
 
         root = py_trees.composites.Sequence(
-            name="RealLeftControllerRightToggleTest",
+            name="RealControllerSwitchTest",
             memory=True,
         )
 
-        # Move only the left arm to the shared base_start preset before controller switching.
-        move_left_to_base_start = MoveJoint.MOVEJ(
-            name=f"{left_robot}_BaseStart",
-            action_client=action_client[left_robot],
-            action_goal=base_start_left_joint_goal,
-            robot_name=left_robot,
-            timeout=MOVE_TIME,
+        # Move both arms to the shared base_start preset before any controller switching.
+        base_start_parallel = MoveParallel.MoveParallel(name="BaseStartParallel")
+        base_start_parallel.add_children(
+            [
+                MoveJoint.MOVEJ(
+                    name=f"{left_robot}_BaseStart",
+                    action_client=action_client[left_robot],
+                    action_goal=base_start_left_joint_goal,
+                    robot_name=left_robot,
+                    timeout=MOVE_TIME,
+                ),
+                MoveJoint.MOVEJ(
+                    name=f"{right_robot}_BaseStart",
+                    action_client=action_client[right_robot],
+                    action_goal=base_start_right_joint_goal,
+                    robot_name=right_robot,
+                    timeout=MOVE_TIME,
+                ),
+            ]
         )
 
-        # Switch only the left arm into cartesian impedance so the right arm stays in JTC.
-        switch_left_to_cartesian_impedance = RealControllerCommand.REAL_CONTROLLER_COMMAND(
-            name="SwitchLeftArmToCartesianImpedance",
+        # Switch both arms from JTC to cartesian impedance through the real bridge.
+        switch_to_cartesian_impedance = RealControllerCommand.REAL_CONTROLLER_COMMAND(
+            name="SwitchBothArmsToCartesianImpedance",
             command={
                 "action_type": "setRobotDriveGainProfileAndSwitchController",
                 "robot_drive_gain_profile": "cartesian_impedance_controller",
+                # "target_arms": grounded_robot_names,
                 "target_arms": "left_arm",
             },
             timeout=10.0,
         )
 
-        # Leave left CTC active long enough for the right-arm reflex pattern to appear.
-        wait_before_right_deactivate = Wait.WAIT(
-            name="WaitBeforeRightJTCDeactivate",
-            duration=WAIT_BEFORE_RIGHT_DEACTIVATE_SEC,
+        # Hold the cartesian impedance mode briefly so the switch can be observed.
+        wait_after_switch = Wait.WAIT(
+            name="WaitAfterCartesianImpedanceSwitch",
+            duration=10.0,
         )
 
-        # Deactivate only the right-arm JTC while keeping left CTC alive.
-        deactivate_right_joint_trajectory = RealControllerCommand.REAL_CONTROLLER_COMMAND(
-            name="DeactivateRightArmJointTrajectory",
-            command={
-                "action_type": "setControllerActiveState",
-                "controller_profile": "joint_trajectory_controller",
-                "target_arms": right_robot,
-                "active": False,
-            },
-            timeout=10.0,
-        )
-
-        # Hold the left-CTC/right-inactive condition long enough to observe stabilization.
-        wait_after_right_deactivate = Wait.WAIT(
-            name="WaitAfterRightJTCDeactivate",
-            duration=WAIT_AFTER_RIGHT_DEACTIVATE_SEC,
-        )
-
-        # Re-activate the right-arm JTC while the left arm is still in cartesian impedance.
-        activate_right_joint_trajectory = RealControllerCommand.REAL_CONTROLLER_COMMAND(
-            name="ActivateRightArmJointTrajectory",
-            command={
-                "action_type": "setControllerActiveState",
-                "controller_profile": "joint_trajectory_controller",
-                "target_arms": right_robot,
-                "active": True,
-            },
-            timeout=10.0,
-        )
-
-        # Hold the re-activated right-arm state long enough to observe whether reflex returns.
-        wait_after_right_activate = Wait.WAIT(
-            name="WaitAfterRightJTCActivate",
-            duration=WAIT_AFTER_RIGHT_ACTIVATE_SEC,
-        )
-
-        # Switch only the left arm back onto its joint trajectory controller.
-        switch_left_to_joint_trajectory = RealControllerCommand.REAL_CONTROLLER_COMMAND(
-            name="SwitchLeftArmToJointTrajectory",
+        # Switch both arms back onto their joint trajectory controllers.
+        switch_to_joint_trajectory = RealControllerCommand.REAL_CONTROLLER_COMMAND(
+            name="SwitchBothArmsToJointTrajectory",
             command={
                 "action_type": "setRobotDriveGainProfileAndSwitchController",
                 "robot_drive_gain_profile": "joint_trajectory_controller",
+                # "target_arms": grounded_robot_names,
                 "target_arms": "left_arm",
             },
             timeout=10.0,
         )
 
-        # Return only the left arm to its configured init pose after the controller test.
-        move_left_to_init = MoveJoint.MOVEJ(
-            name=f"{left_robot}_Init",
-            action_client=action_client[left_robot],
-            action_goal=left_blackboard.init_config,
-            robot_name=left_robot,
-            timeout=MOVE_TIME,
+        # Return both arms to their configured init poses after the controller test.
+        init_parallel = MoveParallel.MoveParallel(name="InitParallel")
+        init_parallel.add_children(
+            [
+                MoveJoint.MOVEJ(
+                    name=f"{left_robot}_Init",
+                    action_client=action_client[left_robot],
+                    action_goal=left_blackboard.init_config,
+                    robot_name=left_robot,
+                    timeout=MOVE_TIME,
+                ),
+                MoveJoint.MOVEJ(
+                    name=f"{right_robot}_Init",
+                    action_client=action_client[right_robot],
+                    action_goal=right_blackboard.init_config,
+                    robot_name=right_robot,
+                    timeout=MOVE_TIME,
+                ),
+            ]
         )
 
-        # Execute the full left-CTC/right-toggle experiment as one ordered sequence.
+        # Execute the full controller-switch smoke test as one ordered sequence.
         root.add_children(
             [
-                move_left_to_base_start,
-                switch_left_to_cartesian_impedance,
-                wait_before_right_deactivate,
-                deactivate_right_joint_trajectory,
-                wait_after_right_deactivate,
-                activate_right_joint_trajectory,
-                wait_after_right_activate,
-                switch_left_to_joint_trajectory,
-                move_left_to_init,
+                base_start_parallel,
+                switch_to_cartesian_impedance,
+                wait_after_switch,
+                switch_to_joint_trajectory,
+                init_parallel,
             ]
         )
         return root

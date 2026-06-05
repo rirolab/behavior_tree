@@ -11,6 +11,7 @@ setup(
     packages=[
         package_name,
         package_name + '.jobs',
+        package_name + '.jobs.tests',
         package_name + '.subtrees',
         package_name + '.utils',
     ],
