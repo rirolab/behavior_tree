@@ -17,13 +17,36 @@ class Move(base_job.BaseJob):
     def __init__(self, node):
         super(Move, self).__init__(node)
         try:
-            is_sim = bool(self._node.get_parameter("sim").value)
+            self.is_sim = bool(self._node.get_parameter("sim").value)
         except Exception:
-            is_sim = True
-        if is_sim:
+            self.is_sim = True
+        if self.is_sim:
             self.controller_command = IsaacSceneCommand.ISAAC_SCENE_COMMAND
+            self._switch_controller_action_type = (
+                "setRobotDriveGainProfileAndSwitchController"
+            )
+            self._switch_controller_profile_field = "robot_drive_gain_profile"
         else:
             self.controller_command = RealControllerCommand.REAL_CONTROLLER_COMMAND
+            self._switch_controller_action_type = "switchController"
+            self._switch_controller_profile_field = "controller_profile"
+
+    def make_switch_controller_command(self, profile_name, target_arms):
+        """
+        Build one controller-switch command using the payload shape for the current runtime.
+
+        Args:
+            profile_name (:obj:`str`): target controller profile.
+            target_arms: arm selector forwarded to the controller command behaviour.
+
+        Returns:
+            :obj:`dict`: controller-switch command payload.
+        """
+        return {
+            "action_type": self._switch_controller_action_type,
+            self._switch_controller_profile_field: profile_name,
+            "target_arms": target_arms,
+        }
 
     def acceptable_step(self, step):
         """
@@ -103,11 +126,10 @@ class Move(base_job.BaseJob):
         root = py_trees.composites.Sequence(name="Policy", memory=True)
         scene_cmd1 = self.controller_command(
             name="SwitchController1",
-            command={
-                "action_type": "setRobotDriveGainProfileAndSwitchController",
-                "robot_drive_gain_profile": "cartesian_impedance_controller",
-                "target_arms": robot_name,
-            },
+            command=self.make_switch_controller_command(
+                "cartesian_impedance_controller",
+                robot_name,
+            ),
             timeout=10.0,
         )
         run_policy = Policy.MOVEBYPOLICY(
@@ -119,11 +141,10 @@ class Move(base_job.BaseJob):
         )
         scene_cmd2 = self.controller_command(
             name="SwitchController2",
-            command={
-                "action_type": "setRobotDriveGainProfileAndSwitchController",
-                "robot_drive_gain_profile": "joint_trajectory_controller",
-                "target_arms": robot_name,
-            },
+            command=self.make_switch_controller_command(
+                "joint_trajectory_controller",
+                robot_name,
+            ),
             timeout=10.0,
         )
         root.add_children([scene_cmd1, run_policy, scene_cmd2])

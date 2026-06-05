@@ -12,7 +12,7 @@ from behavior_tree.utils.validation_utils import StepValidationResult
 
 class Move(base_job.BaseJob):
     """
-    Test job that switches both arms to cartesian impedance, waits, then switches back.
+    Test job that exercises both-arm and per-arm real controller switching.
     """
 
     def __init__(self, node):
@@ -179,76 +179,146 @@ class Move(base_job.BaseJob):
             memory=True,
         )
 
+        def make_switch_command(name, controller_profile, target_arms):
+            """
+            Build one real-controller bridge command for one arm or both arms.
+            """
+            return RealControllerCommand.REAL_CONTROLLER_COMMAND(
+                name=name,
+                command={
+                    "action_type": "switchController",
+                    "controller_profile": controller_profile,
+                    "target_arms": target_arms,
+                },
+                timeout=10.0,
+            )
+
+        def make_move_joint(name, robot_name, action_goal):
+            """
+            Build one joint move for a single arm.
+            """
+            return MoveJoint.MOVEJ(
+                name=name,
+                action_client=action_client[robot_name],
+                action_goal=action_goal,
+                robot_name=robot_name,
+                timeout=MOVE_TIME,
+            )
+
+        def make_wait(name):
+            """
+            Build one fixed wait used after controller switches.
+            """
+            return Wait.WAIT(
+                name=name,
+                duration=5.0,
+            )
+
         # Move both arms to the shared base_start preset before any controller switching.
         base_start_parallel = MoveParallel.MoveParallel(name="BaseStartParallel")
         base_start_parallel.add_children(
             [
-                MoveJoint.MOVEJ(
+                make_move_joint(
                     name=f"{left_robot}_BaseStart",
-                    action_client=action_client[left_robot],
-                    action_goal=base_start_left_joint_goal,
                     robot_name=left_robot,
-                    timeout=MOVE_TIME,
+                    action_goal=base_start_left_joint_goal,
                 ),
-                MoveJoint.MOVEJ(
+                make_move_joint(
                     name=f"{right_robot}_BaseStart",
-                    action_client=action_client[right_robot],
-                    action_goal=base_start_right_joint_goal,
                     robot_name=right_robot,
-                    timeout=MOVE_TIME,
+                    action_goal=base_start_right_joint_goal,
                 ),
             ]
         )
 
         # Switch both arms from JTC to cartesian impedance through the real bridge.
-        switch_to_cartesian_impedance = RealControllerCommand.REAL_CONTROLLER_COMMAND(
+        switch_to_cartesian_impedance = make_switch_command(
             name="SwitchBothArmsToCartesianImpedance",
-            command={
-                "action_type": "setRobotDriveGainProfileAndSwitchController",
-                "robot_drive_gain_profile": "cartesian_impedance_controller",
-                # "target_arms": grounded_robot_names,
-                "target_arms": "left_arm",
-            },
-            timeout=10.0,
+            controller_profile="cartesian_impedance_controller",
+            target_arms=grounded_robot_names,
         )
 
         # Hold the cartesian impedance mode briefly so the switch can be observed.
-        wait_after_switch = Wait.WAIT(
-            name="WaitAfterCartesianImpedanceSwitch",
-            duration=10.0,
-        )
+        wait_after_switch = make_wait("WaitAfterCartesianImpedanceSwitch")
 
         # Switch both arms back onto their joint trajectory controllers.
-        switch_to_joint_trajectory = RealControllerCommand.REAL_CONTROLLER_COMMAND(
+        switch_to_joint_trajectory = make_switch_command(
             name="SwitchBothArmsToJointTrajectory",
-            command={
-                "action_type": "setRobotDriveGainProfileAndSwitchController",
-                "robot_drive_gain_profile": "joint_trajectory_controller",
-                # "target_arms": grounded_robot_names,
-                "target_arms": "left_arm",
-            },
-            timeout=10.0,
+            controller_profile="joint_trajectory_controller",
+            target_arms=grounded_robot_names,
+        )
+        wait_after_joint_trajectory_switch = make_wait(
+            "WaitAfterJointTrajectorySwitch"
         )
 
         # Return both arms to their configured init poses after the controller test.
         init_parallel = MoveParallel.MoveParallel(name="InitParallel")
         init_parallel.add_children(
             [
-                MoveJoint.MOVEJ(
+                make_move_joint(
                     name=f"{left_robot}_Init",
-                    action_client=action_client[left_robot],
-                    action_goal=left_blackboard.init_config,
                     robot_name=left_robot,
-                    timeout=MOVE_TIME,
+                    action_goal=left_blackboard.init_config,
                 ),
-                MoveJoint.MOVEJ(
+                make_move_joint(
                     name=f"{right_robot}_Init",
-                    action_client=action_client[right_robot],
-                    action_goal=right_blackboard.init_config,
                     robot_name=right_robot,
-                    timeout=MOVE_TIME,
+                    action_goal=right_blackboard.init_config,
                 ),
             ]
+        )
+
+        # After both arms return to init, cycle each arm individually before parking it.
+        left_arm_switch_cycle = py_trees.composites.Sequence(
+            name="LeftArmJtcToCtcToJtc",
+            memory=True,
+        )
+        left_arm_switch_cycle.add_children(
+            [
+                make_switch_command(
+                    name="SwitchLeftArmToCartesianImpedance",
+                    controller_profile="cartesian_impedance_controller",
+                    target_arms=left_robot,
+                ),
+                make_wait("WaitAfterLeftArmCartesianImpedanceSwitch"),
+                make_switch_command(
+                    name="SwitchLeftArmToJointTrajectory",
+                    controller_profile="joint_trajectory_controller",
+                    target_arms=left_robot,
+                )
+            ]
+        )
+
+        left_arm_base_start = make_move_joint(
+            name=f"{left_robot}_BaseStartAgain",
+            robot_name=left_robot,
+            action_goal=base_start_left_joint_goal,
+        )
+
+        right_arm_switch_cycle = py_trees.composites.Sequence(
+            name="RightArmJtcToCtcToJtc",
+            memory=True,
+        )
+        right_arm_switch_cycle.add_children(
+            [
+                make_switch_command(
+                    name="SwitchRightArmToCartesianImpedance",
+                    controller_profile="cartesian_impedance_controller",
+                    target_arms=right_robot,
+                ),
+                make_wait("WaitAfterRightArmCartesianImpedanceSwitch"),
+                make_switch_command(
+                    name="SwitchRightArmToJointTrajectory",
+                    controller_profile="joint_trajectory_controller",
+                    target_arms=right_robot,
+                )
+            ]
+        )
+
+        right_arm_base_start = make_move_joint(
+            name=f"{right_robot}_BaseStartAgain",
+            robot_name=right_robot,
+            action_goal=base_start_right_joint_goal,
         )
 
         # Execute the full controller-switch smoke test as one ordered sequence.
@@ -258,7 +328,12 @@ class Move(base_job.BaseJob):
                 switch_to_cartesian_impedance,
                 wait_after_switch,
                 switch_to_joint_trajectory,
+                wait_after_joint_trajectory_switch,
                 init_parallel,
+                left_arm_switch_cycle,
+                left_arm_base_start,
+                right_arm_switch_cycle,
+                right_arm_base_start,
             ]
         )
         return root

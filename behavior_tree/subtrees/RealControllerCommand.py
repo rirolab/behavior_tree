@@ -97,7 +97,7 @@ class REAL_CONTROLLER_COMMAND(py_trees.behaviour.Behaviour):
                 )
                 return py_trees.common.Status.FAILURE
 
-            # Forward the command as-is so the bridge owns scope parsing and validation.
+            # Forward the pre-built real-controller command payload as-is.
             command = dict(self.resolve_command())
             req = StringString.Request()
             req.data = json.dumps(command)
