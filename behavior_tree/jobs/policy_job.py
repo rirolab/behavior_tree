@@ -136,7 +136,7 @@ class Move(base_job.BaseJob):
             name="MoveByPolicy",
             action_client=action_client,
             action_goal=goal[idx],
-            timeout=float(goal[idx].get("timeout", 5.0)),
+            timeout=float(goal[idx].get("timeout", 30.0)),
             robot_name=robot_name,
         )
         scene_cmd2 = self.controller_command(

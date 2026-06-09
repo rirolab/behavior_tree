@@ -607,6 +607,7 @@ def main(args=None):
             "jobs.move_job.Move",
             "jobs.gripper_job.Move",
             "jobs.policy_job.Move",
+            "jobs.dual_policy_job.Move",
             # DRB task related new jobs
             "jobs.drb_nopolicy_dual_grasp_job.Move",
             "jobs.drb_nopolicy_pick_job.Move",
@@ -614,6 +615,7 @@ def main(args=None):
             "jobs.drb_pick_job.Move",
             "jobs.tests.dual_policy_goto_test_job.Move",
             "jobs.tests.real_controller_switch_test_job.Move",
+            "jobs.tests.real_hil_serl_jtc_sequence_test_job.Move",
             "jobs.real_drb_dual_grasp_job.Move",
             "jobs.real_drb_pick_job.Move",
         ],

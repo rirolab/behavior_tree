@@ -166,7 +166,7 @@ class Move(base_job.BaseJob):
                 name=f"{robot_name}_MoveByPolicy",
                 action_client=action_client[robot_name],
                 action_goal=robot_goal,
-                timeout=float(robot_goal.get("timeout", 5.0)),
+                timeout=float(robot_goal.get("timeout", 30.0)),
                 robot_name=robot_name,
             )
             run_policy_parallel.add_child(run_policy)
