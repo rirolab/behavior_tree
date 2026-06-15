@@ -11,6 +11,8 @@ from behavior_tree.subtrees import (
     MoveJoint,
     MoveParallel,
     MovePose,
+    Policy,
+    RealControllerCommand,
     RingWorldModel,
     Wait,
 )
@@ -147,6 +149,49 @@ class Move(base_job.BaseJob):
         move_pose_with_logger.add_children([move_pose, joint_logger])
         return move_pose_with_logger
 
+    def make_policy_goal(self, step, robot_name, step_idx=None, default_timeout=5.0):
+        """
+        Build one real HIL-SERL policy goal for the requested arm.
+        """
+        # Merge the shared pick step with the requested robot policy block.
+        policy_goal = self.make_robot_specific_goal(step, robot_name, step_idx)
+        if policy_goal is None:
+            return None
+        if not bool(policy_goal.get("skill_id")):
+            return None
+
+        # Route the merged payload through the arm-client policy execution path.
+        policy_goal["primitive_action"] = "policy_execute"
+        try:
+            policy_goal["timeout"] = float(policy_goal.get("timeout", default_timeout))
+        except (TypeError, ValueError):
+            return None
+        return policy_goal
+
+    def make_policy_preload_requests(self, step, step_idx):
+        """
+        Build the left-arm policy preload request used by policy-mode pick.
+        """
+        # Ignore unrelated steps and non-policy pick modes.
+        if not self.acceptable_step(step):
+            return []
+        global_blackboard = py_trees.blackboard.Client()
+        global_blackboard.register_key(
+            key="drb_mode",
+            access=py_trees.common.Access.READ,
+        )
+        if global_blackboard.drb_mode != "policy":
+            return []
+
+        # Preload only the left policy that this job executes in policy mode.
+        left_robot, _ = self.resolve_left_right_robots(step)
+        if left_robot is None:
+            return []
+        policy_goal = self.make_policy_goal(step, left_robot, step_idx)
+        if policy_goal is None:
+            return []
+        return [(left_robot, policy_goal)]
+
     def create_root(
         self,
         action_client,
@@ -207,6 +252,7 @@ class Move(base_job.BaseJob):
             key="drb_mode",
             access=py_trees.common.Access.READ,
         )
+        does_policy_grasp = global_blackboard.drb_mode == "policy"
         does_manual_grasp = global_blackboard.drb_mode == "manual"
 
         # Resolve the initial dual-arm joint preset.
@@ -221,6 +267,74 @@ class Move(base_job.BaseJob):
                 "RealDrbPick: Missing left/right joint preset in pose preset [base_start]"
             )
             return None
+
+        # Resolve the second dual-arm preset used before the regrasp approach.
+        stack_side_start = global_blackboard.pose_presets.get("stack_side_start2_real")
+        if stack_side_start is None:
+            console.logerror("RealDrbPick: Missing pose preset [stack_side_start2_real]")
+            return None
+        stack_side_start_left_joint_goal = stack_side_start.get("left_joint_pos")
+        stack_side_start_right_joint_goal = stack_side_start.get("right_joint_pos")
+        if (
+            stack_side_start_left_joint_goal is None
+            or stack_side_start_right_joint_goal is None
+        ):
+            console.logerror(
+                "RealDrbPick: Missing left/right joint preset in pose preset [stack_side_start2_real]"
+            )
+            return None
+
+        # Resolve the stack-side left gripper opening for policy-mode staging.
+        if does_policy_grasp:
+            stack_side_start_left_gripper_values = stack_side_start.get(
+                "left_gripper_values"
+            )
+            if stack_side_start_left_gripper_values is None:
+                console.logerror(
+                    "RealDrbPick: Missing left_gripper_values in pose preset [stack_side_start2_real]"
+                )
+                return None
+            stack_side_start_left_gripper_open = (
+                stack_side_start_left_gripper_values.get("open")
+            )
+            if stack_side_start_left_gripper_open is None:
+                console.logerror(
+                    "RealDrbPick: Missing left gripper open preset in pose preset [stack_side_start2_real]"
+                )
+                return None
+
+        # Read left-arm gripper parameters for active pick-mode gripper commands.
+        if does_policy_grasp or does_manual_grasp:
+            left_blackboard = py_trees.blackboard.Client(namespace=left_robot)
+            left_blackboard.register_key(
+                key="gripper_open_pos",
+                access=py_trees.common.Access.READ,
+            )
+            left_blackboard.register_key(
+                key="gripper_close_pos",
+                access=py_trees.common.Access.READ,
+            )
+            left_blackboard.register_key(
+                key="gripper_open_force",
+                access=py_trees.common.Access.READ,
+            )
+            left_blackboard.register_key(
+                key="gripper_close_force",
+                access=py_trees.common.Access.READ,
+            )
+
+        # Resolve the left-arm policy payload before constructing policy subtrees.
+        if does_policy_grasp:
+            left_robot_policy_goal = self.make_policy_goal(
+                step,
+                left_robot,
+                idx,
+                default_timeout=MOVE_TIME,
+            )
+            if left_robot_policy_goal is None:
+                raise RuntimeError(
+                    f"real_drb_pick_job: missing valid policy goal for robot [{left_robot}]"
+                )
 
         # Move both robots to the initial joint preset in parallel.
         base_start_parallel = MoveParallel.MoveParallel(name="BaseStartParallel")
@@ -243,22 +357,6 @@ class Move(base_job.BaseJob):
             ]
         )
 
-        # Resolve the second dual-arm preset used before the regrasp approach.
-        stack_side_start = global_blackboard.pose_presets.get("stack_side_start2")
-        if stack_side_start is None:
-            console.logerror("RealDrbPick: Missing pose preset [stack_side_start]")
-            return None
-        stack_side_start_left_joint_goal = stack_side_start.get("left_joint_pos")
-        stack_side_start_right_joint_goal = stack_side_start.get("right_joint_pos")
-        if (
-            stack_side_start_left_joint_goal is None
-            or stack_side_start_right_joint_goal is None
-        ):
-            console.logerror(
-                "RealDrbPick: Missing left/right joint preset in pose preset [stack_side_start]"
-            )
-            return None
-
         # Estimate the ring target frame that the right arm will approach.
         pose_estimator = RingWorldModel.POSE_ESTIMATOR(
             name=plan_name,
@@ -269,56 +367,122 @@ class Move(base_job.BaseJob):
             tf_buffer=kwargs["tf_buffer"],
         )
 
-        # Replay the second stage with a left joint move and a right pose move plus logging.
-        stack_side_start_parallel = MoveParallel.MoveParallel(name="StackSideStartParallel")
-        stack_side_start_parallel.add_children(
-            [
-                MoveJoint.MOVEJ(
-                    name=f"{left_robot}_StackSideStart",
-                    action_client=action_clients[left_robot],
-                    action_goal=stack_side_start_left_joint_goal,
-                    robot_name=left_robot,
-                    timeout=MOVE_TIME,
-                ),
-                self.make_move_pose_with_logger(
-                    name=f"{right_robot}_StackSideStart",
-                    action_client=action_clients[right_robot],
-                    action_goal={"pose": plan_name + "/regrasp_target_down_right"},
-                    robot_name=right_robot,
-                    timeout=MOVE_TIME,
-                    joint_logger_kwargs=joint_logger_kwargs,
-                ),
-            ]
-        )
-
         # Assemble the full pick sequence in execution order.
         root = py_trees.composites.Sequence(name="RealDrbPick", memory=True)
         root.add_children(
             [
                 base_start_parallel,
                 pose_estimator,
-                stack_side_start_parallel,
             ]
         )
 
+        if does_policy_grasp:
+            # Replay the second stage while opening the left gripper in parallel.
+            stack_side_start_parallel = MoveParallel.MoveParallel(
+                name="StackSideStartParallel"
+            )
+            stack_side_start_parallel.add_children(
+                [
+                    MoveJoint.MOVEJ(
+                        name=f"{left_robot}_StackSideStart",
+                        action_client=action_clients[left_robot],
+                        action_goal=stack_side_start_left_joint_goal,
+                        robot_name=left_robot,
+                        timeout=MOVE_TIME,
+                    ),
+                    self.make_move_pose_with_logger(
+                        name=f"{right_robot}_StackSideStart",
+                        action_client=action_clients[right_robot],
+                        action_goal={"pose": plan_name + "/regrasp_target_down_right"},
+                        robot_name=right_robot,
+                        timeout=MOVE_TIME,
+                        joint_logger_kwargs=joint_logger_kwargs,
+                    ),
+                    Gripper.GOTO(
+                        name="LeftPolicyGripperOpen",
+                        action_client=action_clients[left_robot],
+                        action_goal=stack_side_start_left_gripper_open,
+                        force=left_blackboard.gripper_open_force,
+                        timeout=GRIPPER_MOVE_TIME,
+                        robot_name=left_robot,
+                    )
+                ]
+            )
+
+            # Switch the left robot into cartesian impedance before policy execution.
+            left_policy_switch_cartesian = RealControllerCommand.REAL_CONTROLLER_COMMAND(
+                name="SwitchLeftCartesianBeforePickPolicy",
+                command={
+                    "action_type": "switchController",
+                    "controller_profile": "cartesian_impedance_controller",
+                    "target_arms": left_robot,
+                },
+                timeout=10.0,
+            )
+
+            # Execute the left-arm policy through complex_action_client.
+            left_run_policy = Policy.MOVEBYPOLICY(
+                name=f"{left_robot}_MoveByPolicy",
+                action_client=action_clients[left_robot],
+                action_goal=left_robot_policy_goal,
+                timeout=float(left_robot_policy_goal.get("timeout", MOVE_TIME)),
+                robot_name=left_robot,
+            )
+
+            # Return the left robot to JTC before the final gripper close.
+            left_policy_switch_jtc = RealControllerCommand.REAL_CONTROLLER_COMMAND(
+                name="SwitchLeftJtcAfterPickPolicy",
+                command={
+                    "action_type": "switchController",
+                    "controller_profile": "joint_trajectory_controller",
+                    "target_arms": left_robot,
+                },
+                timeout=10.0,
+            )
+
+            # Close the left gripper after the policy handoff returns to JTC.
+            left_policy_gripper_close = Gripper.GOTO(
+                name="LeftPolicyGripperClose",
+                action_client=action_clients[left_robot],
+                action_goal=left_blackboard.gripper_close_pos,
+                force=left_blackboard.gripper_close_force,
+                timeout=GRIPPER_MOVE_TIME,
+                robot_name=left_robot,
+            )
+
+            root.add_children(
+                [
+                    stack_side_start_parallel,
+                    left_policy_switch_cartesian,
+                    left_run_policy,
+                    left_policy_switch_jtc,
+                    left_policy_gripper_close,
+                ]
+            )
+
         if does_manual_grasp:
-            # Read left-arm gripper parameters for the operator-assisted grasp step.
-            left_blackboard = py_trees.blackboard.Client(namespace=left_robot)
-            left_blackboard.register_key(
-                key="gripper_open_pos",
-                access=py_trees.common.Access.READ,
+            # Replay the second stage with a left joint move and a right pose move plus logging.
+            stack_side_start_parallel = MoveParallel.MoveParallel(
+                name="StackSideStartParallel"
             )
-            left_blackboard.register_key(
-                key="gripper_close_pos",
-                access=py_trees.common.Access.READ,
-            )
-            left_blackboard.register_key(
-                key="gripper_open_force",
-                access=py_trees.common.Access.READ,
-            )
-            left_blackboard.register_key(
-                key="gripper_close_force",
-                access=py_trees.common.Access.READ,
+            stack_side_start_parallel.add_children(
+                [
+                    MoveJoint.MOVEJ(
+                        name=f"{left_robot}_StackSideStart",
+                        action_client=action_clients[left_robot],
+                        action_goal=stack_side_start_left_joint_goal,
+                        robot_name=left_robot,
+                        timeout=MOVE_TIME,
+                    ),
+                    self.make_move_pose_with_logger(
+                        name=f"{right_robot}_StackSideStart",
+                        action_client=action_clients[right_robot],
+                        action_goal={"pose": plan_name + "/regrasp_target_down_right"},
+                        robot_name=right_robot,
+                        timeout=MOVE_TIME,
+                        joint_logger_kwargs=joint_logger_kwargs,
+                    ),
+                ]
             )
 
             # Append the manual grasp steps directly after the replay stages finish.
@@ -358,6 +522,7 @@ class Move(base_job.BaseJob):
 
             root.add_children(
                 [
+                    stack_side_start_parallel,
                     left_manual_grasp_move,
                     left_manual_grasp_open,
                     left_manual_grasp_wait,
