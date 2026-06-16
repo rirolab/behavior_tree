@@ -14,6 +14,7 @@ from behavior_tree.subtrees import (
     Policy,
     RealControllerCommand,
     RingWorldModel,
+    Trigger,
     Wait,
 )
 from behavior_tree.utils.parameter_utils import make_string_list
@@ -255,6 +256,18 @@ class Move(base_job.BaseJob):
         does_policy_grasp = global_blackboard.drb_mode == "policy"
         does_manual_grasp = global_blackboard.drb_mode == "manual"
 
+        # Read the policy reward trigger topic from the BT node parameters.
+        reward_check_trigger_topic = ""
+        if does_policy_grasp:
+            if self._node.has_parameter("reward_check_trigger_topic"):
+                reward_check_trigger_topic = str(
+                    self._node.get_parameter("reward_check_trigger_topic").value
+                ).strip()
+            if not reward_check_trigger_topic:
+                raise RuntimeError(
+                    "real_drb_pick_job: reward_check_trigger_topic is required in policy mode"
+                )
+
         # Resolve the initial dual-arm joint preset.
         base_start = global_blackboard.pose_presets.get("base_start")
         if base_start is None:
@@ -429,6 +442,15 @@ class Move(base_job.BaseJob):
                 robot_name=left_robot,
             )
 
+            # Enable reward checking only while the left policy is running.
+            left_run_policy_with_reward_trigger = Trigger.RUN_WITH_BOOL_TRIGGER(
+                name="LeftPickPolicyRewardTrigger",
+                child=left_run_policy,
+                topic_name=reward_check_trigger_topic,
+                start_value=True,
+                stop_value=False,
+            )
+
             # Return the left robot to JTC before the final gripper close.
             left_policy_switch_jtc = RealControllerCommand.REAL_CONTROLLER_COMMAND(
                 name="SwitchLeftJtcAfterPickPolicy",
@@ -454,7 +476,7 @@ class Move(base_job.BaseJob):
                 [
                     stack_side_start_parallel,
                     left_policy_switch_cartesian,
-                    left_run_policy,
+                    left_run_policy_with_reward_trigger,
                     left_policy_switch_jtc,
                     left_policy_gripper_close,
                 ]
