@@ -283,6 +283,12 @@ class Move(base_job.BaseJob):
         holding_robot_blackboard.register_key(key="gripper_open_force", access=py_trees.common.Access.READ)
         holding_robot_blackboard.register_key(key="gripper_close_force", access=py_trees.common.Access.READ)
         holding_robot_blackboard.register_key(key="init_config", access=py_trees.common.Access.READ)
+        # Reuse the robot-local blackboard for right-arm policy gripper commands.
+        right_robot_blackboard = (
+            approach_robot_blackboard
+            if right_robot == approach_robot
+            else holding_robot_blackboard
+        )
 
         # Get drb_mode
         global_blackboard.register_key(
@@ -356,6 +362,20 @@ class Move(base_job.BaseJob):
 
         # Resolve both arm policy payloads before constructing policy subtrees.
         if does_policy_grasp:
+            # Resolve the right-arm open target used before stage2 fit policy execution.
+            above_mold_start_right_gripper_values = above_mold_start.get("right_gripper_values")
+            if not isinstance(above_mold_start_right_gripper_values, dict):
+                raise RuntimeError(
+                    "real_drb_dual_grasp_job: missing right_gripper_values in "
+                    "pose preset [above_mold_start]"
+                )
+            right_policy_open_gripper_goal = above_mold_start_right_gripper_values.get("open")
+            if right_policy_open_gripper_goal is None:
+                raise RuntimeError(
+                    "real_drb_dual_grasp_job: missing right_gripper_values.open in "
+                    "pose preset [above_mold_start]"
+                )
+
             left_robot_policy_goal = self.make_policy_goal(
                 step,
                 left_robot,
@@ -399,7 +419,7 @@ class Move(base_job.BaseJob):
                 holding_robot_regrasp_up_joint_goal,
             ],
             robot_name=holding_robot,
-            timeout=2*MOVE_TIME,
+            timeout=1.5*MOVE_TIME,
         )
         move_approach_right = self.make_move_pose_with_logger(
             name="ApproachRobotRegraspDownRight",
@@ -547,6 +567,14 @@ class Move(base_job.BaseJob):
                 name="RightFr3PolicySeq",
                 memory=True,
             )
+            right_policy_open_gripper = Gripper.GOTO(
+                name="OpenRightGripperBeforeFitPolicy",
+                action_client=action_clients[right_robot],
+                action_goal=right_policy_open_gripper_goal,
+                force=right_robot_blackboard.gripper_open_force,
+                timeout=GRIPPER_TIME,
+                robot_name=right_robot,
+            )
             right_policy_switch_cartesian = RealControllerCommand.REAL_CONTROLLER_COMMAND(
                 name="SwitchRightCartesianBeforeFitPolicy",
                 command={
@@ -581,6 +609,7 @@ class Move(base_job.BaseJob):
             )
             right_policy_seq.add_children(
                 [
+                    right_policy_open_gripper,
                     right_policy_switch_cartesian,
                     right_run_policy_with_reward_trigger,
                     right_policy_switch_jtc,
@@ -613,8 +642,8 @@ class Move(base_job.BaseJob):
                 [
                     left_wait_until_trigger,
                     left_policy_seq,
-                    # right_policy_seq,
-                    # policy_base_start_parallel,
+                    right_policy_seq,
+                    policy_base_start_parallel,
                 ]
             )
         return root

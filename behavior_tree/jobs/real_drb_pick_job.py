@@ -254,10 +254,10 @@ class Move(base_job.BaseJob):
             access=py_trees.common.Access.READ,
         )
         ############## For test!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        # does_policy_grasp = global_blackboard.drb_mode == "policy"
-        # does_manual_grasp = global_blackboard.drb_mode == "manual"
-        does_policy_grasp = False
-        does_manual_grasp = True
+        does_policy_grasp = global_blackboard.drb_mode == "policy"
+        does_manual_grasp = global_blackboard.drb_mode == "manual"
+        # does_policy_grasp = False
+        # does_manual_grasp = True
         
 
         # Read the policy reward trigger topic from the BT node parameters.
