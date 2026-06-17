@@ -14,6 +14,7 @@ from behavior_tree.subtrees import (
     Policy,
     RealControllerCommand,
     RingWorldModel,
+    Subprocess,
     Trigger,
     Wait,
 )
@@ -260,17 +261,17 @@ class Move(base_job.BaseJob):
         # does_manual_grasp = True
         
 
-        # Read the policy reward trigger topic from the BT node parameters.
-        reward_check_trigger_topic = ""
-        if does_policy_grasp:
-            if self._node.has_parameter("reward_check_trigger_topic"):
-                reward_check_trigger_topic = str(
-                    self._node.get_parameter("reward_check_trigger_topic").value
-                ).strip()
-            if not reward_check_trigger_topic:
-                raise RuntimeError(
-                    "real_drb_pick_job: reward_check_trigger_topic is required in policy mode"
-                )
+        # External pick actor owns reward checking during policy-mode execution.
+        # reward_check_trigger_topic = ""
+        # if does_policy_grasp:
+        #     if self._node.has_parameter("reward_check_trigger_topic"):
+        #         reward_check_trigger_topic = str(
+        #             self._node.get_parameter("reward_check_trigger_topic").value
+        #         ).strip()
+        #     if not reward_check_trigger_topic:
+        #         raise RuntimeError(
+        #             "real_drb_pick_job: reward_check_trigger_topic is required in policy mode"
+        #         )
 
         # Resolve the initial dual-arm joint preset.
         base_start = global_blackboard.pose_presets.get("base_start")
@@ -340,18 +341,50 @@ class Move(base_job.BaseJob):
                 access=py_trees.common.Access.READ,
             )
 
-        # Resolve the left-arm policy payload before constructing policy subtrees.
+        # External pick actor replaces the arm-client policy payload in policy mode.
         if does_policy_grasp:
-            left_robot_policy_goal = self.make_policy_goal(
-                step,
-                left_robot,
-                idx,
-                default_timeout=MOVE_TIME,
-            )
-            if left_robot_policy_goal is None:
-                raise RuntimeError(
-                    f"real_drb_pick_job: missing valid policy goal for robot [{left_robot}]"
-                )
+            # left_robot_policy_goal = self.make_policy_goal(
+            #     step,
+            #     left_robot,
+            #     idx,
+            #     default_timeout=MOVE_TIME,
+            # )
+            # if left_robot_policy_goal is None:
+            #     raise RuntimeError(
+            #         f"real_drb_pick_job: missing valid policy goal for robot [{left_robot}]"
+            #     )
+            subprocess_output_log_dir = None
+            if self._node.has_parameter("subprocess_output_log_dir"):
+                subprocess_output_log_dir = str(
+                    self._node.get_parameter("subprocess_output_log_dir").value
+                ).strip()
+                if subprocess_output_log_dir == "":
+                    subprocess_output_log_dir = None
+            azure_kinect_shm_publisher_command = [
+                "bash",
+                "-lc",
+                (
+                    "source /home/manip/anaconda3/etc/profile.d/conda.sh && "
+                    "conda activate real-panda-orbbec-sam2-reward && "
+                    "cd /home/manip/drb_ws/IsaacSim-Hil-Serl/examples/experiments/"
+                    "azure_kinect_dk_no_ros_python && "
+                    "python azure_kinect_shm_publisher.py --config "
+                    "config/pointcloud_server.yaml"
+                ),
+            ]
+            real_pick_panda_actor_command = [
+                "bash",
+                "-lc",
+                (
+                    "cd /home/manip/drb_ws/IsaacSim-Hil-Serl && "
+                    "source .venv/bin/activate && "
+                    "bash run/actor.sh --exp_name real_pick_panda --profile real "
+                    "--scenario_name pick_panda --scenario_run_number=2 "
+                    "--eval_checkpoint_step=58000 --eval_n_trajs=1 "
+                    "--show_camera_preview --show_reward_camera_preview "
+                    "--eval_print_every 1"
+                ),
+            ]
 
         # Move both robots to the initial joint preset in parallel.
         base_start_parallel = MoveParallel.MoveParallel(name="BaseStartParallel")
@@ -437,23 +470,101 @@ class Move(base_job.BaseJob):
                 timeout=10.0,
             )
 
-            # Execute the left-arm policy through complex_action_client.
-            left_run_policy = Policy.MOVEBYPOLICY(
-                name=f"{left_robot}_MoveByPolicy",
-                action_client=action_clients[left_robot],
-                action_goal=left_robot_policy_goal,
-                timeout=float(left_robot_policy_goal.get("timeout", MOVE_TIME)),
+            wait_until_trigger_temp = Wait.WAIT_UNTIL_TRIGGER(
+                name="WaitUntilTriggerTemp",
                 robot_name=left_robot,
             )
 
-            # Enable reward checking only while the left policy is running.
-            left_run_policy_with_reward_trigger = Trigger.RUN_WITH_BOOL_TRIGGER(
-                name="LeftPickPolicyRewardTrigger",
-                child=left_run_policy,
-                topic_name=reward_check_trigger_topic,
-                start_value=True,
-                stop_value=False,
+            # Open the cartesian command HTTP gate before the external actor runs.
+            pick_cartesian_command_gate_enable = (
+                RealControllerCommand.CARTESIAN_COMMAND_HTTP_GATE(
+                    name="EnablePickCartesianCommandHttpGate",
+                    command={
+                        "reset_mode": "pick_reset",
+                        "cartesian_command_gate": "enable",
+                    },
+                    timeout=10.0,
+                )
             )
+
+            # Run the Azure Kinect shared-memory publisher until its ready logs appear.
+            azure_kinect_shm_publisher = Subprocess.SUBPROCESS(
+                name="AzureKinectShmPublisher",
+                command=azure_kinect_shm_publisher_command,
+                success_text_list=[
+                    "Opened Azure Kinect shared-memory publisher",
+                    "Publishing Azure RGB",
+                    "Publishing Azure heatmap",
+                    "Using native Azure Kinect library",
+                ],
+                timeout=60.0,
+                output_log_dir=subprocess_output_log_dir,
+            )
+
+            # Run the external real-pick actor until its final evaluation logs appear.
+            real_pick_panda_actor = Subprocess.SUBPROCESS(
+                name="RealPickPandaActor",
+                command=real_pick_panda_actor_command,
+                success_text_list=[
+                    "Evaluation Trajectory*episode_return*success*failure*done",
+                    "Final Success Rate",
+                    "Final Failure Rate",
+                    "Mean Episode Return",
+                ],
+                timeout=60.0,
+                output_log_dir=subprocess_output_log_dir,
+            )
+
+            # Keep the publisher alive while the external real-pick actor executes.
+            pick_subprocess_group = Subprocess.PROCESS_GROUP_SEQ(
+                name="PickSubprocessGroupSeq",
+                children=[
+                    azure_kinect_shm_publisher,
+                    real_pick_panda_actor,
+                ],
+            )
+
+            # Close the cartesian command HTTP gate after the external actor finishes.
+            pick_cartesian_command_gate_pause = (
+                RealControllerCommand.CARTESIAN_COMMAND_HTTP_GATE(
+                    name="PausePickCartesianCommandHttpGate",
+                    command={
+                        "cartesian_command_gate": "pause",
+                    },
+                    timeout=10.0,
+                )
+            )
+
+            # Chain gate control and the external real-pick process group.
+            left_external_pick_policy_seq = py_trees.composites.Sequence(
+                name="LeftExternalPickPolicySeq",
+                memory=True,
+            )
+            left_external_pick_policy_seq.add_children(
+                [
+                    pick_cartesian_command_gate_enable,
+                    pick_subprocess_group,
+                    pick_cartesian_command_gate_pause,
+                ]
+            )
+
+            # Execute the left-arm policy through complex_action_client.
+            # left_run_policy = Policy.MOVEBYPOLICY(
+            #     name=f"{left_robot}_MoveByPolicy",
+            #     action_client=action_clients[left_robot],
+            #     action_goal=left_robot_policy_goal,
+            #     timeout=float(left_robot_policy_goal.get("timeout", MOVE_TIME)),
+            #     robot_name=left_robot,
+            # )
+
+            # Enable reward checking only while the left policy is running.
+            # left_run_policy_with_reward_trigger = Trigger.RUN_WITH_BOOL_TRIGGER(
+            #     name="LeftPickPolicyRewardTrigger",
+            #     child=left_run_policy,
+            #     topic_name=reward_check_trigger_topic,
+            #     start_value=True,
+            #     stop_value=False,
+            # )
 
             # Return the left robot to JTC before the final gripper close.
             left_policy_switch_jtc = RealControllerCommand.REAL_CONTROLLER_COMMAND(
@@ -480,7 +591,8 @@ class Move(base_job.BaseJob):
                 [
                     stack_side_start_parallel,
                     left_policy_switch_cartesian,
-                    left_run_policy_with_reward_trigger,
+                    # wait_until_trigger_temp,
+                    left_external_pick_policy_seq,
                     left_policy_switch_jtc,
                     left_policy_gripper_close,
                 ]

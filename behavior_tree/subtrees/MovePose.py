@@ -33,8 +33,10 @@ class MOVEP(Move.MOVE):
                                    timeout=timeout,
                                    robot_name=robot_name)
 
-        self.blackboard.register_key(key=self.action_goal['pose'], \
-                                     access=py_trees.common.Access.READ)
+        # Register blackboard pose keys while allowing direct Pose goals.
+        if type(self.action_goal['pose']) is not geometry_msgs.msg.Pose:
+            self.blackboard.register_key(key=self.action_goal['pose'], \
+                                         access=py_trees.common.Access.READ)
 
 
     def update(self):

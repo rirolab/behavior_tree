@@ -15,6 +15,7 @@ from behavior_tree.subtrees import (
     Policy,
     RealControllerCommand,
     RingWorldModel,
+    Subprocess,
     Trigger,
     Wait,
 )
@@ -510,113 +511,298 @@ class Move(base_job.BaseJob):
             ]
         )
 
+        # if does_policy_grasp:
+        #     ### For test!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        #     left_wait_until_trigger = Wait.WAIT_UNTIL_TRIGGER(
+        #         name="LeftWaitUntilTrigger",
+        #         robot_name=left_robot,
+        #     )
+
+        #     # Run stage1 placement on the left arm while only its reward helper is active.
+        #     left_policy_seq = py_trees.composites.Sequence(
+        #         name="LeftPandaPolicySeq",
+        #         memory=True,
+        #     )
+        #     left_policy_switch_cartesian = RealControllerCommand.REAL_CONTROLLER_COMMAND(
+        #         name="SwitchLeftCartesianBeforePlacementPolicy",
+        #         command={
+        #             "action_type": "switchController",
+        #             "controller_profile": "cartesian_impedance_controller",
+        #             "target_arms": left_robot,
+        #         },
+        #         timeout=10.0,
+        #     )
+        #     left_run_policy = Policy.MOVEBYPOLICY(
+        #         name=f"{left_robot}_PlacementPolicy",
+        #         action_client=action_clients[left_robot],
+        #         action_goal=left_robot_policy_goal,
+        #         timeout=float(left_robot_policy_goal.get("timeout", MOVE_TIME)),
+        #         robot_name=left_robot,
+        #     )
+        #     left_run_policy_with_reward_trigger = Trigger.RUN_WITH_BOOL_TRIGGER(
+        #         name="Stage1PlacementRewardTrigger",
+        #         child=left_run_policy,
+        #         topic_name=stage1_reward_check_trigger_topic,
+        #         start_value=True,
+        #         stop_value=False,
+        #     )
+        #     left_policy_switch_jtc = RealControllerCommand.REAL_CONTROLLER_COMMAND(
+        #         name="SwitchLeftJtcAfterPlacementPolicy",
+        #         command={
+        #             "action_type": "switchController",
+        #             "controller_profile": "joint_trajectory_controller",
+        #             "target_arms": left_robot,
+        #         },
+        #         timeout=10.0,
+        #     )
+        #     left_policy_seq.add_children(
+        #         [
+        #             left_policy_switch_cartesian,
+        #             left_run_policy_with_reward_trigger,
+        #             left_policy_switch_jtc,
+        #         ]
+        #     )
+
+        #     # Run stage2 fit on the right arm while only its reward helper is active.
+        #     right_policy_seq = py_trees.composites.Sequence(
+        #         name="RightFr3PolicySeq",
+        #         memory=True,
+        #     )
+        #     right_policy_open_gripper = Gripper.GOTO(
+        #         name="OpenRightGripperBeforeFitPolicy",
+        #         action_client=action_clients[right_robot],
+        #         action_goal=right_policy_open_gripper_goal,
+        #         force=right_robot_blackboard.gripper_open_force,
+        #         timeout=GRIPPER_TIME,
+        #         robot_name=right_robot,
+        #     )
+        #     right_policy_switch_cartesian = RealControllerCommand.REAL_CONTROLLER_COMMAND(
+        #         name="SwitchRightCartesianBeforeFitPolicy",
+        #         command={
+        #             "action_type": "switchController",
+        #             "controller_profile": "cartesian_impedance_controller",
+        #             "target_arms": right_robot,
+        #         },
+        #         timeout=10.0,
+        #     )
+        #     right_run_policy = Policy.MOVEBYPOLICY(
+        #         name=f"{right_robot}_FitPolicy",
+        #         action_client=action_clients[right_robot],
+        #         action_goal=right_robot_policy_goal,
+        #         timeout=float(right_robot_policy_goal.get("timeout", MOVE_TIME)),
+        #         robot_name=right_robot,
+        #     )
+        #     right_run_policy_with_reward_trigger = Trigger.RUN_WITH_BOOL_TRIGGER(
+        #         name="Stage2FitRewardTrigger",
+        #         child=right_run_policy,
+        #         topic_name=stage2_reward_check_trigger_topic,
+        #         start_value=True,
+        #         stop_value=False,
+        #     )
+        #     right_policy_switch_jtc = RealControllerCommand.REAL_CONTROLLER_COMMAND(
+        #         name="SwitchRightJtcAfterFitPolicy",
+        #         command={
+        #             "action_type": "switchController",
+        #             "controller_profile": "joint_trajectory_controller",
+        #             "target_arms": right_robot,
+        #         },
+        #         timeout=10.0,
+        #     )
+        #     right_policy_seq.add_children(
+        #         [
+        #             right_policy_open_gripper,
+        #             right_policy_switch_cartesian,
+        #             right_run_policy_with_reward_trigger,
+        #             right_policy_switch_jtc,
+        #         ]
+        #     )
+
+        #     # Return both arms to base_start with JTC after both policy stages finish.
+        #     policy_base_start_parallel = MoveParallel.MoveParallel(
+        #         name="PolicyBaseStartParallel"
+        #     )
+        #     policy_base_start_parallel.add_children(
+        #         [
+        #             MoveJoint.MOVEJ(
+        #                 name=f"{left_robot}_PolicyBaseStart",
+        #                 action_client=action_clients[left_robot],
+        #                 action_goal=base_start_left_joint_goal,
+        #                 robot_name=left_robot,
+        #                 timeout=MOVE_TIME,
+        #             ),
+        #             MoveJoint.MOVEJ(
+        #                 name=f"{right_robot}_PolicyBaseStart",
+        #                 action_client=action_clients[right_robot],
+        #                 action_goal=base_start_right_joint_goal,
+        #                 robot_name=right_robot,
+        #                 timeout=MOVE_TIME,
+        #             ),
+        #         ]
+        #     )
+        #     root.add_children(
+        #         [
+        #             left_wait_until_trigger,
+        #             left_policy_seq,
+        #             right_policy_seq,
+        #             policy_base_start_parallel,
+        #         ]
+        #     )
+
         if does_policy_grasp:
-            ### For test!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-            left_wait_until_trigger = Wait.WAIT_UNTIL_TRIGGER(
-                name="LeftWaitUntilTrigger",
+            wait_until_trigger_temp = Wait.WAIT_UNTIL_TRIGGER(
+                name="WaitUntilTriggerTemp",
                 robot_name=left_robot,
             )
 
-            # Run stage1 placement on the left arm while only its reward helper is active.
-            left_policy_seq = py_trees.composites.Sequence(
-                name="LeftPandaPolicySeq",
-                memory=True,
-            )
-            left_policy_switch_cartesian = RealControllerCommand.REAL_CONTROLLER_COMMAND(
-                name="SwitchLeftCartesianBeforePlacementPolicy",
+            # Read the relative output log directory for external policy subprocesses.
+            subprocess_output_log_dir = None
+            if self._node.has_parameter("subprocess_output_log_dir"):
+                subprocess_output_log_dir = str(
+                    self._node.get_parameter("subprocess_output_log_dir").value
+                ).strip()
+                if subprocess_output_log_dir == "":
+                    subprocess_output_log_dir = None
+
+            # Build the Orbbec shared-memory receiver command for the reward camera stream.
+            orbbec_zmq_to_shm_receiver_command = [
+                "bash",
+                "-lc",
+                (
+                    "source /home/manip/anaconda3/etc/profile.d/conda.sh && "
+                    "conda activate real-panda-orbbec-sam2-reward && "
+                    "cd /home/manip/drb_ws/IsaacSim-Hil-Serl/examples/"
+                    "reward_real_placement_fr3 && "
+                    "python tools/orbbec_zmq_to_shm_receiver.py "
+                    "--connect tcp://192.168.0.16:6001 "
+                    "--rgb_shm_name drb_orbbec "
+                    "--heatmap_shm_name drb_orbbec_depth_heatmap "
+                    "--show_monitor"
+                ),
+            ]
+
+            # Build the chained placement-and-fit inference command.
+            chained_policy_inference_command = [
+                "bash",
+                "-lc",
+                (
+                    "cd /home/manip/drb_ws/IsaacSim-Hil-Serl && "
+                    "source .venv/bin/activate && "
+                    "python examples/chained_policy_inference.py "
+                    "--stage1_exp_name real_placement_panda_simple_force_base_orbbec "
+                    "--stage1_profile real "
+                    "--stage1_scenario_name placement "
+                    "--stage1_scenario_run_number 6 "
+                    "--stage1_checkpoint_step 11000 "
+                    "--stage2_exp_name real_fit_fr3_base_no_heatmap "
+                    "--stage2_profile real "
+                    "--stage2_scenario_name fit_fr3_base_no_heatmap "
+                    "--stage2_scenario_run_number 2 "
+                    "--stage2_checkpoint_step 19000 "
+                    "--num_full_inference 1 "
+                    "--with_intervention "
+                    "--stage1_move_fr3_home_before_gripper_reset "
+                    "--stage1_close_fr3_gripper_after_reset "
+                    "--stage2_close_fr3_gripper_before_offset_move "
+                    "--stage2_post_reset_policy_delay_seconds 0 "
+                    "--stage2_fr3_gripper_close_to_policy_delay_seconds 0 "
+                    "--no-stage2_move_to_stage1_home_on_finish "
+                    "--show_camera_preview "
+                    "--print_every 1 "
+                    "--stage2_pre_open_y_offset_m 0 "
+                    "--stage2_pre_open_z_offset_m 0 "
+                    "--no-policy_argmax "
+                    "--abort_on_stage1_failure "
+                    "--stage2_force_fr3_gripper_close"
+                ),
+            ]
+
+            # Switch both real arms into cartesian impedance before external policy execution.
+            policy_switch_cartesian = RealControllerCommand.REAL_CONTROLLER_COMMAND(
+                name="SwitchBothCartesianBeforePlacementFitPolicy",
                 command={
                     "action_type": "switchController",
                     "controller_profile": "cartesian_impedance_controller",
-                    "target_arms": left_robot,
+                    "target_arms": [left_robot, right_robot],
                 },
                 timeout=10.0,
             )
-            left_run_policy = Policy.MOVEBYPOLICY(
-                name=f"{left_robot}_PlacementPolicy",
-                action_client=action_clients[left_robot],
-                action_goal=left_robot_policy_goal,
-                timeout=float(left_robot_policy_goal.get("timeout", MOVE_TIME)),
-                robot_name=left_robot,
+
+            # Open the cartesian command HTTP gate before the chained policy runs.
+            placement_cartesian_command_gate_enable = (
+                RealControllerCommand.CARTESIAN_COMMAND_HTTP_GATE(
+                    name="EnablePlacementCartesianCommandHttpGate",
+                    command={
+                        "reset_mode": "placement_panda",
+                        "cartesian_command_gate": "enable",
+                    },
+                    timeout=10.0,
+                )
             )
-            left_run_policy_with_reward_trigger = Trigger.RUN_WITH_BOOL_TRIGGER(
-                name="Stage1PlacementRewardTrigger",
-                child=left_run_policy,
-                topic_name=stage1_reward_check_trigger_topic,
-                start_value=True,
-                stop_value=False,
+
+            # Run the Orbbec receiver until its ready logs appear.
+            orbbec_zmq_to_shm_receiver = Subprocess.SUBPROCESS(
+                name="OrbbecZmqToShmReceiver",
+                command=orbbec_zmq_to_shm_receiver_command,
+                success_text_list=[
+                    "[orbbec_zmq_to_shm_receiver] connect*ext_cam_robot*ext_cam_robot_z_heatmap",
+                    "[orbbec_zmq_to_shm_receiver] opened",
+                ],
+                timeout=60.0,
+                output_log_dir=subprocess_output_log_dir,
             )
-            left_policy_switch_jtc = RealControllerCommand.REAL_CONTROLLER_COMMAND(
-                name="SwitchLeftJtcAfterPlacementPolicy",
+
+            # Run the chained placement-and-fit policy until both stages report success.
+            chained_policy_inference = Subprocess.SUBPROCESS(
+                name="ChainedPlacementFitPolicyInference",
+                command=chained_policy_inference_command,
+                success_text_list=[
+                    "[chained] stage1 success",
+                    "[chained] stage2 success at",
+                ],
+                failure_text_list=[
+                    {
+                        "or": [
+                            "[chained] stage1 ended at*success=False",
+                            "[chained] stage2 ended at*success=False",
+                        ],
+                    },
+                ],
+                timeout=100.0,
+                output_log_dir=subprocess_output_log_dir,
+            )
+
+            # Keep the receiver alive while chained placement-and-fit inference runs.
+            placement_fit_subprocess_group = Subprocess.PROCESS_GROUP_SEQ(
+                name="PlacementFitSubprocessGroupSeq",
+                children=[
+                    orbbec_zmq_to_shm_receiver,
+                    chained_policy_inference,
+                ],
+            )
+
+            # Close the cartesian command HTTP gate after the chained policy finishes.
+            placement_cartesian_command_gate_pause = (
+                RealControllerCommand.CARTESIAN_COMMAND_HTTP_GATE(
+                    name="PausePlacementCartesianCommandHttpGate",
+                    command={
+                        "cartesian_command_gate": "pause",
+                    },
+                    timeout=10.0,
+                )
+            )
+
+            # Switch both real arms back into joint trajectory control after policy execution.
+            policy_switch_jtc = RealControllerCommand.REAL_CONTROLLER_COMMAND(
+                name="SwitchBothJtcAfterPlacementFitPolicy",
                 command={
                     "action_type": "switchController",
                     "controller_profile": "joint_trajectory_controller",
-                    "target_arms": left_robot,
+                    "target_arms": [left_robot, right_robot],
                 },
                 timeout=10.0,
-            )
-            left_policy_seq.add_children(
-                [
-                    left_policy_switch_cartesian,
-                    left_run_policy_with_reward_trigger,
-                    left_policy_switch_jtc,
-                ]
             )
 
-            # Run stage2 fit on the right arm while only its reward helper is active.
-            right_policy_seq = py_trees.composites.Sequence(
-                name="RightFr3PolicySeq",
-                memory=True,
-            )
-            right_policy_open_gripper = Gripper.GOTO(
-                name="OpenRightGripperBeforeFitPolicy",
-                action_client=action_clients[right_robot],
-                action_goal=right_policy_open_gripper_goal,
-                force=right_robot_blackboard.gripper_open_force,
-                timeout=GRIPPER_TIME,
-                robot_name=right_robot,
-            )
-            right_policy_switch_cartesian = RealControllerCommand.REAL_CONTROLLER_COMMAND(
-                name="SwitchRightCartesianBeforeFitPolicy",
-                command={
-                    "action_type": "switchController",
-                    "controller_profile": "cartesian_impedance_controller",
-                    "target_arms": right_robot,
-                },
-                timeout=10.0,
-            )
-            right_run_policy = Policy.MOVEBYPOLICY(
-                name=f"{right_robot}_FitPolicy",
-                action_client=action_clients[right_robot],
-                action_goal=right_robot_policy_goal,
-                timeout=float(right_robot_policy_goal.get("timeout", MOVE_TIME)),
-                robot_name=right_robot,
-            )
-            right_run_policy_with_reward_trigger = Trigger.RUN_WITH_BOOL_TRIGGER(
-                name="Stage2FitRewardTrigger",
-                child=right_run_policy,
-                topic_name=stage2_reward_check_trigger_topic,
-                start_value=True,
-                stop_value=False,
-            )
-            right_policy_switch_jtc = RealControllerCommand.REAL_CONTROLLER_COMMAND(
-                name="SwitchRightJtcAfterFitPolicy",
-                command={
-                    "action_type": "switchController",
-                    "controller_profile": "joint_trajectory_controller",
-                    "target_arms": right_robot,
-                },
-                timeout=10.0,
-            )
-            right_policy_seq.add_children(
-                [
-                    right_policy_open_gripper,
-                    right_policy_switch_cartesian,
-                    right_run_policy_with_reward_trigger,
-                    right_policy_switch_jtc,
-                ]
-            )
-
-            # Return both arms to base_start with JTC after both policy stages finish.
+            # Return both arms to base_start with JTC after the external policy finishes.
             policy_base_start_parallel = MoveParallel.MoveParallel(
                 name="PolicyBaseStartParallel"
             )
@@ -638,12 +824,18 @@ class Move(base_job.BaseJob):
                     ),
                 ]
             )
+
+            # Append the external placement-and-fit policy sequence after replay stages.
             root.add_children(
                 [
-                    left_wait_until_trigger,
-                    left_policy_seq,
-                    right_policy_seq,
+                    # wait_until_trigger_temp,
+                    policy_switch_cartesian,
+                    placement_cartesian_command_gate_enable,
+                    placement_fit_subprocess_group,
+                    placement_cartesian_command_gate_pause,
+                    policy_switch_jtc,
                     policy_base_start_parallel,
                 ]
             )
+
         return root

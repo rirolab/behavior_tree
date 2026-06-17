@@ -176,3 +176,219 @@ class REAL_CONTROLLER_COMMAND(py_trees.behaviour.Behaviour):
         if isinstance(self.command, str):
             return self.blackboard.get(self.command)
         return self.command or {}
+
+
+class CARTESIAN_COMMAND_HTTP_GATE(py_trees.behaviour.Behaviour):
+    """
+    Send a cartesian command HTTP gate request through a ROS StringString service.
+    """
+
+    def __init__(
+        self,
+        name,
+        cartesian_command_http_gate_service_name="/cartesian_command_http_gate",
+        command=None,
+        timeout=10.0,
+    ):
+        """
+        Initialise a cartesian command HTTP gate behaviour.
+
+        Args:
+            name (:obj:`str`): behaviour name.
+            cartesian_command_http_gate_service_name (:obj:`str`): gate command service.
+            command: command dictionary or blackboard key.
+            timeout (:obj:`float`): service timeout in seconds.
+        """
+        super(CARTESIAN_COMMAND_HTTP_GATE, self).__init__(name=name)
+
+        # Store the service route and command source for this behaviour.
+        self.cartesian_command_http_gate_service_name = str(
+            cartesian_command_http_gate_service_name
+        ).strip()
+        self.command = command
+        self.timeout = float(timeout)
+
+        # Store ROS client and per-run request state.
+        self.node = None
+        self.client = None
+        self.sent_goal = False
+        self.deadline = None
+        self.future = None
+
+        # Track the latest gate response for BT feedback.
+        self.result_status = None
+        self.result_message = ""
+        self.result_payload = {}
+
+        # Attach a blackboard client when command points to a runtime key.
+        self.blackboard = self.attach_blackboard_client(name=self.name)
+        if isinstance(command, str):
+            self.blackboard.register_key(
+                key=command,
+                access=py_trees.common.Access.READ,
+            )
+
+    def setup(self, node):
+        """
+        Create the cartesian command HTTP gate service client.
+
+        Args:
+            node (:class:`~rclpy.node.Node`): ROS node that owns communications.
+        """
+        self.node = node
+
+        # Use StringString so the downstream node can forward JSON to its HTTP path.
+        self.client = node.create_client(
+            StringString,
+            self.cartesian_command_http_gate_service_name,
+        )
+
+    def initialise(self):
+        """
+        Reset command state before each tick sequence.
+        """
+        # Reset request bookkeeping for the next service call.
+        self.sent_goal = False
+        self.deadline = time.monotonic() + self.timeout
+        self.future = None
+
+        # Reset the cached gate response before sending a new command.
+        self.result_status = None
+        self.result_message = ""
+        self.result_payload = {}
+
+    def update(self):
+        """
+        Send the cartesian command gate request and report the service result.
+
+        Returns:
+            :class:`~py_trees.common.Status`: behaviour status.
+        """
+        # Fail if setup did not create the ROS service client.
+        if self.client is None:
+            self.feedback_message = (
+                "cartesian command HTTP gate client is not initialized"
+            )
+            return py_trees.common.Status.FAILURE
+
+        # Send the command once the service is available.
+        if not self.sent_goal:
+            if not self.client.wait_for_service(timeout_sec=0.0):
+                if time.monotonic() < self.deadline:
+                    self.feedback_message = (
+                        f"waiting for {self.cartesian_command_http_gate_service_name}"
+                    )
+                    return py_trees.common.Status.RUNNING
+                self.feedback_message = (
+                    f"{self.cartesian_command_http_gate_service_name} is unavailable"
+                )
+                return py_trees.common.Status.FAILURE
+
+            # Resolve the command from inline config or a blackboard key.
+            if isinstance(self.command, str):
+                command = self.blackboard.get(self.command)
+            else:
+                command = self.command or {}
+            if not isinstance(command, dict):
+                raise TypeError(
+                    f"{self.name}: command should resolve to dict, "
+                    f"got {type(command).__name__}"
+                )
+            command = dict(command)
+
+            # Reject keys outside the cartesian command gate payload.
+            allowed_keys = {"reset_mode", "cartesian_command_gate"}
+            unknown_keys = set(command.keys()) - allowed_keys
+            if unknown_keys:
+                raise ValueError(
+                    f"{self.name}: unsupported command keys {sorted(unknown_keys)}"
+                )
+
+            # Require the gate key and allow only explicit pause/enable commands.
+            if "cartesian_command_gate" not in command:
+                raise KeyError(f"{self.name}: cartesian_command_gate is required")
+            if command["cartesian_command_gate"] not in {"pause", "enable"}:
+                raise ValueError(
+                    f"{self.name}: cartesian_command_gate should be "
+                    "'pause' or 'enable'"
+                )
+
+            # Validate reset_mode only when the optional key is present.
+            if (
+                "reset_mode" in command
+                and command["reset_mode"] not in {"pick_reset", "placement_panda"}
+            ):
+                raise ValueError(
+                    f"{self.name}: reset_mode should be "
+                    "'pick_reset' or 'placement_panda'"
+                )
+
+            # Forward the validated cartesian command gate payload as JSON.
+            req = StringString.Request()
+            req.data = json.dumps(command)
+            self.future = self.client.call_async(req)
+            self.sent_goal = True
+            self.feedback_message = (
+                f"sent cartesian command HTTP gate "
+                f"{command.get('cartesian_command_gate')}"
+            )
+            return py_trees.common.Status.RUNNING
+
+        # Surface the service response in BT feedback when available.
+        if self.future is not None and self.future.done():
+            exception = self.future.exception()
+            if exception is not None:
+                self.feedback_message = (
+                    f"cartesian command HTTP gate failed: {exception}"
+                )
+                return py_trees.common.Status.FAILURE
+
+            response = self.future.result()
+            if response is None:
+                self.feedback_message = (
+                    "cartesian command HTTP gate returned no response"
+                )
+                return py_trees.common.Status.FAILURE
+
+            # Decode the service's JSON envelope and cache it for later debugging.
+            try:
+                payload = json.loads(response.data or "{}")
+            except json.JSONDecodeError:
+                self.feedback_message = (
+                    "cartesian command HTTP gate returned invalid JSON"
+                )
+                return py_trees.common.Status.FAILURE
+
+            if not isinstance(payload, dict):
+                self.feedback_message = (
+                    "cartesian command HTTP gate returned an invalid payload"
+                )
+                return py_trees.common.Status.FAILURE
+
+            # Convert the service success flag into BT success or failure.
+            self.result_status = "succeeded" if bool(payload.get("success")) else "aborted"
+            self.result_message = str(payload.get("message", "") or "")
+            self.result_payload = dict(payload.get("payload") or {})
+
+            if self.result_status == "succeeded":
+                if self.result_message:
+                    self.feedback_message = (
+                        f"cartesian command HTTP gate succeeded: "
+                        f"{self.result_message}"
+                    )
+                else:
+                    self.feedback_message = "cartesian command HTTP gate succeeded"
+                return py_trees.common.Status.SUCCESS
+
+            self.feedback_message = (
+                f"cartesian command HTTP gate failed: {self.result_message}"
+                if self.result_message
+                else "cartesian command HTTP gate failed"
+            )
+            return py_trees.common.Status.FAILURE
+
+        # Keep running while the service call is still in flight.
+        if time.monotonic() < self.deadline:
+            return py_trees.common.Status.RUNNING
+        self.feedback_message = "cartesian command HTTP gate timed out"
+        return py_trees.common.Status.FAILURE
