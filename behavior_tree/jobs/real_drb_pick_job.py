@@ -253,8 +253,12 @@ class Move(base_job.BaseJob):
             key="drb_mode",
             access=py_trees.common.Access.READ,
         )
-        does_policy_grasp = global_blackboard.drb_mode == "policy"
-        does_manual_grasp = global_blackboard.drb_mode == "manual"
+        ############## For test!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        # does_policy_grasp = global_blackboard.drb_mode == "policy"
+        # does_manual_grasp = global_blackboard.drb_mode == "manual"
+        does_policy_grasp = False
+        does_manual_grasp = True
+        
 
         # Read the policy reward trigger topic from the BT node parameters.
         reward_check_trigger_topic = ""
@@ -282,9 +286,9 @@ class Move(base_job.BaseJob):
             return None
 
         # Resolve the second dual-arm preset used before the regrasp approach.
-        stack_side_start = global_blackboard.pose_presets.get("stack_side_start2_real")
+        stack_side_start = global_blackboard.pose_presets.get("stack_side_start2")
         if stack_side_start is None:
-            console.logerror("RealDrbPick: Missing pose preset [stack_side_start2_real]")
+            console.logerror("RealDrbPick: Missing pose preset [stack_side_start2]")
             return None
         stack_side_start_left_joint_goal = stack_side_start.get("left_joint_pos")
         stack_side_start_right_joint_goal = stack_side_start.get("right_joint_pos")
@@ -293,7 +297,7 @@ class Move(base_job.BaseJob):
             or stack_side_start_right_joint_goal is None
         ):
             console.logerror(
-                "RealDrbPick: Missing left/right joint preset in pose preset [stack_side_start2_real]"
+                "RealDrbPick: Missing left/right joint preset in pose preset [stack_side_start2]"
             )
             return None
 
@@ -304,7 +308,7 @@ class Move(base_job.BaseJob):
             )
             if stack_side_start_left_gripper_values is None:
                 console.logerror(
-                    "RealDrbPick: Missing left_gripper_values in pose preset [stack_side_start2_real]"
+                    "RealDrbPick: Missing left_gripper_values in pose preset [stack_side_start2]"
                 )
                 return None
             stack_side_start_left_gripper_open = (
@@ -312,7 +316,7 @@ class Move(base_job.BaseJob):
             )
             if stack_side_start_left_gripper_open is None:
                 console.logerror(
-                    "RealDrbPick: Missing left gripper open preset in pose preset [stack_side_start2_real]"
+                    "RealDrbPick: Missing left gripper open preset in pose preset [stack_side_start2]"
                 )
                 return None
 

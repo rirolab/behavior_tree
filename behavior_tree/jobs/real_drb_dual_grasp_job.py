@@ -12,7 +12,10 @@ from behavior_tree.subtrees import (
     MoveJoint,
     MoveParallel,
     MovePose,
+    Policy,
+    RealControllerCommand,
     RingWorldModel,
+    Trigger,
     Wait,
 )
 from behavior_tree.utils.parameter_utils import make_string_list
@@ -158,6 +161,52 @@ class Move(base_job.BaseJob):
         move_pose_with_logger.add_children([move_pose, joint_logger])
         return move_pose_with_logger
 
+    def make_policy_goal(self, step, robot_name, step_idx=None, default_timeout=5.0):
+        """
+        Build one real HIL-SERL policy goal for the requested arm.
+        """
+        # Merge shared dual-grasp fields with the requested robot policy block.
+        policy_goal = self.make_robot_specific_goal(step, robot_name, step_idx)
+        if policy_goal is None:
+            return None
+        if not bool(policy_goal.get("skill_id")):
+            return None
+
+        # Route the merged payload through the arm-client policy execution path.
+        policy_goal["primitive_action"] = "policy_execute"
+        try:
+            policy_goal["timeout"] = float(policy_goal.get("timeout", default_timeout))
+        except (TypeError, ValueError):
+            return None
+        return policy_goal
+
+    def make_policy_preload_requests(self, step, step_idx):
+        """
+        Build both arm policy preload requests used by policy-mode dual grasp.
+        """
+        # Ignore unrelated steps and non-policy dual-grasp modes.
+        if not self.acceptable_step(step):
+            return []
+        global_blackboard = py_trees.blackboard.Client()
+        global_blackboard.register_key(
+            key="drb_mode",
+            access=py_trees.common.Access.READ,
+        )
+        if global_blackboard.drb_mode != "policy":
+            return []
+
+        # Preload left and right policies before controller switching starts.
+        requests = []
+        left_robot, right_robot = self.resolve_left_right_robots(step)
+        for robot_name in (left_robot, right_robot):
+            if robot_name is None:
+                return []
+            policy_goal = self.make_policy_goal(step, robot_name, step_idx)
+            if policy_goal is None:
+                return []
+            requests.append((robot_name, policy_goal))
+        return requests
+
     def create_root(
         self,
         action_client,
@@ -235,6 +284,32 @@ class Move(base_job.BaseJob):
         holding_robot_blackboard.register_key(key="gripper_close_force", access=py_trees.common.Access.READ)
         holding_robot_blackboard.register_key(key="init_config", access=py_trees.common.Access.READ)
 
+        # Get drb_mode
+        global_blackboard.register_key(
+            key="drb_mode",
+            access=py_trees.common.Access.READ,
+        )
+        does_policy_grasp = global_blackboard.drb_mode == "policy"
+        does_manual_grasp = global_blackboard.drb_mode == "manual"
+
+        # Read stage-specific reward trigger topics for policy-mode placement and fit.
+        stage1_reward_check_trigger_topic = ""
+        stage2_reward_check_trigger_topic = ""
+        if does_policy_grasp:
+            if self._node.has_parameter("stage1_reward_check_trigger_topic"):
+                stage1_reward_check_trigger_topic = str(
+                    self._node.get_parameter("stage1_reward_check_trigger_topic").value
+                ).strip()
+            if self._node.has_parameter("stage2_reward_check_trigger_topic"):
+                stage2_reward_check_trigger_topic = str(
+                    self._node.get_parameter("stage2_reward_check_trigger_topic").value
+                ).strip()
+            if not stage1_reward_check_trigger_topic or not stage2_reward_check_trigger_topic:
+                raise RuntimeError(
+                    "real_drb_dual_grasp_job: stage1/stage2 reward trigger topics "
+                    "are required in policy mode"
+                )
+
         # Resolve the base-start joint preset for the holding-robot trajectory seed.
         base_start = global_blackboard.pose_presets.get("base_start")
         if base_start is None:
@@ -279,6 +354,24 @@ class Move(base_job.BaseJob):
             console.logerror("RealDrbDualGrasp: Missing left/right joint preset in pose preset [above_mold_start]")
             return None
 
+        # Resolve both arm policy payloads before constructing policy subtrees.
+        if does_policy_grasp:
+            left_robot_policy_goal = self.make_policy_goal(
+                step,
+                left_robot,
+                idx,
+                default_timeout=MOVE_TIME,
+            )
+            right_robot_policy_goal = self.make_policy_goal(
+                step,
+                right_robot,
+                idx,
+                default_timeout=MOVE_TIME,
+            )
+            if left_robot_policy_goal is None or right_robot_policy_goal is None:
+                raise RuntimeError(
+                    "real_drb_dual_grasp_job: missing valid policy goals for policy mode"
+                )
 
         # Estimate the regrasp target poses for both robots.
         pose_estimator = RingWorldModel.POSE_ESTIMATOR(
@@ -396,4 +489,132 @@ class Move(base_job.BaseJob):
                 above_mold_start_parallel
             ]
         )
+
+        if does_policy_grasp:
+            ### For test!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+            left_wait_until_trigger = Wait.WAIT_UNTIL_TRIGGER(
+                name="LeftWaitUntilTrigger",
+                robot_name=left_robot,
+            )
+
+            # Run stage1 placement on the left arm while only its reward helper is active.
+            left_policy_seq = py_trees.composites.Sequence(
+                name="LeftPandaPolicySeq",
+                memory=True,
+            )
+            left_policy_switch_cartesian = RealControllerCommand.REAL_CONTROLLER_COMMAND(
+                name="SwitchLeftCartesianBeforePlacementPolicy",
+                command={
+                    "action_type": "switchController",
+                    "controller_profile": "cartesian_impedance_controller",
+                    "target_arms": left_robot,
+                },
+                timeout=10.0,
+            )
+            left_run_policy = Policy.MOVEBYPOLICY(
+                name=f"{left_robot}_PlacementPolicy",
+                action_client=action_clients[left_robot],
+                action_goal=left_robot_policy_goal,
+                timeout=float(left_robot_policy_goal.get("timeout", MOVE_TIME)),
+                robot_name=left_robot,
+            )
+            left_run_policy_with_reward_trigger = Trigger.RUN_WITH_BOOL_TRIGGER(
+                name="Stage1PlacementRewardTrigger",
+                child=left_run_policy,
+                topic_name=stage1_reward_check_trigger_topic,
+                start_value=True,
+                stop_value=False,
+            )
+            left_policy_switch_jtc = RealControllerCommand.REAL_CONTROLLER_COMMAND(
+                name="SwitchLeftJtcAfterPlacementPolicy",
+                command={
+                    "action_type": "switchController",
+                    "controller_profile": "joint_trajectory_controller",
+                    "target_arms": left_robot,
+                },
+                timeout=10.0,
+            )
+            left_policy_seq.add_children(
+                [
+                    left_policy_switch_cartesian,
+                    left_run_policy_with_reward_trigger,
+                    left_policy_switch_jtc,
+                ]
+            )
+
+            # Run stage2 fit on the right arm while only its reward helper is active.
+            right_policy_seq = py_trees.composites.Sequence(
+                name="RightFr3PolicySeq",
+                memory=True,
+            )
+            right_policy_switch_cartesian = RealControllerCommand.REAL_CONTROLLER_COMMAND(
+                name="SwitchRightCartesianBeforeFitPolicy",
+                command={
+                    "action_type": "switchController",
+                    "controller_profile": "cartesian_impedance_controller",
+                    "target_arms": right_robot,
+                },
+                timeout=10.0,
+            )
+            right_run_policy = Policy.MOVEBYPOLICY(
+                name=f"{right_robot}_FitPolicy",
+                action_client=action_clients[right_robot],
+                action_goal=right_robot_policy_goal,
+                timeout=float(right_robot_policy_goal.get("timeout", MOVE_TIME)),
+                robot_name=right_robot,
+            )
+            right_run_policy_with_reward_trigger = Trigger.RUN_WITH_BOOL_TRIGGER(
+                name="Stage2FitRewardTrigger",
+                child=right_run_policy,
+                topic_name=stage2_reward_check_trigger_topic,
+                start_value=True,
+                stop_value=False,
+            )
+            right_policy_switch_jtc = RealControllerCommand.REAL_CONTROLLER_COMMAND(
+                name="SwitchRightJtcAfterFitPolicy",
+                command={
+                    "action_type": "switchController",
+                    "controller_profile": "joint_trajectory_controller",
+                    "target_arms": right_robot,
+                },
+                timeout=10.0,
+            )
+            right_policy_seq.add_children(
+                [
+                    right_policy_switch_cartesian,
+                    right_run_policy_with_reward_trigger,
+                    right_policy_switch_jtc,
+                ]
+            )
+
+            # Return both arms to base_start with JTC after both policy stages finish.
+            policy_base_start_parallel = MoveParallel.MoveParallel(
+                name="PolicyBaseStartParallel"
+            )
+            policy_base_start_parallel.add_children(
+                [
+                    MoveJoint.MOVEJ(
+                        name=f"{left_robot}_PolicyBaseStart",
+                        action_client=action_clients[left_robot],
+                        action_goal=base_start_left_joint_goal,
+                        robot_name=left_robot,
+                        timeout=MOVE_TIME,
+                    ),
+                    MoveJoint.MOVEJ(
+                        name=f"{right_robot}_PolicyBaseStart",
+                        action_client=action_clients[right_robot],
+                        action_goal=base_start_right_joint_goal,
+                        robot_name=right_robot,
+                        timeout=MOVE_TIME,
+                    ),
+                ]
+            )
+            root.add_children(
+                [
+                    left_wait_until_trigger,
+                    left_policy_seq,
+                    # right_policy_seq,
+                    # policy_base_start_parallel,
+                ]
+            )
         return root
