@@ -407,13 +407,6 @@ class Move(base_job.BaseJob):
                 child=left_policy_recovery_selector,
                 num_failures=sys.maxsize,
             )
-        left_base_start_again = MoveJoint.MOVEJ(
-                    name=f"{left_robot}_BaseStartAgain",
-                    action_client=action_clients[left_robot],
-                    action_goal=base_start_left_joint_goal,
-                    robot_name=left_robot,
-                    timeout=MOVE_TIME,
-        )
 
         root = py_trees.composites.Sequence(name="Pick", memory=True)
         root.add_children(
@@ -426,6 +419,13 @@ class Move(base_job.BaseJob):
 
         # Policy grasp ring
         if not does_teleport_ring:
+            left_base_start_again = MoveJoint.MOVEJ(
+                name=f"{left_robot}_BaseStartAgain",
+                action_client=action_clients[left_robot],
+                action_goal=base_start_left_joint_goal,
+                robot_name=left_robot,
+                timeout=MOVE_TIME,
+            )
             root.add_children(
                 [
                     left_policy_branch,
