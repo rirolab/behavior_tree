@@ -1,6 +1,7 @@
 import json
-import numpy as np
+import sys
 
+import numpy as np
 import py_trees
 import py_trees.console as console
 import std_msgs.msg as std_msgs
@@ -184,7 +185,7 @@ class Move(base_job.BaseJob):
         action_clients = action_client
         MOVE_TIME = 0.25
         GRIPPER_TIME = 0.25
-            
+
         # Resolve the grounded left/right robot names for parallel moves.
         grounded_robot_names = make_string_list(step.get("robot", []))
         left_robot = next((robot_name for robot_name in grounded_robot_names if "left" in robot_name), None)
@@ -196,6 +197,9 @@ class Move(base_job.BaseJob):
         left_robot_policy_goal = self.make_robot_specific_goal(step, left_robot, idx)
         if left_robot_policy_goal is None:
             raise RuntimeError("drb_pick_job: failed to resolve left robot goal")
+
+        # Enable left-policy recovery only when the left-arm policy payload requests it.
+        recovery_policy_enabled = bool(left_robot_policy_goal.get("recovery_policy", False))
 
         # Keep one shared joint logger configuration for every pose move.
         joint_logger_kwargs = {
@@ -354,6 +358,55 @@ class Move(base_job.BaseJob):
                 scene_cmd_temp
             ]
         )
+        left_policy_branch = left_policy_return_seq
+        if recovery_policy_enabled:
+            # Build the recovery branch that switches out and moves only the left arm.
+            left_recovery_switch_controller_out = IsaacSceneCommand.ISAAC_SCENE_COMMAND(
+                name="LeftRecoverySwitchControllerOut",
+                command={
+                    "action_type": "setRobotDriveGainProfileAndSwitchController",
+                    "robot_drive_gain_profile": "joint_trajectory_controller",
+                    "target_arms": left_robot,
+                },
+                timeout=10.0,
+            )
+            left_recovery_stack_side_start = MoveJoint.MOVEJ(
+                name=f"{left_robot}_RecoveryStackSideStart",
+                action_client=action_clients[left_robot],
+                action_goal=stack_side_start_left_joint_goal,
+                robot_name=left_robot,
+                timeout=4*MOVE_TIME,
+            )
+            left_policy_recovery_seq = py_trees.composites.Sequence(
+                name="LeftPolicyRecoverySeq",
+                memory=True,
+            )
+            left_policy_recovery_seq.add_children(
+                [
+                    left_recovery_switch_controller_out,
+                    left_recovery_stack_side_start,
+                ]
+            )
+
+            # Convert successful recovery into a retry-triggering failure for the selector.
+            left_policy_recovery_selector = py_trees.composites.Selector(
+                name="LeftPolicyAttemptOrRecovery",
+                memory=True,
+            )
+            left_policy_recovery_selector.add_children(
+                [
+                    left_policy_return_seq,
+                    py_trees.decorators.SuccessIsFailure(
+                        name="RepeatAfterLeftPolicyRecovery",
+                        child=left_policy_recovery_seq,
+                    ),
+                ]
+            )
+            left_policy_branch = py_trees.decorators.Retry(
+                name="LeftPolicyRecoveryRetryForever",
+                child=left_policy_recovery_selector,
+                num_failures=sys.maxsize,
+            )
         left_base_start_again = MoveJoint.MOVEJ(
                     name=f"{left_robot}_BaseStartAgain",
                     action_client=action_clients[left_robot],
@@ -375,12 +428,12 @@ class Move(base_job.BaseJob):
         if not does_teleport_ring:
             root.add_children(
                 [
-                    left_policy_return_seq,
+                    left_policy_branch,
                     # left_base_start_again
                 ]
             )
 
-        # Teleport ring
+        # Teleport ring (not working for now)
         if does_teleport_ring:
 
             # Get parameters
