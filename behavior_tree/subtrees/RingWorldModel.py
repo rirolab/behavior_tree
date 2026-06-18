@@ -30,6 +30,14 @@ class POSE_ESTIMATOR(WorldModel.POSE_ESTIMATOR):
             **kwargs,
         )
 
+    def setup(self, node=None, timeout=py_trees.common.Duration.INFINITE):
+        # Initialize parent world-model clients before reading node parameters.
+        super(POSE_ESTIMATOR, self).setup(node=node, timeout=timeout)
+
+        # Cache the BT runtime mode for sim/real pose selection.
+        self.is_sim = bool(self.node.get_parameter("sim").value)
+        return True
+
     def initialise(self):
         super(POSE_ESTIMATOR, self).initialise()
         BLACKBOARD_POSE_KEYS = [
@@ -110,8 +118,10 @@ class POSE_ESTIMATOR(WorldModel.POSE_ESTIMATOR):
                     regrasp_target_down_right = copy.deepcopy(regrasp_target_down) 
                     regrasp_target_down_right.position.y -= 0.05
                     regrasp_target_down_left = copy.deepcopy(regrasp_target_down) 
+                    regrasp_target_down_left.position.x -= 0.1 # frame changed?
                     regrasp_target_down_left.position.y += 0.05
                     regrasp_target_down_half_left = copy.deepcopy(regrasp_target_down) 
+                    regrasp_target_down_half_left.position.x -= 0.1 # frame changed?
                     regrasp_target_down_half_left.position.y += 0.01
                     real_regrasp_target_down_half_left = copy.deepcopy(regrasp_target_down) 
                     real_regrasp_target_down_half_left.position.y += 0.025

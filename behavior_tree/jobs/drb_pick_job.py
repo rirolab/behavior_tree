@@ -249,14 +249,14 @@ class Move(base_job.BaseJob):
         )
 
         # Resolve stack_side_start joint targets.
-        stack_side_start = global_blackboard.pose_presets.get("stack_side_start2")
+        stack_side_start = global_blackboard.pose_presets.get("stack_side_start3")
         if stack_side_start is None:
-            console.logerror("Pick: Missing pose preset [stack_side_start]")
+            console.logerror("Pick: Missing pose preset [stack_side_start3]")
             return None
         stack_side_start_left_joint_goal = stack_side_start.get("left_joint_pos")
         stack_side_start_right_joint_goal = stack_side_start.get("right_joint_pos")
         if stack_side_start_left_joint_goal is None or stack_side_start_right_joint_goal is None:
-            console.logerror("Pick: Missing left/right joint preset in pose preset [stack_side_start]")
+            console.logerror("Pick: Missing left/right joint preset in pose preset [stack_side_start3]")
             return None
 
         pose_estimator = RingWorldModel.POSE_ESTIMATOR(
@@ -368,10 +368,17 @@ class Move(base_job.BaseJob):
                 base_start_parallel, 
                 pose_estimator, 
                 stack_side_start_parallel, 
-                left_policy_return_seq,
-                # left_base_start_again
             ]
         )
+
+        # Policy grasp ring
+        if not does_teleport_ring:
+            root.add_children(
+                [
+                    left_policy_return_seq,
+                    # left_base_start_again
+                ]
+            )
 
         # Teleport ring
         if does_teleport_ring:

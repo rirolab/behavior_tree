@@ -327,7 +327,20 @@ class Move(base_job.BaseJob):
             },
             timeout=5.0,
         )
-        move_approach_seq.add_children([move_approach_right_parallel, move_approach, move_approach_wait, move_approach_close, freeze_approach_finger])
+        wait_until_trigger_temp = Wait.WAIT_UNTIL_TRIGGER(
+            name="WaitUntilTriggerTemp",
+            robot_name=approach_robot,
+        )
+        move_approach_seq.add_children(
+            [
+                move_approach_right_parallel, 
+                move_approach, 
+                move_approach_wait, 
+                move_approach_close, 
+                freeze_approach_finger,
+                # wait_until_trigger_temp
+            ]
+        )
 
         # Queue above_mold_start as one left/right parallel stage.
         above_mold_start_parallel = MoveParallel.MoveParallel(name="Preset_above_mold_start")
