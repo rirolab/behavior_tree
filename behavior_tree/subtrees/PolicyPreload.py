@@ -41,21 +41,36 @@ class LOAD_POLICY_BATCH(py_trees.behaviour.Behaviour):
         self.active_futures = {}
         self.deadline = None
         self.completed_policies = []
+        self.skipped_policy_count = 0
 
     def initialise(self):
-        # Reset batch state whenever this behaviour starts again.
+        # Keep already-loaded policy records so repeated commands can skip duplicate loads.
         self.policy_batches = {}
+        self.completed_policies = list(self.blackboard.preloaded_policies)
+        loaded_policy_keys = {
+            (str(policy_request["robot"]), str(policy_request["policy_key"]))
+            for policy_request in self.blackboard.preloaded_policies
+        }
+
+        # Build only the policy batches that are not already present in the shared cache.
+        self.skipped_policy_count = 0
         for robot_name, robot_goal in self.policy_requests:
+            policy_key = dump_policy_config(robot_goal)
+            if (str(robot_name), policy_key) in loaded_policy_keys:
+                self.skipped_policy_count += 1
+                continue
             self.policy_batches.setdefault(robot_name, []).append(robot_goal)
         self.active_futures = {}
         self.deadline = None
-        self.completed_policies = []
         self.feedback_message = ""
 
     def update(self):
         # Exit immediately when there is nothing to preload.
         if not self.policy_batches:
-            self.feedback_message = "no policy requests for loadPolicy"
+            if self.skipped_policy_count:
+                self.feedback_message = f"loadPolicy skipped {self.skipped_policy_count} already-loaded policies"
+            else:
+                self.feedback_message = "no policy requests for loadPolicy"
             return py_trees.common.Status.SUCCESS
 
         # Dispatch one batched load request per robot the first time this behaviour ticks.

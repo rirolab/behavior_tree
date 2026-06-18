@@ -108,6 +108,7 @@ class MultiSplinteredReality(SplinteredReality):
             "close_pose_srv_channel": "/get_object_close_pose",
             "world_frame": "world",
             "policy_preload_enabled": True,
+            "policy_unload_enabled": True,
             "policy_preload_timeout_sec": 60.0,
             "additional_parameter_roots": ["pose_presets"],
             "drb_mode": "policy" # "teleport_ring", or "policy"
@@ -216,12 +217,16 @@ class MultiSplinteredReality(SplinteredReality):
 
             # Read whether policy preload branches should be attached for this task.
             policy_preload_enabled = bool(self.get_parameter("policy_preload_enabled").value)
+            policy_unload_enabled = bool(self.get_parameter("policy_unload_enabled").value)
 
             # Collect policy preload requests only when preload mode is enabled.
             policy_requests = []
             if policy_preload_enabled:
                 policy_requests = self.collect_policy_preload_requests(goal)
-            self.blackboard.preloaded_policies = []
+
+            # Preserve the loaded-policy cache only when unload is intentionally disabled.
+            if not policy_preload_enabled or policy_unload_enabled:
+                self.blackboard.preloaded_policies = []
             policy_timeout_sec = float(self.get_parameter("policy_preload_timeout_sec").value)
 
             # Build the cancel branch that lets an incoming stop command preempt the task.
@@ -235,7 +240,7 @@ class MultiSplinteredReality(SplinteredReality):
             )
             cancel_seq = py_trees.composites.Sequence(name="Cancel", memory=True)
             cancel_seq.add_child(stop_cmd)
-            if policy_preload_enabled and policy_requests:
+            if policy_preload_enabled and policy_unload_enabled and policy_requests:
                 # Build the cancel-time unload behaviour directly under the failure wrapper.
                 cancel_seq.add_child(
                     py_trees.decorators.FailureIsSuccess(
@@ -338,16 +343,17 @@ class MultiSplinteredReality(SplinteredReality):
                 )
 
                 # Append the unload behaviour directly after the task steps.
-                task_list.append(
-                    py_trees.decorators.FailureIsSuccess(
-                        name="IgnoreUnloadFailureOnEnd",
-                        child=PolicyPreload.UNLOAD_POLICY_BATCH(
-                            name="UnloadPolicy",
-                            action_clients=self.action_clients,
-                            timeout=policy_timeout_sec,
-                        ),
+                if policy_unload_enabled:
+                    task_list.append(
+                        py_trees.decorators.FailureIsSuccess(
+                            name="IgnoreUnloadFailureOnEnd",
+                            child=PolicyPreload.UNLOAD_POLICY_BATCH(
+                                name="UnloadPolicy",
+                                action_clients=self.action_clients,
+                                timeout=policy_timeout_sec,
+                            ),
+                        )
                     )
-                )
 
             # Chain all accepted step subtrees into one task sequence.
             task = py_trees.composites.Sequence(name="Task", memory=True)
@@ -550,7 +556,9 @@ class MultiSplinteredReality(SplinteredReality):
                 py_trees.common.Status.FAILURE,
                 py_trees.common.Status.INVALID,
             ]:
-                if self.blackboard.preloaded_policies:
+                # Run terminal unload only when policy cache retention is disabled.
+                policy_unload_enabled = bool(self.get_parameter("policy_unload_enabled").value)
+                if policy_unload_enabled and self.blackboard.preloaded_policies:
                     # Build a one-off unload subtree for policies left over after task termination.
                     cleanup_subtree = py_trees.decorators.FailureIsSuccess(
                         name="IgnoreUnloadFailurePostTick",
@@ -577,8 +585,9 @@ class MultiSplinteredReality(SplinteredReality):
                     except Exception as error:
                         console.logerror(f"post_tick_handler unload failed: {error}")
 
-                # Clear the shared cache before pruning to avoid stale policy state.
-                self.blackboard.preloaded_policies = []
+                # Clear the shared cache only when policy unload has released the runtime policy.
+                if policy_unload_enabled:
+                    self.blackboard.preloaded_policies = []
 
                 # Remove the finished job subtree once cleanup has completed.
                 console.loginfo(f"{job.name}: post_tick_handler finished [{job.status}]")

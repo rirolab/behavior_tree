@@ -517,17 +517,29 @@ class Move(base_job.BaseJob):
             ]
         )
 
+        # Promote the next frozen stack ring after the dual grasp cycle finishes.
+        promote_previous_frozen_ring = IsaacSceneCommand.ISAAC_SCENE_COMMAND(
+            name="PromotePreviousFrozenRingToActive",
+            command={
+                "action_type": "promotePreviousFrozenRingToActive",
+            },
+            timeout=10.0,
+        )
+
         # Execute grasp sequence first, then finish with dual-arm policy execution.
         root = py_trees.composites.Sequence(name="DualGrasp", memory=True)
         # root.add_children([s_init1, pose_estimator, move_holding, move_approach, move_horizontal])
         root.add_children(
             [
-                pose_estimator, 
+                pose_estimator,
                 move_approach_seq,
-                # move_horizontal_wp, 
+                # move_horizontal_wp,
                 above_mold_start_parallel,
                 unfreeze_fingers,
                 # dual_policy_seq, # for pick-only dry run...
-                base_start_parallel])
+                base_start_parallel,
+                promote_previous_frozen_ring,
+            ]
+        )
 
         return root

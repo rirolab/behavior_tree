@@ -2,6 +2,8 @@ tree:
   ros__parameters:
     sim: True
     drb_mode: "policy"
+    # Keep the legacy cleanup behavior unless a launch config disables policy unload.
+    policy_unload_enabled: true
     robot: ["left_arm", "right_arm"]
     pose_srv_channel: "/get_object_pose"
     grasp_pose_srv_channel: "/get_object_grasp_pose"
