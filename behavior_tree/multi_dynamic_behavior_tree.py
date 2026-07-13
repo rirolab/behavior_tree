@@ -54,10 +54,27 @@ def create_root(robot_names):
     # "{robot}/goal_id" / "{robot}/goal_status" keys read by Move.MOVE.
     status_nodes = []
     for robot_name in robot_names:
+        # Primitive (pick/place/move/gripper) goals → arm_client publishes here.
         status_nodes.append(
             ToBlackboard(
-                name=f"{robot_name}_Status2BB",
+                name=f"{robot_name}_PrimitiveStatus2BB",
                 topic_name=f"{robot_name}/arm_client/goal_status",
+                topic_type=GoalStatus,
+                blackboard_variables={
+                    f"{robot_name}/goal_id": "goal_info.goal_id.uuid",
+                    f"{robot_name}/goal_status": "status",
+                },
+                qos_profile=py_trees_ros.utilities.qos_profile_unlatched(),
+            )
+        )
+        # Single-arm policy goals → single_policy_client publishes here. Same
+        # blackboard keys as the primitive channel; Move.MOVE filters by
+        # goal_id so the active source wins per-robot. Idle pubs from the
+        # other source carry stale goal_ids and are ignored.
+        status_nodes.append(
+            ToBlackboard(
+                name=f"{robot_name}_PolicyStatus2BB",
+                topic_name=f"{robot_name}/single_policy_client/goal_status",
                 topic_type=GoalStatus,
                 blackboard_variables={
                     f"{robot_name}/goal_id": "goal_info.goal_id.uuid",
@@ -204,6 +221,19 @@ class MultiSplinteredReality(SplinteredReality):
             qos_profile=qos_profile,
         )
 
+        # Central policy manager command client. ALL policy-related jobs
+        # (single, dual, parallel) dispatch through "/policy_manager/command"
+        # instead of the per-arm / dual command services. PM only relays
+        # commands; goal_status is still published by the routed executor
+        # ITSELF on its existing "{robot}/arm_client/goal_status" /
+        # "dual_arm_client/goal_status" topic, so the existing ToBlackboard
+        # wiring stays unchanged.
+        self.policy_action_client = self.create_client(
+            StringGoalStatus,
+            "/policy_manager/command",
+            qos_profile=qos_profile,
+        )
+
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(
             buffer=self.tf_buffer,
@@ -274,6 +304,7 @@ class MultiSplinteredReality(SplinteredReality):
                             tf_buffer=self.tf_buffer,
                             rec_topic_list=self.rec_topic_list,
                             robot_name=requested_robot_names[0],
+                            policy_action_client=self.policy_action_client,
                         )
 
                     # Case: multi-robot step -> pass a mapping of robot_name to client.
@@ -292,6 +323,7 @@ class MultiSplinteredReality(SplinteredReality):
                             rec_topic_list=self.rec_topic_list,
                             robot_names=requested_robot_names,
                             dual_action_client=self.dual_action_client,
+                            policy_action_client=self.policy_action_client,
                         )
 
                     # Case: this job cannot handle the step -> try the next job.

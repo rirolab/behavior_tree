@@ -92,10 +92,19 @@ class Move(base_job.BaseJob):
         if not self.acceptable_step(goal[idx]):
             return None
 
+        # Policy goals are dispatched through the central policy manager, not
+        # the per-arm arm_client/command service positionally passed in.
+        policy_action_client = kwargs.get("policy_action_client")
+        if policy_action_client is None:
+            self._node.get_logger().error(
+                "policy_job: no policy_action_client provided, cannot build subtree"
+            )
+            return None
+
         root = py_trees.composites.Sequence(name="Policy", memory=True)
         run_policy = Policy.MOVEBYPOLICY(
             name="MoveByPolicy",
-            action_client=action_client,
+            action_client=policy_action_client,
             action_goal=goal[idx],
             timeout=float(goal[idx].get("timeout", 5.0)),
             robot_name=robot_name,

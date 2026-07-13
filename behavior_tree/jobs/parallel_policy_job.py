@@ -136,6 +136,16 @@ class Move(base_job.BaseJob):
         if not self.acceptable_step(goal[idx]):
             return None
 
+        # Both parallel children dispatch through the central policy manager;
+        # they differentiate by goal_id and per-arm blackboard scope, not by
+        # which client is called.
+        policy_action_client = kwargs.get("policy_action_client")
+        if policy_action_client is None:
+            self._node.get_logger().error(
+                "parallel_policy_job: no policy_action_client provided, cannot build subtree"
+            )
+            return None
+
         step = goal[idx]
         grounded_robot_names = make_string_list(step.get("robot", []))
 
@@ -152,7 +162,7 @@ class Move(base_job.BaseJob):
             timeout = float(robot_block.get("timeout", step.get("timeout_sec", 30.0)))
             run_policy = Policy.MOVEBYPOLICY(
                 name=f"{robot_name}_MoveByPolicy",
-                action_client=action_client[robot_name],
+                action_client=policy_action_client,
                 action_goal={"skill_id": skill_id, "timeout": timeout},
                 timeout=timeout,
                 robot_name=robot_name,

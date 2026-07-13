@@ -136,12 +136,12 @@ class Move(base_job.BaseJob):
         if not self.acceptable_step(goal[idx]):
             return None
 
-        # The dual policy node is a single client, distinct from the per-arm
-        # clients passed positionally for multi-robot dispatch.
-        dual_action_client = kwargs.get("dual_action_client")
-        if dual_action_client is None:
+        # Dual-arm policy goals are dispatched through the central policy
+        # manager, not the dual_arm_client/command service.
+        policy_action_client = kwargs.get("policy_action_client")
+        if policy_action_client is None:
             self._node.get_logger().error(
-                "dual_policy_job: no dual_action_client provided, cannot build subtree"
+                "dual_policy_job: no policy_action_client provided, cannot build subtree"
             )
             return None
 
@@ -154,7 +154,7 @@ class Move(base_job.BaseJob):
         root = py_trees.composites.Sequence(name="PolicyDual", memory=True)
         run_policy = PolicyDual.MOVEBYPOLICYDUAL(
             name="MoveByPolicyDual",
-            action_client=dual_action_client,
+            action_client=policy_action_client,
             action_goal=action_goal,
             timeout=float(step.get("timeout_sec", 30.0)),
             robot_name=None,
