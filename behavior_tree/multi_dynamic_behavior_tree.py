@@ -9,6 +9,7 @@ import py_trees_ros
 import rclpy
 from action_msgs.msg import GoalStatus
 from rclpy.node import Node
+from std_msgs.msg import Float32
 from rclpy.qos import QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
@@ -58,6 +59,38 @@ def create_root(robot_names):
                     blackboard_variables={
                         f"{robot_name}/{goal_channel}/goal_id": "goal_info.goal_id.uuid",
                         f"{robot_name}/{goal_channel}/goal_status": "status",
+                    },
+                    qos_profile=py_trees_ros.utilities.qos_profile_unlatched(),
+                )
+            )
+
+        # Under overlap, arm motions stream through two mixer slots (a, b), and
+        # each slot reports its own goal id, status, and progress. The MOVE
+        # behaviours find themselves by matching their goal id against a slot.
+        # These mirror the arm channel above, one pair of nodes per slot, plus a
+        # progress feed the overlap composite watches to decide when to start
+        # the next motion.
+        for slot in ["a", "b"]:
+            prefix = f"{robot_name}/arm_client/stream/{slot}"
+            status_nodes.append(
+                ToBlackboard(
+                    name=f"{robot_name}_arm_{slot}_Status2BB",
+                    topic_name=f"{prefix}/goal_status",
+                    topic_type=GoalStatus,
+                    blackboard_variables={
+                        f"{robot_name}/arm/{slot}/goal_id": "goal_info.goal_id.uuid",
+                        f"{robot_name}/arm/{slot}/goal_status": "status",
+                    },
+                    qos_profile=py_trees_ros.utilities.qos_profile_unlatched(),
+                )
+            )
+            status_nodes.append(
+                ToBlackboard(
+                    name=f"{robot_name}_arm_{slot}_Progress2BB",
+                    topic_name=f"{prefix}/progress",
+                    topic_type=Float32,
+                    blackboard_variables={
+                        f"{robot_name}/arm/{slot}/progress": "data",
                     },
                     qos_profile=py_trees_ros.utilities.qos_profile_unlatched(),
                 )
