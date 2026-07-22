@@ -40,8 +40,8 @@ class Move(base_job.BaseJob):
         Returns:
             :obj:`bool`: whether this job can take ownership of the step.
         """
-        # Check if the primitive action is move
-        if step.get("primitive_action") != "move":
+        # Route object moves and direct joint moves through this job.
+        if step.get("primitive_action") not in ["move", "move_joint"]:
             return False
         
         # Check if the step has the number of robots required for this job
@@ -65,8 +65,15 @@ class Move(base_job.BaseJob):
         """
         # Check if the step has the required parameters for move
         if self.acceptable_step(step):
+            # Case: Direct joint movement
+            if step.get("primitive_action") == "move_joint":
+                if "joint_positions" in step:
+                    return StepValidationResult.ACCEPT_GOAL
+                else:
+                    return StepValidationResult.REJECT_GOAL
+
             # Case: Policy movement
-            if step.get("implementation") == "policy":
+            elif step.get("implementation") == "policy":
                 if bool(step.get("skill_id")):
                     return StepValidationResult.ACCEPT_GOAL
                 else:
@@ -116,6 +123,13 @@ class Move(base_job.BaseJob):
         # Check if the step is acceptable
         if not self.acceptable_step(goal[idx]):
             return None
+
+        # Create a direct joint-move subtree from the grounding payload.
+        if goal[idx].get("primitive_action") == "move_joint":
+            return MoveJoint.MOVEJ(name="MoveJoint", action_client=action_client,
+                                   action_goal=goal[idx]["joint_positions"],
+                                   timeout=goal[idx].get("timeout", 3.0),
+                                   robot_name=robot_name)
 
         # beahviors
         root = py_trees.composites.Sequence(name="Move", memory=True)
