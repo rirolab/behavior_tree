@@ -190,11 +190,14 @@ class Move(base_job.BaseJob):
                                   action_goal={'pose': "Plan"+idx+"/grasp_top_pose"},
                                   robot_name=robot_name)
 
-        # Overlap runs within the pick chain: Top1->Top2 blends (both arm),
-        # while the gripper Open/Close and the pose estimator break the chain so
-        # the grasp pose is reached exactly before the gripper acts.
+        # Open the gripper up front, not mid-chain: it is empty during the pick
+        # approach and usually already open (the robot starts open and a place
+        # leaves it open), so opening here is a harmless no-op that would only
+        # force a stop if left between Top2 and Approach. Up front it lets
+        # Top1->Top2->Approach blend as one descent; Close still breaks the chain
+        # so the grasp pose is reached exactly before the gripper closes.
         pick = _move_sequence("MovePick",
-            [pose_est1, s_move10, s_move11, s_move12, s_move13, s_move14, s_move15])
+            [pose_est1, s_move12, s_move10, s_move11, s_move13, s_move14, s_move15])
 
 
         # ----------------- Place ---------------------

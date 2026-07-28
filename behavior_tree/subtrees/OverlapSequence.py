@@ -20,10 +20,10 @@ exactly the desired safety: the grasp closes only after the arm has arrived, the
 place happens only after the transit has finished.
 
 ``progress_threshold`` here is the trigger the *tree* owns -- when to dispatch
-the next motion. ``blend_duration`` (how the two are mixed once both are live)
-is owned by the mixer, downstream. Setting the threshold to 1.0 makes this
-behave exactly like ``Sequence(memory=True)``: the next child starts only when
-the current one is fully done.
+the next motion. How the two are combined once both are live (an additive
+velocity sum) is owned by the mixer, downstream. Setting the threshold to 1.0
+makes this behave exactly like ``Sequence(memory=True)``: the next child starts
+only when the current one is fully done.
 """
 
 import py_trees
