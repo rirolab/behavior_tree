@@ -366,7 +366,7 @@ class SplinteredReality(Node):
         """
         # delete the job subtree if it is finished
         if self.busy():
-            job = self.priorities.children[-2]
+            job = self.priorities.children[-2] # This is "Run or Cancel?" node.
                         
             if job.status == py_trees.common.Status.SUCCESS or job.status == py_trees.common.Status.FAILURE or job.status == py_trees.common.Status.INVALID:
                 console.loginfo(f"{job.name}: post_tick_handler finished [{job.status}]")

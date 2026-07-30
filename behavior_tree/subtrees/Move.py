@@ -47,6 +47,7 @@ class MOVE(py_trees.behaviour.Behaviour):
         self.action_goal   = action_goal
         self.sent_goal     = False
         self.cmd_req       = action_client
+        self.future        = None
         self.goal_uuid_des = None
         ## self.goal_id       = None
         ## self.goal_status   = None
@@ -128,6 +129,51 @@ class MOVE(py_trees.behaviour.Behaviour):
             return False
         match = self.goal_uuid_des == goal_id
         return match.all() if hasattr(match, "all") else bool(match)
+
+    def command_response_status(self):
+        """
+        Convert immediate command service failures into a behavior result.
+
+        Returns:
+            :class:`py_trees.common.Status` or :obj:`None` when status topics
+            should continue deciding the command result.
+        """
+        # Wait until the command service has replied.
+        if self.future is None or not self.future.done():
+            return None
+
+        # Treat command service exceptions as behavior failures.
+        try:
+            response = self.future.result()
+        except Exception as exc:
+            self.feedback_message = f"command service failed: {exc}"
+            return py_trees.common.Status.FAILURE
+
+        # Ignore empty or non-terminal responses; goal status topics finish normal goals.
+        goal_status = getattr(response, "goal_status", None)
+        if goal_status is None:
+            return None
+        status = getattr(goal_status, "status", GoalStatus.STATUS_UNKNOWN)
+        failure_statuses = [
+            GoalStatus.STATUS_ABORTED,
+            GoalStatus.STATUS_UNKNOWN,
+            GoalStatus.STATUS_CANCELING,
+            GoalStatus.STATUS_CANCELED,
+        ]
+        if status not in failure_statuses:
+            return None
+
+        # Match service response UUID to this behavior's requested goal.
+        response_uuid = list(getattr(goal_status.goal_info.goal_id, "uuid", []))
+        if self.goal_uuid_des is not None and response_uuid:
+            if response_uuid != list(self.goal_uuid_des):
+                return None
+        elif self.goal_uuid_des is not None:
+            return None
+
+        # Fail immediately when CAC rejected the command before sending a controller goal.
+        self.feedback_message = "FAILURE"
+        return py_trees.common.Status.FAILURE
 
     
     def terminate(self, new_status):

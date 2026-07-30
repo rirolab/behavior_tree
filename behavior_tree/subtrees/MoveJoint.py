@@ -55,6 +55,11 @@ class MOVEJ(Move.MOVE):
 
         self.feedback_message = "running"
 
+        # Handle command-service rejection before waiting for a goal-status topic.
+        command_status = self.command_response_status()
+        if command_status is not None:
+            return command_status
+
         if self.current_goal_id() is None:
             return py_trees.common.Status.RUNNING
         
@@ -128,6 +133,11 @@ class MOVEJR(Move.MOVE):
             self.sent_goal = True
             self.feedback_message = "Sending a joint goal"
             return py_trees.common.Status.RUNNING
+
+        # Handle command-service rejection before waiting for a goal-status topic.
+        command_status = self.command_response_status()
+        if command_status is not None:
+            return command_status
 
         if self.current_goal_id() is None:
             return py_trees.common.Status.RUNNING
