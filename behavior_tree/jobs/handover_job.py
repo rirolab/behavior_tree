@@ -7,7 +7,6 @@ import json
 import PyKDL
 
 import std_msgs.msg as std_msgs
-from complex_action_client import misc
 
 from behavior_tree.subtrees import MoveJoint, MovePose, Gripper, Stop, WorldModel
 
@@ -122,4 +121,3 @@ class Move(object):
         task = py_trees.composites.Sequence(name="Handover")
         task.add_children([s_move1, s_move2, s_init, wm_remove])
         return task
-

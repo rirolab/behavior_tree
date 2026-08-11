@@ -10,7 +10,6 @@ import PyKDL
 
 import std_msgs.msg as std_msgs
 from geometry_msgs.msg import Pose, Quaternion #PointStamped,
-from complex_action_client import misc
 
 sys.path.insert(0,'..')
 from subtrees import MovePose, Gripper, Rosbag

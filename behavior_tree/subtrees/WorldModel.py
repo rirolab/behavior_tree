@@ -19,7 +19,8 @@ from tf2_ros import TransformException
 
 
 from geometry_msgs.msg import Pose
-from complex_action_client import misc
+# Import geometry conversion helpers used by world model behaviours.
+from trajectory_manager.geometry_conversions import KDLframe2Pose, pose2KDLframe
 from riro_srvs.srv import StringInt, StringPose
 
 
@@ -302,8 +303,8 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
                                                             offset[1],
                                                             offset[2]))
 
-                    dst_frame = misc.pose2KDLframe(dst_pose)*offset_frame
-                    dst_pose = misc.KDLframe2Pose(dst_frame)
+                    dst_frame = pose2KDLframe(dst_pose)*offset_frame
+                    dst_pose = KDLframe2Pose(dst_frame)
 
             # Compute the grasping and placing pose for each robot and write to blackboard
             for robot_name in self.robot_names:
@@ -398,15 +399,15 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
     # @staticmethod
     # def get_local_pose(obj_pose, base2arm_baselink):
     #     """ Return the object pose in the robot arm base frame."""
-    #     base2obj = misc.pose2KDLframe(obj_pose)
+    #     base2obj = pose2KDLframe(obj_pose)
     #     arm_baselink2obj = base2arm_baselink.Inverse() * base2obj
-    #     obj_pose = misc.KDLframe2Pose(arm_baselink2obj)
+    #     obj_pose = KDLframe2Pose(arm_baselink2obj)
     #     return obj_pose
 
     @staticmethod
     def get_grasp_pose(obj_grasp_pose, base2arm_baselink, grasp_offset_z):
         """ Return the grasp pose."""
-        base2obj = misc.pose2KDLframe(obj_grasp_pose)
+        base2obj = pose2KDLframe(obj_grasp_pose)
 
         # TODO: this is a fail safe code. It may need to be removed.
         # if abs(base2obj.M.UnitZ()[2]) < 0.3:
@@ -425,7 +426,7 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
         baselink2grasp = arm_baselink2obj #* obj2grasp
 
         # Grasping pose
-        grasp_pose     = misc.KDLframe2Pose(baselink2grasp)
+        grasp_pose     = KDLframe2Pose(baselink2grasp)
         grasp_pose.position.z -= grasp_offset_z        
         return grasp_pose
 
@@ -433,11 +434,11 @@ class POSE_ESTIMATOR(py_trees.behaviour.Behaviour):
     def get_place_pose(obj_dst_pose, base2arm_baselink, grasp_pose, \
                        obj_height, grasp_offset_z):
         """ return the place pose """
-        base2obj         = misc.pose2KDLframe(obj_dst_pose)
+        base2obj         = pose2KDLframe(obj_dst_pose)
         arm_baselink2obj = base2arm_baselink.Inverse() * base2obj
-        arm_baselink2obj.M = misc.pose2KDLframe(grasp_pose).M
+        arm_baselink2obj.M = pose2KDLframe(grasp_pose).M
 
-        place_pose     = misc.KDLframe2Pose(arm_baselink2obj)
+        place_pose     = KDLframe2Pose(arm_baselink2obj)
 
         # for the object hold by the hand
         place_pose.position.z += obj_height

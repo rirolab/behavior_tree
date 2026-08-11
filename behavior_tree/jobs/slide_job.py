@@ -10,7 +10,6 @@ import PyKDL
 import tf
 
 import std_msgs.msg as std_msgs
-from complex_action_client import misc
 
 #sys.path.insert(0,'..')
 from behavior_tree.subtrees import MoveJoint, MovePose, Gripper, Stop, WorldModel
@@ -105,7 +104,7 @@ class Move(object):
         # TODO
         if destination=='na':
             destination='place_tray'
-            print "destination is not assigned, so selected place-tray as a destination"
+            print("destination is not assigned, so selected place-tray as a destination")
 
         
         # ----------------- Move Task ----------------        
