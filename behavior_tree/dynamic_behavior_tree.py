@@ -438,6 +438,7 @@ def main(args=None):
     splintered_reality = SplinteredReality(jobs=['jobs.pick_job.Move',
                                                  'jobs.place_job.Move',
                                                  'jobs.move_job.Move',
+                                                 'jobs.square_job.Move',
                                                  ## ## 'jobs.handover_job.Move',
                                                  ## ## 'jobs.jog_job.Move',
                                                  'jobs.gripper_job.Move',
