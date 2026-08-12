@@ -8,12 +8,18 @@ from . import base_job
 from behavior_tree.subtrees import MovePose
 from behavior_tree.utils.validation_utils import StepValidationResult
 
+# Previous full-size square waypoints.
+# SQUARE_POSITIONS = [
+#     [0.333, -0.233, 0.513],
+#     [0.333, 0.233, 0.513],
+#     [0.626, 0.233, 0.513],
+#     [0.626, -0.233, 0.513],
+# ]
 SQUARE_POSITIONS = [
-    [0.333, -0.233, 0.513],
-    [0.333, 0.233, 0.513],
-    [0.626, 0.233, 0.513],
-    [0.626, -0.233, 0.513],
-    [0.333, -0.233, 0.513],
+    [0.40625, -0.1165, 0.513],
+    [0.40625, 0.1165, 0.513],
+    [0.55275, 0.1165, 0.513],
+    [0.55275, -0.1165, 0.513],
 ]
 # Use the world-frame XYZW quaternion for every square waypoint.
 SQUARE_ORIENTATION = [0.0, 0.0, 0.0, 1.0]
@@ -115,6 +121,14 @@ class Move(base_job.BaseJob):
                     timeout=timeout,
                     robot_name=robot_name,
                 )
+            )
+
+        # Repeat the full square loop when the payload asks for it.
+        if goal[idx].get("repeat", False):
+            return py_trees.decorators.Repeat(
+                name="RepeatSquare",
+                child=square,
+                num_success=-1,
             )
 
         return square
