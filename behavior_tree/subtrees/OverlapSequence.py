@@ -24,6 +24,28 @@ the next motion. How the two are combined once both are live (an additive
 velocity sum) is owned by the mixer, downstream. Setting the threshold to 1.0
 makes this behave exactly like ``Sequence(memory=True)``: the next child starts
 only when the current one is fully done.
+
+``dispatch_on_start`` splits that one trigger in two. Dispatching a motion is
+not free -- a tree tick at 2 Hz plus the primitive's IK, measured at 0.2 to
+0.44 s -- and under the threshold gate all of it is spent *after* the mixer
+already wanted to blend. Measured on the 80 mm square, a requested 0.75 fired
+at an effective 0.908, and 0.60 at 0.976, i.e. no overlap at all. With this on,
+the next motion is dispatched as soon as the newest one is moving at all, so
+that cost is paid while the previous motion still runs; the mixer's own
+``progress_threshold`` still decides when the blend actually opens.
+
+It is self-limiting, which is why there is no depth counter here: a dispatched
+motion sits ARMED until the mixer starts it, and an ARMED slot reports progress
+0.0, so the gate blocks again until the mixer moves on. At most three motions
+are ever in flight -- two slots plus one queued -- which is exactly what
+``dispatch_stream`` accepts before rejecting.
+
+Off by default because it changes the *sequential* baseline too. At threshold
+1.0 the mixer still runs the motions strictly one after another, but the
+planning dwell between them (measured 0.204 to 0.255 s of commanded standstill
+at each corner) disappears, since the next plan is built during the current
+motion. Any comparison against previously recorded sequential runs has to keep
+this off.
 """
 
 import py_trees
@@ -33,7 +55,8 @@ from py_trees import common
 class OverlapSequence(py_trees.composites.Composite):
 
     def __init__(self, name="OverlapSequence", children=None,
-                 progress_threshold=1.0, threshold_param=None):
+                 progress_threshold=1.0, threshold_param=None,
+                 dispatch_on_start=False, dispatch_param=None):
         super().__init__(name=name, children=children)
         # The fraction of a child's motion that must be done before the next
         # child is dispatched. 1.0 == wait for full completion == plain
@@ -46,6 +69,12 @@ class OverlapSequence(py_trees.composites.Composite):
         # frozen at its initial value and ros2 param set would appear to do
         # nothing.
         self.threshold_param = threshold_param
+        # Dispatch the next motion as soon as the newest one is *moving*,
+        # instead of waiting for it to reach the threshold. See the module
+        # docstring: this decouples "when to plan" from "when to blend", and
+        # it is off by default because it changes the sequential baseline.
+        self.dispatch_on_start = dispatch_on_start
+        self.dispatch_param = dispatch_param
         self._node = None
         # Highest index dispatched so far. Children 0..started are all live;
         # authority (the child whose success advances the tree) is `current`.
@@ -67,6 +96,16 @@ class OverlapSequence(py_trees.composites.Composite):
             except Exception:
                 pass
         return float(self.progress_threshold)
+
+    def _dispatch_on_start(self):
+        if self.dispatch_param is not None and self._node is not None:
+            try:
+                value = self._node.get_parameter(self.dispatch_param).value
+                if value is not None:
+                    return bool(value)
+            except Exception:
+                pass
+        return bool(self.dispatch_on_start)
 
     def _child_progress(self, child):
         """Progress in [0,1] for a child, or None if it exposes none."""
@@ -197,8 +236,25 @@ class OverlapSequence(py_trees.composites.Composite):
                 newest_progress = 1.0
 
             if self._child_overlappable(nxt):
-                start_next = (newest_progress is not None
-                              and newest_progress >= self._threshold())
+                if self._dispatch_on_start():
+                    # Dispatch as soon as the newest motion is actually moving.
+                    # Planning it costs a tree tick plus the primitive's IK, and
+                    # under the threshold gate all of that lands *after* the
+                    # mixer already wanted to blend, so the overlap starts late:
+                    # a requested 0.75 was measured firing at an effective
+                    # 0.908. Started here instead, that cost is paid while the
+                    # previous motion is still running.
+                    #
+                    # This cannot run away. A dispatched motion sits ARMED until
+                    # the mixer starts it, and an ARMED slot reports progress
+                    # 0.0, so the gate blocks again immediately -- at most one
+                    # motion is ever queued beyond the two live ones, which is
+                    # exactly what `dispatch_stream` accepts.
+                    start_next = (newest_progress is not None
+                                  and newest_progress > 0.0)
+                else:
+                    start_next = (newest_progress is not None
+                                  and newest_progress >= self._threshold())
             else:
                 # Non-overlappable successor (gripper, query): only start it once
                 # the newest has genuinely finished.

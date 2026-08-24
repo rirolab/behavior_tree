@@ -17,6 +17,13 @@ from behavior_tree.subtrees.OverlapSequence import OverlapSequence
 # overlap_progress_threshold <x>` takes effect without a restart.
 OVERLAP_THRESHOLD_PARAM = "overlap_progress_threshold"
 
+# Dispatch the next motion as soon as the previous one is moving, rather than
+# waiting for it to reach the threshold, so its planning cost is paid during the
+# previous motion instead of delaying the blend. Off by default: it also removes
+# the planning dwell from the strictly sequential baseline, so recorded
+# comparisons stay reproducible only while it is off. See OverlapSequence.
+OVERLAP_DISPATCH_ON_START_PARAM = "overlap_dispatch_on_start"
+
 
 def _move_sequence(name, children):
     """A sequence whose consecutive arm motions overlap.
@@ -25,6 +32,7 @@ def _move_sequence(name, children):
     gripper op, a world-model query), and everywhere when the threshold is 1.0.
     """
     seq = OverlapSequence(name=name, threshold_param=OVERLAP_THRESHOLD_PARAM,
+                          dispatch_param=OVERLAP_DISPATCH_ON_START_PARAM,
                           progress_threshold=1.0)
     seq.add_children(children)
     return seq

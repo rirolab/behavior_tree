@@ -145,6 +145,11 @@ class MultiSplinteredReality(SplinteredReality):
             "rnd_pose_srv_channel": "/get_object_rnd_pose",
             "close_pose_srv_channel": "/get_object_close_pose",
             "world_frame": "world",
+            # See OverlapSequence: dispatch the next motion when the previous
+            # one starts moving, instead of when it reaches the threshold.
+            # Declared here so it always exists for `ros2 param set`, whether or
+            # not a launch file overrides it.
+            "overlap_dispatch_on_start": False,
         }
         for name, value in defaults.items():
             if not self.has_parameter(name):
