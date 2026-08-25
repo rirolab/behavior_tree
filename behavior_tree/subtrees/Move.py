@@ -18,15 +18,8 @@ class MOVE(py_trees.behaviour.Behaviour):
     priority behaviour.
     """
 
-    def __init__(
-        self,
-        name,
-        action_client,
-        action_goal=None,
-        timeout=1,
-        robot_name=None,
-        goal_channel="arm",
-    ):
+    def __init__(self, name, action_client, action_goal=None, timeout=1, 
+                 robot_name=None, goal_channel="arm"):
         """
         Initialise a robot action command behaviour.
 
@@ -70,6 +63,25 @@ class MOVE(py_trees.behaviour.Behaviour):
             key=self.goal_status_key,
             access=py_trees.common.Access.READ,
         )
+
+    def _make_command(self, action_type, goal, uuid=None, enable_wait=False, **kwargs):
+        """
+        Build the complex action client command dictionary for blend composition.
+        """
+        # Preserve the routing fields needed by complex action client and trajectory_manager.
+        command = {
+            "action_type": action_type,
+            "goal": goal,
+            "timeout": self.timeout,
+            "enable_wait": enable_wait,
+            "goal_channel": self.goal_channel,
+        }
+        if uuid is not None:
+            command["uuid"] = uuid
+        if self.robot_name is not None:
+            command["robot_name"] = self.robot_name
+        command.update(kwargs)
+        return command
         
     def setup(self, node):
         """ """
@@ -132,17 +144,17 @@ class MOVE(py_trees.behaviour.Behaviour):
 
     def command_response_status(self):
         """
-        Convert immediate command service failures into a behavior result.
+        Convert immediate complex action client failures into a behavior result.
 
         Returns:
             :class:`py_trees.common.Status` or :obj:`None` when status topics
             should continue deciding the command result.
         """
-        # Wait until the command service has replied.
+        # Wait until complex action client has replied.
         if self.future is None or not self.future.done():
             return None
 
-        # Treat command service exceptions as behavior failures.
+        # Treat complex action client exceptions as behavior failures.
         try:
             response = self.future.result()
         except Exception as exc:
@@ -171,7 +183,7 @@ class MOVE(py_trees.behaviour.Behaviour):
         elif self.goal_uuid_des is not None:
             return None
 
-        # Fail immediately when CAC rejected the command before sending a controller goal.
+        # Fail immediately when complex action client rejected the controller goal.
         self.feedback_message = "FAILURE"
         return py_trees.common.Status.FAILURE
 

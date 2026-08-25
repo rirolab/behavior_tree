@@ -55,7 +55,7 @@ class GOTO(Move.MOVE):
             self.feedback_message = "Sending a gripper goal"
             return py_trees.common.Status.RUNNING
 
-        # Handle command-service rejection before waiting for a goal-status topic.
+        # Handle complex action client rejection before waiting for a goal-status topic.
         command_status = self.command_response_status()
         if command_status is not None:
             return command_status

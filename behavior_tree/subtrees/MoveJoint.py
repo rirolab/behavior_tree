@@ -25,6 +25,18 @@ class MOVEJ(Move.MOVE):
                                    robot_name=robot_name)
         self.logger.debug("%s.__init__()" % self.__class__.__name__)
 
+    def make_command(self, uuid=None, enable_wait=False):
+        """
+        Export this joint move as a complex action client command dictionary.
+        """
+        # Encode joint targets with the same indexed schema used by update().
+        goal = {}
+        for i, ang in enumerate(self.action_goal):
+            goal[str(i)] = ang
+        return self._make_command(
+            "moveJoint", json.dumps(goal), uuid=uuid, enable_wait=enable_wait,
+        )
+
     def update(self):
         self.logger.debug("%s.update()" % self.__class__.__name__)
 
@@ -34,18 +46,11 @@ class MOVEJ(Move.MOVE):
             return py_trees.Status.FAILURE
             
         if not self.sent_goal:
-            goal = {}
-            for i, ang in enumerate(self.action_goal):
-                goal[str(i)] = ang
-
             self.goal_uuid_des = np.random.randint(0, 255, size=16,
                                             dtype=np.uint8)
-                
-            cmd_str = json.dumps({'action_type': 'moveJoint',
-                                  'goal': json.dumps(goal),
-                                  'uuid': self.goal_uuid_des.tolist(),
-                                  'timeout': self.timeout,
-                                  'enable_wait': False})
+            cmd_str = json.dumps(
+                self.make_command(uuid=self.goal_uuid_des.tolist(), enable_wait=False)
+            )
             req = StringGoalStatus.Request(data=cmd_str)
             self.future = self.cmd_req.call_async(req)
             
@@ -55,7 +60,7 @@ class MOVEJ(Move.MOVE):
 
         self.feedback_message = "running"
 
-        # Handle command-service rejection before waiting for a goal-status topic.
+        # Handle complex action client rejection before waiting for a goal-status topic.
         command_status = self.command_response_status()
         if command_status is not None:
             return command_status
@@ -77,7 +82,7 @@ class MOVEJ(Move.MOVE):
             return py_trees.common.Status.FAILURE
 
         if self.goal_matches_blackboard() and \
-           self.current_goal_status() is GoalStatus.STATUS_SUCCEEDED:
+           self.current_goal_status() == GoalStatus.STATUS_SUCCEEDED:
             self.feedback_message = "SUCCESSFUL"
             self.logger.debug("%s.update()[%s->%s][%s]" % \
                                   (self.__class__.__name__, \
@@ -102,10 +107,24 @@ class MOVEJR(Move.MOVE):
     """
 
     def __init__(self, name, action_client, action_goal=None, robot_name=None):
+        # Match the relative-joint command timeout used by update().
         super(MOVEJR, self).__init__(name=name,
                                    action_client=action_client,
                                    action_goal=action_goal,
+                                   timeout=3.,
                                    robot_name=robot_name)
+
+    def make_command(self, uuid=None, enable_wait=False):
+        """
+        Export this relative joint move as a complex action client command dictionary.
+        """
+        # Encode relative joint targets with the same indexed schema used by update().
+        goal = {}
+        for i, ang in enumerate(self.action_goal):
+            goal[str(i)] = ang
+        return self._make_command(
+            "moveJointRelative", json.dumps(goal), uuid=uuid, enable_wait=enable_wait,
+        )
 
     def update(self):
         self.logger.debug("%s.update()" % self.__class__.__name__)
@@ -116,17 +135,11 @@ class MOVEJR(Move.MOVE):
             return py_trees.Status.FAILURE
 
         if not self.sent_goal:
-            goal = {}
-            for i, ang in enumerate(self.action_goal):
-                goal[str(i)] = ang
-
             self.goal_uuid_des = np.random.randint(0, 255, size=16,
-                                            dtype=np.uint8)                
-            cmd_str = json.dumps({'action_type': 'moveJointRelative',
-                                  'goal': json.dumps(goal),
-                                  'uuid': self.goal_uuid_des.tolist(),
-                                  'timeout': 3.,
-                                  'enable_wait': False})
+                                            dtype=np.uint8)
+            cmd_str = json.dumps(
+                self.make_command( uuid=self.goal_uuid_des.tolist(), enable_wait=False)
+            )
             req = StringGoalStatus.Request(data=cmd_str)            
             self.future = self.cmd_req.call_async(req)
             
@@ -134,7 +147,7 @@ class MOVEJR(Move.MOVE):
             self.feedback_message = "Sending a joint goal"
             return py_trees.common.Status.RUNNING
 
-        # Handle command-service rejection before waiting for a goal-status topic.
+        # Handle complex action client rejection before waiting for a goal-status topic.
         command_status = self.command_response_status()
         if command_status is not None:
             return command_status
@@ -156,7 +169,7 @@ class MOVEJR(Move.MOVE):
             return py_trees.common.Status.FAILURE
 
         if self.goal_matches_blackboard() and \
-           self.current_goal_status() is GoalStatus.STATUS_SUCCEEDED:
+           self.current_goal_status() == GoalStatus.STATUS_SUCCEEDED:
             self.feedback_message = "SUCCESSFUL"
             self.logger.debug("%s.update()[%s->%s][%s]" % \
                                   (self.__class__.__name__, \

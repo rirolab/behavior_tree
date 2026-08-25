@@ -8,6 +8,7 @@ import py_trees.console as console
 import py_trees_ros
 import rclpy
 from action_msgs.msg import GoalStatus
+from std_msgs.msg import String
 from rclpy.node import Node
 from rclpy.qos import QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from tf2_ros.buffer import Buffer
@@ -21,7 +22,9 @@ from behavior_tree import decorators
 from behavior_tree.dynamic_behavior_tree import SplinteredReality, get_args, load_topic_list
 from behavior_tree.subtrees import Grnd2Blackboard
 from behavior_tree.utils.parameter_utils import make_string_list
-from behavior_tree.utils.validation_utils import StepValidationResult
+from behavior_tree.utils.validation_utils import (
+    collect_blend_validation, validate_goal, validate_robot_names
+)
 
 
 def create_root(robot_names):
@@ -62,6 +65,17 @@ def create_root(robot_names):
                     qos_profile=py_trees_ros.utilities.qos_profile_unlatched(),
                 )
             )
+        status_nodes.append(
+            ToBlackboard(
+                name=f"{robot_name}_arm_BlendProgress2BB",
+                topic_name=f"{robot_name}/arm_client/arm/blend_progress",
+                topic_type=String,
+                blackboard_variables={
+                    f"{robot_name}/arm/blend_progress": "data",
+                },
+                qos_profile=py_trees_ros.utilities.qos_profile_unlatched(),
+            )
+        )
 
     priorities = py_trees.composites.Selector("Priorities", memory=False)
     priorities.add_child(py_trees.behaviours.Running(name="Idle"))
@@ -109,14 +123,16 @@ class MultiSplinteredReality(SplinteredReality):
             "rnd_pose_srv_channel": "/get_object_rnd_pose",
             "close_pose_srv_channel": "/get_object_close_pose",
             "world_frame": "world",
+            "frequency": 10.0,
         }
         for name, value in defaults.items():
             if not self.has_parameter(name):
                 self.declare_parameter(name, value)
 
-        # Store robot names and validate them
+        # Store robot names and validate them. 
+        # Raise an exception if any are invalid.
         self.robot_names = make_string_list(self.get_parameter("robot").value)
-        self.validate_robot_names()
+        validate_robot_names(self.robot_names, self.get_parameters_by_prefix("").keys())
 
         self.rec_topic_list = rec_topic_list
         self.n_loop = n_loop
@@ -136,6 +152,12 @@ class MultiSplinteredReality(SplinteredReality):
         self.tree.add_pre_tick_handler(self.pre_tick_handler)
         self.tree.add_post_tick_handler(self.post_tick_handler)
         self.initComms()
+
+        # Convert the requested tick frequency into a stable loop period.
+        self.frequency = float(self.get_parameter("frequency").value)
+        if self.frequency <= 0.0:
+            raise RuntimeError("multi_dynamic_behavior_tree frequency must be positive")
+        self.tick_period = rclpy.duration.Duration(nanoseconds=int(1e9 / self.frequency))
 
         self.jobs = []
         for job in jobs:
@@ -203,7 +225,13 @@ class MultiSplinteredReality(SplinteredReality):
         if not self.busy() and goal is not None:
 
             # Reject the entire goal early if any step has invalid robot assignments.
-            if not self.validate_goal(goal):
+            is_goal_valid, goal_reject_reason = validate_goal(
+                goal,
+                self.jobs,
+                self.robot_names,
+            )
+            if not is_goal_valid:
+                console.logwarn(goal_reject_reason)
                 for job in self.jobs:
                     job.goal = None
                 return
@@ -267,6 +295,17 @@ class MultiSplinteredReality(SplinteredReality):
                     if job_root is None:
                         continue
 
+                    # Reject invalid blend subtrees before setup or insertion.
+                    is_blend_valid, blend_reject_reason = collect_blend_validation(job_root)
+                    if not is_blend_valid:
+                        console.logwarn(
+                            f"{step_idx}: pre_tick_handler rejected goal due to invalid blend subtree "
+                            f"({blend_reject_reason})"
+                        )
+                        for job in self.jobs:
+                            job.goal = None
+                        return
+
                     # Setup the subtree immediately so it is ready before insertion.
                     console.loginfo(f"{step_idx}: pre_tick_handler running to set up all subtree modules")
                     try:
@@ -324,111 +363,6 @@ class MultiSplinteredReality(SplinteredReality):
             for job in self.jobs:
                 job.goal = None
             return
-
-    def validate_robot_names(self):
-        """
-        Validate the robot names provided in the parameters
-
-        Returns:
-            [:obj:`str`]: robot names used by this behavior tree.
-        """
-        
-        # Case: at least one robot name must be provided.
-        # TODO: For now, we only consider robot(s) with name in the ros parameter. 
-        if not self.robot_names:
-            raise RuntimeError(
-                "Invalid multi_dynamic_behavior_tree robot parameter: "
-                "parameter [robot] must define at least one robot name"
-            )
-
-        # Case: robot names must have matching parameter namespaces.
-        parameter_names = self.get_parameters_by_prefix("").keys()
-        parameter_namespaces = {
-            parameter_name.split(".", 1)[0]
-            for parameter_name in parameter_names
-            if "." in parameter_name
-        }
-        robot_names_set = set(self.robot_names)
-        if robot_names_set != parameter_namespaces:
-            raise RuntimeError(
-                "Invalid multi_dynamic_behavior_tree robot parameter: "
-                f"parameter [robot] names {sorted(robot_names_set)} "
-                f"must match parameter namespaces {sorted(parameter_namespaces)}"
-            )
-
-        # Case: robot names must not be blank.
-        blank_robot_names = [
-            robot_name for robot_name in self.robot_names if robot_name.strip() == ""
-        ]
-        if blank_robot_names:
-            raise RuntimeError(
-                "Invalid multi_dynamic_behavior_tree robot parameter: "
-                "parameter [robot] contains an empty robot name"
-            )
-
-        # Case: robot names must be unique.
-        if len(set(self.robot_names)) != len(self.robot_names):
-            raise RuntimeError(
-                "Invalid multi_dynamic_behavior_tree robot parameter: "
-                f"parameter [robot] contains duplicate robot names: {self.robot_names}"
-            )
-        
-    def validate_goal(self, goal):
-        """
-        Validate that every grounding step can be routed by this tree instance.
-
-        Args:
-            goal (:obj:`dict`): full grounding plan stored by a job.
-
-        Returns:
-            :obj:`bool`: whether every step names usable robot(s).
-        """
-        available_robot_names = set(self.robot_names)
-
-        for idx in range(len(goal)):
-            # Check that steps are well-formed
-            step_idx = str(idx + 1)
-            step = goal.get(step_idx)
-            if step is None:
-                console.logwarn(f"{step_idx}: validate_goal rejected goal due to missing step")
-                return False
-
-            # A missing robot field is accepted when this tree is configured with one robot.
-            grounding_robot_names = make_string_list(step.get("robot"))
-            if not grounding_robot_names and len(self.robot_names) == 1:
-                grounding_robot_names = [self.robot_names[0]]
-
-            # Reject the goal if any step contains robot names that are not in this tree's configuration.
-            if (
-                not grounding_robot_names
-                or not set(grounding_robot_names).issubset(available_robot_names)
-            ):
-                console.logwarn(f"{step_idx}: validate_goal rejected goal due to invalid assignment")
-                return False
-            
-            # Reject the goal if any step is mal-formatted for any job.
-            job_validation_result = []
-            rejecting_jobs = []
-            for job in self.jobs:
-                result = job.validate_step(step)
-                job_validation_result.append(result)
-                if result == StepValidationResult.REJECT_GOAL:
-                    rejecting_jobs.append(job.__class__.__module__.split(".")[-1])
-            if rejecting_jobs:
-                console.logwarn(
-                    f"{step_idx}: validate_goal rejected goal due to job validation failure "
-                    f"from {', '.join(rejecting_jobs)}"
-                )
-                return False
-            
-            # Reject the goal unless exactly one job accepts this step.
-            accept_count = sum(result == StepValidationResult.ACCEPT_GOAL for result in job_validation_result)
-            if accept_count != 1:
-                console.logwarn(f"{step_idx}: validate_goal rejected goal because the step is accepted by {accept_count} jobs, but should be accepted by exactly one job")
-                return False
-
-        return True
-
 
 def main(args=None):
     """

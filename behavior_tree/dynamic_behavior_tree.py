@@ -13,6 +13,7 @@ from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 
 from riro_srvs.srv import StringGoalStatus
 from action_msgs.msg import GoalStatus
+from std_msgs.msg import String
 
 import py_trees
 import py_trees_ros
@@ -27,8 +28,8 @@ from behavior_tree.subtrees import WM2Blackboard
 from behavior_tree.subtrees import Grnd2Blackboard
 ## from .subtrees import Status2Blackboard
 from behavior_tree import decorators
+from behavior_tree.utils.validation_utils import collect_blend_validation, validate_goal
 from py_trees_ros.subscribers import ToBlackboard 
-
 
 def create_root():
     """
@@ -61,6 +62,15 @@ def create_root():
                 qos_profile=py_trees_ros.utilities.qos_profile_unlatched(),
             )
         )
+    status_nodes.append(
+        ToBlackboard(
+            name="arm_BlendProgress2BB",
+            topic_name="arm_client/arm/blend_progress",
+            topic_type=String,
+            blackboard_variables={"arm/blend_progress": "data"},
+            qos_profile=py_trees_ros.utilities.qos_profile_unlatched(),
+        )
+    )
     # ---------------- Root->Priorities- -----------------------
     priorities = py_trees.composites.Selector("Priorities",
                                               memory=False)
@@ -114,6 +124,7 @@ class SplinteredReality(Node):
                 ("arm_base_frame", Parameter.Type.STRING),
                 ("grasp_offset_z", Parameter.Type.DOUBLE),
                 ("top_offset_z", Parameter.Type.DOUBLE),
+                ("frequency", 10.0),
                 ]
         )
 
@@ -135,6 +146,12 @@ class SplinteredReality(Node):
         self.tree.add_pre_tick_handler(self.pre_tick_handler)
         self.tree.add_post_tick_handler(self.post_tick_handler)
         self.initComms()
+
+        # Convert the requested tick frequency into a stable loop period.
+        self.frequency = float(self.get_parameter("frequency").value)
+        if self.frequency <= 0.0:
+            raise RuntimeError("dynamic_behavior_tree frequency must be positive")
+        self.tick_period = rclpy.duration.Duration(nanoseconds=int(1e9 / self.frequency))
         
         self.jobs = []
         for job in jobs:
@@ -154,20 +171,23 @@ class SplinteredReality(Node):
         )
          
         # Shared services
-        self.action_client = self.create_client(StringGoalStatus, 'arm_client/command',
-                                        qos_profile=qos_profile)
-                                        ## qos_profile=rclpy.qos.qos_profile_services_default)
+        self.action_client = self.create_client(
+            StringGoalStatus, 'arm_client/command', qos_profile=qos_profile
+        )
+        ## qos_profile=rclpy.qos.qos_profile_services_default)
         if not self.action_client.wait_for_service(timeout_sec=3.0):
             raise exceptions.TimedOutError('command service not available, waiting again...')
 
+        # Publish accepted behavior-tree goals for external recorders.
+        self.goal_accepted_pub = self.create_publisher(
+            String, "behavior_tree/goal_accepted", 10,
+        )
+
         # get odom 2 base
-        
         self.tf_buffer   = Buffer()
-        self.tf_listener = TransformListener(buffer=self.tf_buffer,
-                                             node=self,
-                                             spin_thread=True,
-                                             qos=qos_profile,
-                                                 )
+        self.tf_listener = TransformListener(
+            buffer=self.tf_buffer, node=self, spin_thread=True, qos=qos_profile,
+        )
 
     def setup(self):
         """
@@ -199,6 +219,14 @@ class SplinteredReality(Node):
                 goal = job.goal
 
         if not self.busy() and goal is not None:
+            # Reject the entire goal early if any step is malformed.
+            is_goal_valid, goal_reject_reason = validate_goal(goal, self.jobs, None)
+            if not is_goal_valid:
+                console.logwarn(goal_reject_reason)
+                for job in self.jobs:
+                    job.goal = None
+                return
+
             cancel_seq = py_trees.composites.Sequence(name="Cancel", memory=True)        
             is_stop_requested = py_trees.behaviours.CheckBlackboardVariableValue(
                 name="Stop?",
@@ -212,7 +240,8 @@ class SplinteredReality(Node):
             task_list = []
 
             # self.jobs are holding all available job classes
-            for idx in range(len(goal)):                
+            for idx in range(len(goal)):
+                job_root = None
                 for job in self.jobs:
                     # job.goal contains current goal json message.
                     if job.goal is not None:
@@ -223,6 +252,18 @@ class SplinteredReality(Node):
                                                    rec_topic_list=self.rec_topic_list)
                         if job_root is None:
                             continue
+
+                        # Reject invalid blend subtrees before setup or insertion.
+                        is_blend_valid, blend_reject_reason = collect_blend_validation(job_root)
+                        if not is_blend_valid:
+                            console.logwarn(
+                                f"{idx + 1}: pre_tick_handler rejected goal due to invalid blend subtree "
+                                f"({blend_reject_reason})"
+                            )
+                            for job in self.jobs:
+                                job.goal = None
+                            return
+
                         console.loginfo(f"{idx+1}: pre_tick_handler running to set up all subtree modules")
                         
                         try:
@@ -242,6 +283,15 @@ class SplinteredReality(Node):
                         task_list.append(job_root)
                         break
 
+                # Reject the entire goal if no job can actually build the step subtree.
+                if job_root is None:
+                    console.logwarn(
+                        f"{idx + 1}: pre_tick_handler rejected goal because no job built a subtree"
+                    )
+                    for job in self.jobs:
+                        job.goal = None
+                    return
+
             task = py_trees.composites.Sequence(name="Task", memory=True)
             task.add_children(task_list)
                     
@@ -259,6 +309,16 @@ class SplinteredReality(Node):
             root = run_or_cancel
             tree.insert_subtree(root, self.priorities.id, 0)
             console.loginfo(f"{root.name}: pre_tick_handler inserted job subtree")
+
+            # Notify recorders after the job subtree has been accepted.
+            accepted_msg = String()
+            accepted_msg.data = json.dumps(
+                {
+                    "event": "accepted",
+                    "steps": len(goal),
+                }
+            )
+            self.goal_accepted_pub.publish(accepted_msg)
 
             # Reset goals
             for job in self.jobs:
@@ -354,8 +414,6 @@ class SplinteredReality(Node):
             self.current_job = job
             return 
             
-                    
-
     def post_tick_handler(self, tree):
         """
         Check if a job is running and if it has finished. If so, prune the job subtree from the tree.
@@ -388,7 +446,7 @@ class SplinteredReality(Node):
         return self.tree.root.children[-1]
 
     def tick_tock(self):
-        self.tree.tick_tock(500)
+        self.tree.tick_tock(period_ms=1000.0 / self.frequency)
 
     def run(self):
         number_of_iterations=py_trees.trees.CONTINUOUS_TICK_TOCK,
@@ -404,11 +462,10 @@ class SplinteredReality(Node):
             # rate.sleep sleeps forever. So manually implemented..
             while rclpy.ok():
                 time_now = self.get_clock().now()
-                if time_now - start_time > rclpy.duration.Duration(nanoseconds=5e+8):
+                if time_now - start_time > self.tick_period:
                     start_time = time_now
                     break
                 rclpy.spin_once(self, timeout_sec=0)
-        
         
     def shutdown(self):
         self.tree.interrupt()

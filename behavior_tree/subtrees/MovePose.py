@@ -4,10 +4,10 @@ import rclpy
 
 import py_trees
 from action_msgs.msg import GoalStatus
+from behavior_tree.utils.goal_conversions import behavior_to_pose_goal
 from . import Move
 
 from riro_srvs.srv import StringGoalStatus
-import geometry_msgs
 import py_trees.console as console
 
 ## import std_msgs.msg as std_msgs
@@ -15,6 +15,7 @@ import py_trees.console as console
 ## from control_msgs.msg import FollowJointTrajectoryResult
 
 ## from complex_action_client.srv import String_Int, None_String
+
 
 class MOVEP(Move.MOVE):
     """
@@ -36,6 +37,15 @@ class MOVEP(Move.MOVE):
         self.blackboard.register_key(key=self.action_goal['pose'], \
                                      access=py_trees.common.Access.READ)
 
+    def make_command(self, uuid=None, enable_wait=False):
+        """
+        Export this pose move as a complex action client command dictionary.
+        """
+        # Encode the resolved pose with the same schema used by update().
+        return self._make_command(
+            "movePose", json.dumps(behavior_to_pose_goal(self)), uuid=uuid, 
+            enable_wait=enable_wait,
+        )
 
     def update(self):
         self.logger.debug("%s.update()" % self.__class__.__name__)
@@ -46,32 +56,11 @@ class MOVEP(Move.MOVE):
             return py_trees.Status.FAILURE
 
         if not self.sent_goal:
-            if type(self.action_goal['pose']) is geometry_msgs.msg.Pose:
-                goal = {'x': self.action_goal['pose'].position.x,
-                        'y': self.action_goal['pose'].position.y,
-                        'z': self.action_goal['pose'].position.z,
-                        'qx': self.action_goal['pose'].orientation.x,
-                        'qy': self.action_goal['pose'].orientation.y,
-                        'qz': self.action_goal['pose'].orientation.z,
-                        'qw': self.action_goal['pose'].orientation.w,}
-            else:
-                ps = self.blackboard.get(self.action_goal['pose'])
-                goal = {'x': ps.position.x,
-                        'y': ps.position.y,
-                        'z': ps.position.z,
-                        'qx': ps.orientation.x,
-                        'qy': ps.orientation.y,
-                        'qz': ps.orientation.z,
-                        'qw': ps.orientation.w,}
-
             self.goal_uuid_des = np.random.randint(0, 255, size=16,
                                             dtype=np.uint8)
-                    
-            cmd_str = json.dumps({'action_type': 'movePose',
-                                  'goal': json.dumps(goal),
-                                  'uuid': self.goal_uuid_des.tolist(),
-                                  'timeout': self.timeout,
-                                  'enable_wait': False})
+            cmd_str = json.dumps(
+                self.make_command(uuid=self.goal_uuid_des.tolist(), enable_wait=False)
+            )
             req = StringGoalStatus.Request(data=cmd_str)
             self.future = self.cmd_req.call_async(req)
             
@@ -79,7 +68,7 @@ class MOVEP(Move.MOVE):
             self.feedback_message = "Sending a pose goal"
             return py_trees.common.Status.RUNNING
 
-        # Handle command-service rejection before waiting for a goal-status topic.
+        # Handle complex action client rejection before waiting for a goal-status topic.
         command_status = self.command_response_status()
         if command_status is not None:
             return command_status
@@ -101,7 +90,7 @@ class MOVEP(Move.MOVE):
             return py_trees.common.Status.FAILURE
 
         if self.goal_matches_blackboard() and \
-           self.current_goal_status() is GoalStatus.STATUS_SUCCEEDED:
+           self.current_goal_status() == GoalStatus.STATUS_SUCCEEDED:
             self.feedback_message = "SUCCESSFUL"
             self.logger.debug("%s.update()[%s->%s][%s]" % \
                                   (self.__class__.__name__, \
@@ -134,6 +123,16 @@ class MOVES(Move.MOVE):
         self.blackboard.register_key(key=self.action_goal['pose'], \
                                      access=py_trees.common.Access.READ)
 
+    def make_command(self, uuid=None, enable_wait=False):
+        """
+        Export this straight pose move as a complex action client command dictionary.
+        """
+        # Include contact checking because complex action client forwards it.
+        return self._make_command(
+            "movePoseStraight", json.dumps(behavior_to_pose_goal(self)), uuid=uuid, 
+            enable_wait=enable_wait, check_contact=self.check_contact,
+        )
+
     def update(self):
         self.logger.debug("%s.update()" % self.__class__.__name__)
 
@@ -143,33 +142,11 @@ class MOVES(Move.MOVE):
             return py_trees.Status.FAILURE
 
         if not self.sent_goal:
-            # reference frame: arm_baselink
-            if type(self.action_goal['pose']) is geometry_msgs.msg.Pose:
-                goal = {'x': self.action_goal['pose'].position.x,
-                        'y': self.action_goal['pose'].position.y,
-                        'z': self.action_goal['pose'].position.z,
-                        'qx': self.action_goal['pose'].orientation.x,
-                        'qy': self.action_goal['pose'].orientation.y,
-                        'qz': self.action_goal['pose'].orientation.z,
-                        'qw': self.action_goal['pose'].orientation.w,}
-            else:
-                ps = self.blackboard.get(self.action_goal['pose'])                
-                goal = {'x': ps.position.x,
-                        'y': ps.position.y,
-                        'z': ps.position.z,
-                        'qx': ps.orientation.x,
-                        'qy': ps.orientation.y,
-                        'qz': ps.orientation.z,
-                        'qw': ps.orientation.w,}
-            
             self.goal_uuid_des = np.random.randint(0, 255, size=16,
                                             dtype=np.uint8)
-            cmd_str = json.dumps({'action_type': 'movePoseStraight',
-                                  'goal': json.dumps(goal),
-                                  'uuid': self.goal_uuid_des.tolist(),
-                                  'timeout': self.timeout,
-                                  'check_contact': self.check_contact,
-                                  'enable_wait': False})
+            cmd_str = json.dumps(
+                self.make_command(uuid=self.goal_uuid_des.tolist(), enable_wait=False)
+            )
             req = StringGoalStatus.Request(data=cmd_str)
             self.future = self.cmd_req.call_async(req)
             
@@ -177,7 +154,7 @@ class MOVES(Move.MOVE):
             self.feedback_message = "Sending a joint goal"
             return py_trees.common.Status.RUNNING
 
-        # Handle command-service rejection before waiting for a goal-status topic.
+        # Handle complex action client rejection before waiting for a goal-status topic.
         command_status = self.command_response_status()
         if command_status is not None:
             return command_status
@@ -199,7 +176,7 @@ class MOVES(Move.MOVE):
             return py_trees.common.Status.FAILURE
 
         if self.goal_matches_blackboard() and \
-           self.current_goal_status() is GoalStatus.STATUS_SUCCEEDED:
+           self.current_goal_status() == GoalStatus.STATUS_SUCCEEDED:
             self.feedback_message = "SUCCESSFUL"
             self.logger.debug("%s.update()[%s->%s][%s]" % \
                                   (self.__class__.__name__, \
@@ -233,6 +210,16 @@ class MOVEPR(Move.MOVE):
         # Enable continuous motion
         self.action_cont = cont
 
+    def make_command(self, uuid=None, enable_wait=False):
+        """
+        Export this relative pose move as a complex action client command dictionary.
+        """
+        # Include the relative frame required by trajectory_manager.
+        return self._make_command(
+            "movePoseRelative", json.dumps(behavior_to_pose_goal(self)), uuid=uuid, 
+            enable_wait=enable_wait, frame=self.action_goal['frame'],
+        )
+
 
     def setup(self, timeout):
 
@@ -255,33 +242,11 @@ class MOVEPR(Move.MOVE):
             return py_trees.Status.FAILURE
 
         if not self.sent_goal or (self.action_cont and self.action_goal['pose'] is not None):
-            if type(self.action_goal['pose']) is geometry_msgs.msg.Pose:
-                goal = {'x': self.action_goal['pose'].position.x,
-                        'y': self.action_goal['pose'].position.y,
-                        'z': self.action_goal['pose'].position.z,
-                        'qx': self.action_goal['pose'].orientation.x,
-                        'qy': self.action_goal['pose'].orientation.y,
-                        'qz': self.action_goal['pose'].orientation.z,
-                        'qw': self.action_goal['pose'].orientation.w,}
-            else:
-                ps = self.blackboard.get(self.action_goal['pose'])                
-                goal = {'x': ps.position.x,
-                        'y': ps.position.y,
-                        'z': ps.position.z,
-                        'qx': ps.orientation.x,
-                        'qy': ps.orientation.y,
-                        'qz': ps.orientation.z,
-                        'qw': ps.orientation.w,}
-               
-
             self.goal_uuid_des = np.random.randint(0, 255, size=16,
                                             dtype=np.uint8)
-            cmd_str = json.dumps({'action_type': 'movePoseRelative',
-                                  'goal': json.dumps(goal),
-                                  'frame': self.action_goal['frame'],
-                                  'uuid': self.goal_uuid_des.tolist(),
-                                  'timeout': self.timeout,
-                                  'enable_wait': False})
+            cmd_str = json.dumps(
+                self.make_command(uuid=self.goal_uuid_des.tolist(), enable_wait=False)
+            )
 
             req = StringGoalStatus.Request(data=cmd_str)            
             self.future = self.cmd_req.call_async(req)
@@ -290,7 +255,7 @@ class MOVEPR(Move.MOVE):
             self.feedback_message = "Sending a joint goal"
             return py_trees.common.Status.RUNNING
 
-        # Handle command-service rejection before waiting for a goal-status topic.
+        # Handle complex action client rejection before waiting for a goal-status topic.
         command_status = self.command_response_status()
         if command_status is not None:
             return command_status
@@ -312,7 +277,7 @@ class MOVEPR(Move.MOVE):
             return py_trees.common.Status.FAILURE
 
         if self.goal_matches_blackboard() and \
-           self.current_goal_status() is GoalStatus.STATUS_SUCCEEDED:
+           self.current_goal_status() == GoalStatus.STATUS_SUCCEEDED:
             self.feedback_message = "SUCCESSFUL"
             self.logger.debug("%s.update()[%s->%s][%s]" % \
                                   (self.__class__.__name__, \
@@ -343,6 +308,16 @@ class MOVEPROOT(Move.MOVE):
     
         self.blackboard.register_key(key=self.action_goal['pose'], \
                                      access=py_trees.common.Access.READ)
+
+    def make_command(self, uuid=None, enable_wait=False):
+        """
+        Export this root pose move as a complex action client command dictionary.
+        """
+        # Encode the root pose command for blend generation.
+        return self._make_command(
+            "movePoseRoot", json.dumps(behavior_to_pose_goal(self)), uuid=uuid,
+            enable_wait=enable_wait,
+        )
                                      
     def update(self):
         self.logger.debug("%s.update()" % self.__class__.__name__)
@@ -353,33 +328,11 @@ class MOVEPROOT(Move.MOVE):
             return py_trees.Status.FAILURE
 
         if not self.sent_goal:
-            # reference frame: arm_baselink
-            if type(self.action_goal['pose']) is geometry_msgs.msg.Pose:
-                goal = {'x': self.action_goal['pose'].position.x,
-                        'y': self.action_goal['pose'].position.y,
-                        'z': self.action_goal['pose'].position.z,
-                        'qx': self.action_goal['pose'].orientation.x,
-                        'qy': self.action_goal['pose'].orientation.y,
-                        'qz': self.action_goal['pose'].orientation.z,
-                        'qw': self.action_goal['pose'].orientation.w,}
-            else:
-                ps = self.blackboard.get(self.action_goal['pose'])                
-                goal = {'x': ps.position.x,
-                        'y': ps.position.y,
-                        'z': ps.position.z,
-                        'qx': ps.orientation.x,
-                        'qy': ps.orientation.y,
-                        'qz': ps.orientation.z,
-                        'qw': ps.orientation.w,}
-
             self.goal_uuid_des = np.random.randint(0, 255, size=16,
                                             dtype=np.uint8)
-                    
-            cmd_str = json.dumps({'action_type': 'movePoseRoot',
-                                  'goal': json.dumps(goal),
-                                  'uuid': self.goal_uuid_des.tolist(),
-                                  'timeout': self.timeout,
-                                  'enable_wait': False})
+            cmd_str = json.dumps(
+                self.make_command(uuid=self.goal_uuid_des.tolist(), enable_wait=False)
+            )
             req = StringGoalStatus.Request(data=cmd_str)            
             self.future = self.cmd_req.call_async(req)
             
@@ -387,7 +340,7 @@ class MOVEPROOT(Move.MOVE):
             self.feedback_message = "Sending a joint goal"
             return py_trees.common.Status.RUNNING
 
-        # Handle command-service rejection before waiting for a goal-status topic.
+        # Handle complex action client rejection before waiting for a goal-status topic.
         command_status = self.command_response_status()
         if command_status is not None:
             return command_status
@@ -409,7 +362,7 @@ class MOVEPROOT(Move.MOVE):
             return py_trees.common.Status.FAILURE
 
         if self.goal_matches_blackboard() and \
-           self.current_goal_status() is GoalStatus.STATUS_SUCCEEDED:
+           self.current_goal_status() == GoalStatus.STATUS_SUCCEEDED:
             self.feedback_message = "SUCCESSFUL"
             self.logger.debug("%s.update()[%s->%s][%s]" % \
                                   (self.__class__.__name__, \

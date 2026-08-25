@@ -43,8 +43,7 @@ class STOP(Move.MOVE):
             self.feedback_message = "Cancelling a goal"
             return py_trees.common.Status.RUNNING
 
-
-        if self.current_goal_status() is GoalStatus.STATUS_SUCCEEDED:
+        if self.current_goal_status() == GoalStatus.STATUS_SUCCEEDED:
             self.feedback_message = "SUCCESSFUL"
             self.logger.debug("%s.update()[%s->%s][%s]" % \
                                   (self.__class__.__name__, \
