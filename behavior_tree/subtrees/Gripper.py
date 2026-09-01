@@ -21,7 +21,8 @@ class GOTO(Move.MOVE):
         super(GOTO, self).__init__(name=name,
                                    action_client=action_client,
                                    action_goal=action_goal,
-                                   robot_name=robot_name)
+                                   robot_name=robot_name,
+                                   goal_channel="gripper")
 
         self.force         = force
         self.check_contact = check_contact
@@ -42,6 +43,7 @@ class GOTO(Move.MOVE):
             cmd_str = json.dumps({'action_type': 'gripperGotoPos',
                                   'goal': self.action_goal,
                                   'uuid': self.goal_uuid_des.tolist(),
+                                  'goal_channel': self.goal_channel,
                                   'force': self.force,
                                   'check_contact': self.check_contact,
                                   'timeout': self.timeout,
@@ -91,13 +93,27 @@ class GOTO_VIA_ARM(Move.MOVE):
     For ffw_bg2 real robot where the gripper joint is part of the arm
     controller's JTC (no dedicated gripper action server). The arm holds
     its current desired angles and only the gripper joint is commanded.
+
+    The goal channel is ``arm``, not ``gripper``, even though this is a gripper
+    op: ``gripperGotoPosViaArm`` takes ``**kwargs`` and never forwards a channel
+    to ``_send_goal``, which defaults to ``arm``, so that is where the status
+    actually appears. The command dispatcher would classify it as ``gripper``
+    from its name, and reading the gripper channel here would wait forever.
     """
     def __init__(self, name, action_client, action_goal=None, timeout=3.0, robot_name=None):
         super(GOTO_VIA_ARM, self).__init__(name=name,
                                            action_client=action_client,
                                            action_goal=action_goal,
-                                           robot_name=robot_name)
+                                           robot_name=robot_name,
+                                           goal_channel="arm")
         self.timeout = timeout
+        # Never start the next motion early over this one, and never start this
+        # one early. It reaches the arm controller as a whole FJT goal, not
+        # through a mixer slot, so nothing blends it: dispatched early it would
+        # act at once -- closing before the arm has reached the grasp, opening
+        # before it has reached the place. `overlappable` would otherwise be
+        # True, inherited from the arm channel's stream slots.
+        self.overlappable = False
 
     def update(self):
         self.logger.debug("%s.update()" % self.__class__.__name__)
