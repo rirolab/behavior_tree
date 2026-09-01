@@ -105,7 +105,7 @@ def create_root(robot_names):
         status_nodes.append(
             ToBlackboard(
                 name=f"{robot_name}_PolicyProgress2BB",
-                topic_name=f"{robot_name}/policy/stream/b/progress",
+                topic_name=f"{robot_name}/stream/b/progress",
                 topic_type=Float32,
                 blackboard_variables={
                     f"{robot_name}/policy/progress": "data",
@@ -121,7 +121,7 @@ def create_root(robot_names):
         # progress feed the overlap composite watches to decide when to start
         # the next motion.
         for slot in ["a", "b"]:
-            prefix = f"{robot_name}/arm_client/stream/{slot}"
+            prefix = f"{robot_name}/stream/{slot}"
             status_nodes.append(
                 ToBlackboard(
                     name=f"{robot_name}_arm_{slot}_Status2BB",
