@@ -9,6 +9,33 @@ import std_msgs.msg as std_msgs
 from . import base_job
 from behavior_tree.utils.validation_utils import StepValidationResult
 from behavior_tree.subtrees import MoveJoint, MovePose, Gripper, Policy, WorldModel
+from behavior_tree.subtrees.OverlapSequence import OverlapSequence
+
+# Node parameter that sets how far into a motion the next one is dispatched.
+# 1.0 reproduces the old strict-sequential behaviour, so the default is a no-op
+# until it is lowered. Read live from the tree node, so `ros2 param set /tree
+# overlap_progress_threshold <x>` takes effect without a restart.
+OVERLAP_THRESHOLD_PARAM = "overlap_progress_threshold"
+
+# Dispatch the next motion as soon as the previous one is moving, rather than
+# waiting for it to reach the threshold, so its planning cost is paid during the
+# previous motion instead of delaying the blend. Off by default: it also removes
+# the planning dwell from the strictly sequential baseline, so recorded
+# comparisons stay reproducible only while it is off. See OverlapSequence.
+OVERLAP_DISPATCH_ON_START_PARAM = "overlap_dispatch_on_start"
+
+
+def _move_sequence(name, children):
+    """A sequence whose consecutive arm motions overlap.
+
+    Falls back to strict sequential wherever a child exposes no progress (a
+    gripper op, a world-model query), and everywhere when the threshold is 1.0.
+    """
+    seq = OverlapSequence(name=name, threshold_param=OVERLAP_THRESHOLD_PARAM,
+                          dispatch_param=OVERLAP_DISPATCH_ON_START_PARAM,
+                          progress_threshold=1.0)
+    seq.add_children(children)
+    return seq
 
 
 ##############################################################################
@@ -208,8 +235,14 @@ class Move(base_job.BaseJob):
                                   action_goal={'pose': "Plan"+idx+"/grasp_top_pose"},
                                   robot_name=robot_name)
 
-        pick = py_trees.composites.Sequence(name="MovePick", memory=True)
-        pick.add_children([pose_est1, s_move10, s_move11, s_move12, s_move13, s_move14, s_move15])
+        # Open the gripper up front, not mid-chain: it is empty during the pick
+        # approach and usually already open (the robot starts open and a place
+        # leaves it open), so opening here is a harmless no-op that would only
+        # force a stop if left between Top2 and Approach. Up front it lets
+        # Top1->Top2->Approach blend as one descent; Close still breaks the chain
+        # so the grasp pose is reached exactly before the gripper closes.
+        pick = _move_sequence("MovePick",
+            [pose_est1, s_move12, s_move10, s_move11, s_move13, s_move14, s_move15])
 
 
         # ----------------- Place ---------------------
@@ -237,8 +270,10 @@ class Move(base_job.BaseJob):
                                  action_goal={'pose': "Plan"+idx+"/place_top_pose"},
                                  robot_name=robot_name)
         
-        place = py_trees.composites.Sequence(name="MovePlace", memory=True)
-        place.add_children([pose_est2, s_move20, s_move21, s_move22, s_move23, s_move24, s_init3])
+        # Overlap runs within the place chain: Top1->Top2->Approach blends, and
+        # Top->Init blends; the gripper Open breaks the chain at the release.
+        place = _move_sequence("MovePlace",
+            [pose_est2, s_move20, s_move21, s_move22, s_move23, s_move24, s_init3])
         
         task = py_trees.composites.Sequence(name="Move", memory=True)
         task.add_children([pick, place])

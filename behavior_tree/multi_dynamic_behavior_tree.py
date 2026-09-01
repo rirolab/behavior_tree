@@ -8,7 +8,11 @@ import py_trees.console as console
 import py_trees_ros
 import rclpy
 from action_msgs.msg import GoalStatus
+from rcl_interfaces.msg import Parameter as ParameterMsg
+from rcl_interfaces.msg import ParameterType, ParameterValue
+from rcl_interfaces.srv import SetParameters
 from rclpy.node import Node
+from std_msgs.msg import Float32
 from rclpy.qos import QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
@@ -98,6 +102,38 @@ def create_root(robot_names):
         qos_profile=py_trees_ros.utilities.qos_profile_unlatched(),
     )
 
+        # Under overlap, arm motions stream through two mixer slots (a, b), and
+        # each slot reports its own goal id, status, and progress. The MOVE
+        # behaviours find themselves by matching their goal id against a slot.
+        # These mirror the arm channel above, one pair of nodes per slot, plus a
+        # progress feed the overlap composite watches to decide when to start
+        # the next motion.
+        for slot in ["a", "b"]:
+            prefix = f"{robot_name}/arm_client/stream/{slot}"
+            status_nodes.append(
+                ToBlackboard(
+                    name=f"{robot_name}_arm_{slot}_Status2BB",
+                    topic_name=f"{prefix}/goal_status",
+                    topic_type=GoalStatus,
+                    blackboard_variables={
+                        f"{robot_name}/arm/{slot}/goal_id": "goal_info.goal_id.uuid",
+                        f"{robot_name}/arm/{slot}/goal_status": "status",
+                    },
+                    qos_profile=py_trees_ros.utilities.qos_profile_unlatched(),
+                )
+            )
+            status_nodes.append(
+                ToBlackboard(
+                    name=f"{robot_name}_arm_{slot}_Progress2BB",
+                    topic_name=f"{prefix}/progress",
+                    topic_type=Float32,
+                    blackboard_variables={
+                        f"{robot_name}/arm/{slot}/progress": "data",
+                    },
+                    qos_profile=py_trees_ros.utilities.qos_profile_unlatched(),
+                )
+            )
+
     priorities = py_trees.composites.Selector("Priorities", memory=False)
     priorities.add_child(py_trees.behaviours.Running(name="Idle"))
 
@@ -144,6 +180,11 @@ class MultiSplinteredReality(SplinteredReality):
             "rnd_pose_srv_channel": "/get_object_rnd_pose",
             "close_pose_srv_channel": "/get_object_close_pose",
             "world_frame": "world",
+            # See OverlapSequence: dispatch the next motion when the previous
+            # one starts moving, instead of when it reaches the threshold.
+            # Declared here so it always exists for `ros2 param set`, whether or
+            # not a launch file overrides it.
+            "overlap_dispatch_on_start": False,
         }
         for name, value in defaults.items():
             if not self.has_parameter(name):
@@ -152,6 +193,20 @@ class MultiSplinteredReality(SplinteredReality):
         # Store robot names and validate them
         self.robot_names = make_string_list(self.get_parameter("robot").value)
         self.validate_robot_names()
+
+        # Single source of truth for where overlap starts: this node's
+        # `overlap_progress_threshold` (owned by the tree, read live by
+        # OverlapSequence). Each arm mixer needs the same value on its own
+        # `progress_threshold`, but a node cannot read another node's
+        # parameters, so the tree pushes it to the mixers whenever it changes
+        # (see _sync_mixer_threshold, called each tick). Set /tree
+        # overlap_progress_threshold and the mixers follow -- no separate set.
+        self._mixer_param_clients = {
+            robot: self.create_client(
+                SetParameters, f"/{robot}/overlap_mixer/set_parameters")
+            for robot in self.robot_names
+        }
+        self._last_pushed_threshold = None
 
         self.rec_topic_list = rec_topic_list
         self.n_loop = n_loop
@@ -242,6 +297,37 @@ class MultiSplinteredReality(SplinteredReality):
             qos=qos_profile,
         )
 
+    def _sync_mixer_threshold(self):
+        """Push overlap_progress_threshold onto each arm mixer's
+        progress_threshold, so the tree parameter is the single source of truth.
+
+        Only pushes on change, and only marks a value pushed once a mixer's
+        service was actually ready -- so it retries harmlessly until the mixers
+        come up, then goes quiet.
+        """
+        if not self.has_parameter("overlap_progress_threshold"):
+            return
+        value = float(self.get_parameter("overlap_progress_threshold").value)
+        if value == self._last_pushed_threshold:
+            return
+        pushed = False
+        for client in self._mixer_param_clients.values():
+            if not client.service_is_ready():
+                continue
+            request = SetParameters.Request()
+            request.parameters = [
+                ParameterMsg(
+                    name="progress_threshold",
+                    value=ParameterValue(
+                        type=ParameterType.PARAMETER_DOUBLE,
+                        double_value=value),
+                )
+            ]
+            client.call_async(request)
+            pushed = True
+        if pushed:
+            self._last_pushed_threshold = value
+
     def pre_tick_handler(self, tree):
         """
         Check if a job is running. If not, spin up a new multi-robot job
@@ -250,6 +336,9 @@ class MultiSplinteredReality(SplinteredReality):
         Args:
             tree (:class:`~py_trees.trees.BehaviourTree`): tree to investigate/manipulate.
         """
+        # Keep the arm mixers' overlap threshold in step with the tree's.
+        self._sync_mixer_threshold()
+
         # Look for the latest pending goal stored by any job subscriber. (Goal is the accepted entire plan.)
         goal = None
         for job in self.jobs:
