@@ -101,13 +101,10 @@ class Move(base_job.BaseJob):
             )
             return None
 
-        root = py_trees.composites.Sequence(name="Policy", memory=True)
-        run_policy = Policy.MOVEBYPOLICY(
-            name="MoveByPolicy",
-            action_client=policy_action_client,
-            action_goal=goal[idx],
-            timeout=float(goal[idx].get("timeout", 5.0)),
-            robot_name=robot_name,
+        # Built by the subtree module rather than inline, so the policy step
+        # has one shape: an OverlapSequence root that reports the policy's
+        # progress upward, which is what lets the sequence chaining the steps
+        # blend a primitive into this step and this step into the next.
+        return Policy.create_subtree(
+            policy_action_client, goal[idx], robot_name=robot_name
         )
-        root.add_child(run_policy)
-        return root

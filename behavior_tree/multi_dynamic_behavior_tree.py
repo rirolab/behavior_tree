@@ -24,6 +24,11 @@ from riro_srvs.srv import StringGoalStatus
 from behavior_tree import decorators
 from behavior_tree.dynamic_behavior_tree import SplinteredReality, get_args, load_topic_list
 from behavior_tree.subtrees import Grnd2Blackboard
+from behavior_tree.subtrees.OverlapSequence import (
+    OVERLAP_DISPATCH_ON_START_PARAM,
+    OVERLAP_THRESHOLD_PARAM,
+    OverlapSequence,
+)
 from behavior_tree.utils.parameter_utils import make_string_list
 from behavior_tree.utils.validation_utils import StepValidationResult
 
@@ -51,56 +56,63 @@ def create_root(robot_names):
     )
 
     # Define goal state per robot in blackboard.
-    # Our arm_client publishes a SINGLE goal_status channel per robot
-    # ("{robot}/arm_client/goal_status"), mirroring how dynamic_behavior_tree.py
-    # reads "arm_client/goal_status" into flat goal_id/goal_status. Here we keep
-    # per-robot namespacing so each arm's goal state stays isolated, feeding the
-    # "{robot}/goal_id" / "{robot}/goal_status" keys read by Move.MOVE.
+    #
+    # arm_client publishes one goal-status channel per goal channel
+    # ("{robot}/arm_client/{arm,gripper}/goal_status") rather than a single one,
+    # because under overlap the arm and the gripper are driven independently:
+    # retiring an outgoing arm motion must not take the incoming motion's hold
+    # on the gripper down with it. Move.MOVE reads "{robot}/{channel}/goal_*".
     status_nodes = []
     for robot_name in robot_names:
-        # Primitive (pick/place/move/gripper) goals → arm_client publishes here.
-        status_nodes.append(
-            ToBlackboard(
-                name=f"{robot_name}_PrimitiveStatus2BB",
-                topic_name=f"{robot_name}/arm_client/goal_status",
-                topic_type=GoalStatus,
-                blackboard_variables={
-                    f"{robot_name}/goal_id": "goal_info.goal_id.uuid",
-                    f"{robot_name}/goal_status": "status",
-                },
-                qos_profile=py_trees_ros.utilities.qos_profile_unlatched(),
+        for goal_channel in ["arm", "gripper"]:
+            status_nodes.append(
+                ToBlackboard(
+                    name=f"{robot_name}_{goal_channel}_Status2BB",
+                    topic_name=f"{robot_name}/arm_client/{goal_channel}/goal_status",
+                    topic_type=GoalStatus,
+                    blackboard_variables={
+                        f"{robot_name}/{goal_channel}/goal_id": "goal_info.goal_id.uuid",
+                        f"{robot_name}/{goal_channel}/goal_status": "status",
+                    },
+                    qos_profile=py_trees_ros.utilities.qos_profile_unlatched(),
+                )
             )
-        )
-        # Single-arm policy goals → single_policy_client publishes here. Same
-        # blackboard keys as the primitive channel; Move.MOVE filters by
-        # goal_id so the active source wins per-robot. Idle pubs from the
-        # other source carry stale goal_ids and are ignored.
+
+        # Single-arm policy goals -> single_policy_client publishes here. It
+        # writes the SAME keys as the primitive arm channel, because a policy
+        # step and a primitive step are both "the arm is doing something" as far
+        # as the tree is concerned, and MOVEBYPOLICY is a Move.MOVE on the arm
+        # channel. Move.MOVE filters by goal_id, so the idle publisher's stale
+        # id is ignored and whichever source owns the current goal wins.
         status_nodes.append(
             ToBlackboard(
                 name=f"{robot_name}_PolicyStatus2BB",
                 topic_name=f"{robot_name}/single_policy_client/goal_status",
                 topic_type=GoalStatus,
                 blackboard_variables={
-                    f"{robot_name}/goal_id": "goal_info.goal_id.uuid",
-                    f"{robot_name}/goal_status": "status",
+                    f"{robot_name}/arm/goal_id": "goal_info.goal_id.uuid",
+                    f"{robot_name}/arm/goal_status": "status",
                 },
                 qos_profile=py_trees_ros.utilities.qos_profile_unlatched(),
             )
         )
 
-    # Single dual-arm policy node publishes one goal-status channel
-    # ("dual_arm_client/goal_status"), read into the shared "dual/goal_id" /
-    # "dual/goal_status" keys consumed by PolicyDual.MOVEBYPOLICYDUAL.
-    dual_status_node = ToBlackboard(
-        name="dual_Status2BB",
-        topic_name="dual_arm_client/goal_status",
-        topic_type=GoalStatus,
-        blackboard_variables={
-            "dual/goal_id": "goal_info.goal_id.uuid",
-            "dual/goal_status": "status",
-        },
-        qos_profile=py_trees_ros.utilities.qos_profile_unlatched(),
-    )
+        # Policy progress, on its own key rather than one of arm_client's slots.
+        # `step / max_steps` from the policy executor: bounded and monotonic,
+        # which is all the overlap trigger needs. Separate because arm_client
+        # owns the slot keys, and a primitive and a policy are live on the same
+        # arm exactly when the overlap is doing its job.
+        status_nodes.append(
+            ToBlackboard(
+                name=f"{robot_name}_PolicyProgress2BB",
+                topic_name=f"{robot_name}/policy/stream/b/progress",
+                topic_type=Float32,
+                blackboard_variables={
+                    f"{robot_name}/policy/progress": "data",
+                },
+                qos_profile=py_trees_ros.utilities.qos_profile_unlatched(),
+            )
+        )
 
         # Under overlap, arm motions stream through two mixer slots (a, b), and
         # each slot reports its own goal id, status, and progress. The MOVE
@@ -133,6 +145,21 @@ def create_root(robot_names):
                     qos_profile=py_trees_ros.utilities.qos_profile_unlatched(),
                 )
             )
+
+    # Single dual-arm policy node publishes one goal-status channel
+    # ("dual_arm_client/goal_status"), read into the shared "dual/goal_id" /
+    # "dual/goal_status" keys consumed by PolicyDual.MOVEBYPOLICYDUAL. Not
+    # per-robot: one 16-dim policy owns both arms, so there is one goal.
+    dual_status_node = ToBlackboard(
+        name="dual_Status2BB",
+        topic_name="dual_arm_client/goal_status",
+        topic_type=GoalStatus,
+        blackboard_variables={
+            "dual/goal_id": "goal_info.goal_id.uuid",
+            "dual/goal_status": "status",
+        },
+        qos_profile=py_trees_ros.utilities.qos_profile_unlatched(),
+    )
 
     priorities = py_trees.composites.Selector("Priorities", memory=False)
     priorities.add_child(py_trees.behaviours.Running(name="Idle"))
@@ -443,7 +470,24 @@ class MultiSplinteredReality(SplinteredReality):
                     return
 
             # Chain all accepted step subtrees into one task sequence.
-            task = py_trees.composites.Sequence(name="Task", memory=True)
+            #
+            # An OverlapSequence, because THIS is the barrier that makes a
+            # `primitive -> policy -> primitive` chain stop at every seam: each
+            # step is its own subtree, so overlapping within a step (which
+            # move_job already does) never reaches across one. Each step root
+            # reports its current child's progress upward, so this can start the
+            # next step while the current one is still finishing and let the
+            # mixer blend them.
+            #
+            # Inert until `overlap_progress_threshold` drops below 1.0: at 1.0
+            # it dispatches the next step only once the current one has
+            # succeeded, which is exactly Sequence(memory=True).
+            task = OverlapSequence(
+                name="Task",
+                threshold_param=OVERLAP_THRESHOLD_PARAM,
+                dispatch_param=OVERLAP_DISPATCH_ON_START_PARAM,
+                progress_threshold=1.0,
+            )
             task.add_children(task_list)
 
             # Wrap the task with either a single-run selector or a loop decorator.

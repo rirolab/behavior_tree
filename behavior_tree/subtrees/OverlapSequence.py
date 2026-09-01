@@ -51,6 +51,21 @@ this off.
 import py_trees
 from py_trees import common
 
+# Node parameters that tune the overlap, read live from the tree node so
+# `ros2 param set /tree <param> <x>` takes effect without a restart. They live
+# here rather than in one job, because every composite that chains motions --
+# the move steps, the policy steps, and the sequence chaining the steps
+# themselves -- has to agree on them or the tree overlaps at two thresholds.
+#
+# 1.0 reproduces strict-sequential behaviour, so the default is a no-op.
+OVERLAP_THRESHOLD_PARAM = "overlap_progress_threshold"
+# Dispatch the next motion as soon as the previous one is moving, rather than
+# waiting for it to reach the threshold, so its planning cost is paid during the
+# previous motion instead of delaying the blend. Off by default: it also removes
+# the planning dwell from the strictly sequential baseline, so recorded
+# comparisons stay reproducible only while it is off.
+OVERLAP_DISPATCH_ON_START_PARAM = "overlap_dispatch_on_start"
+
 
 class OverlapSequence(py_trees.composites.Composite):
 
@@ -120,16 +135,47 @@ class OverlapSequence(py_trees.composites.Composite):
     def _child_overlappable(self, child):
         """Whether the NEXT child may be started early, before this-1 finishes.
 
-        Only a streamed arm motion may: it publishes progress and its command is
-        blended by the mixer. A gripper op runs on its own controller and would
-        act the instant it is dispatched -- close before the arm reaches the
-        grasp, open before it reaches the place -- so it must wait. A
-        world-model query is not a motion at all. Both are recognised by having
-        no stream slots (gripper: goal_channel != 'arm'; query: not a MOVE).
-        Decided by type, not by live progress: a not-yet-dispatched arm motion
-        reports None progress but is still overlappable.
+        Only a motion whose command a mixer blends may: a gripper op runs on its
+        own controller and would act the instant it is dispatched -- close
+        before the arm reaches the grasp, open before it reaches the place -- so
+        it must wait. A world-model query is not a motion at all. Decided by
+        type, not by live progress: a not-yet-dispatched arm motion reports None
+        progress but is still overlappable.
+
+        `overlappable` is set by Move.MOVE from its stream slots; the
+        `stream_slots` fallback keeps behaviours that predate the attribute
+        working. A nested OverlapSequence answers for its own current child, so
+        a step subtree is as overlappable as whatever it is running.
         """
+        flag = getattr(child, "overlappable", None)
+        if flag is not None:
+            return bool(flag)
         return bool(getattr(child, "stream_slots", ()))
+
+    # ------------------------------------------------------------------
+    # Delegation, so these compose.
+    #
+    # A step subtree is a composite, and the sequence chaining the steps has to
+    # ask it the same two questions it asks a leaf. Answering for the current
+    # child is the right answer in both directions: a Policy step wrapping one
+    # MOVEBYPOLICY reports the policy's progress upward, and a move step
+    # reports whichever of its motions is live.
+
+    @property
+    def overlappable(self):
+        # The child it is running, or -- before it has run at all -- the one it
+        # will run first. The gate above asks this of the NEXT child, which by
+        # definition has not been ticked yet, so answering from `current_child`
+        # alone would report every step non-overlappable and silently restore
+        # strict sequencing.
+        child = self.current_child
+        if child is None and self.children:
+            child = self.children[0]
+        return child is not None and self._child_overlappable(child)
+
+    def current_progress(self):
+        child = self.current_child
+        return None if child is None else self._child_progress(child)
 
     def tick(self):
         self.logger.debug("%s.tick()" % self.__class__.__name__)
