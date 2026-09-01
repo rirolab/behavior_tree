@@ -7,22 +7,14 @@ import py_trees, py_trees_ros
 import std_msgs.msg as std_msgs
 
 from . import base_job
+from behavior_tree.utils.skill_registry_utils import skill_init_config
 from behavior_tree.utils.validation_utils import StepValidationResult
 from behavior_tree.subtrees import MoveJoint, MovePose, Gripper, Policy, WorldModel
-from behavior_tree.subtrees.OverlapSequence import OverlapSequence
-
-# Node parameter that sets how far into a motion the next one is dispatched.
-# 1.0 reproduces the old strict-sequential behaviour, so the default is a no-op
-# until it is lowered. Read live from the tree node, so `ros2 param set /tree
-# overlap_progress_threshold <x>` takes effect without a restart.
-OVERLAP_THRESHOLD_PARAM = "overlap_progress_threshold"
-
-# Dispatch the next motion as soon as the previous one is moving, rather than
-# waiting for it to reach the threshold, so its planning cost is paid during the
-# previous motion instead of delaying the blend. Off by default: it also removes
-# the planning dwell from the strictly sequential baseline, so recorded
-# comparisons stay reproducible only while it is off. See OverlapSequence.
-OVERLAP_DISPATCH_ON_START_PARAM = "overlap_dispatch_on_start"
+from behavior_tree.subtrees.OverlapSequence import (
+    OVERLAP_DISPATCH_ON_START_PARAM,
+    OVERLAP_THRESHOLD_PARAM,
+    OverlapSequence,
+)
 
 
 def _move_sequence(name, children):
@@ -170,8 +162,30 @@ class Move(base_job.BaseJob):
                 )
             s_pre_init_1 = MoveJoint.MOVEJ(name="PreInit", action_client=action_client,
                                            action_goal=pre_init_config, robot_name=robot_name)
+
+            # Send the approach to the SKILL's trained start pose, not the arm's
+            # generic init_config, when the registry knows one.
+            #
+            # Otherwise the arm is moved twice: here to the arm's init_config,
+            # and then again by the executor's blocking 4-second pre-move to the
+            # skill's. The second of those is dead time by construction -- it
+            # runs inside the policy goal, so by the time it finishes the arm has
+            # stopped and there is nothing left for the mixer to blend the policy
+            # into. Approaching the right pose here is what makes the executor's
+            # `init_pose_policy: expect` correct, and that pair is what removes
+            # the 4 s.
+            #
+            # Falls back to init_config whenever the registry cannot answer (cac
+            # not installed, unknown skill, a dual-arm skill), so this is inert
+            # rather than wrong when it does not apply.
+            approach_config = skill_init_config(
+                goal[idx].get("skill_id"), arm_dof=len(init_config)
+            )
+            if approach_config is None:
+                approach_config = init_config
             s_init_1 = MoveJoint.MOVEJ(name="Init", action_client=action_client,
-                                       action_goal=init_config, robot_name=robot_name)
+                                       action_goal=approach_config,
+                                       robot_name=robot_name)
             policy = Policy.create_subtree(action_client, goal[idx], robot_name=robot_name)
             s_init_2 = MoveJoint.MOVEJ(name="Init2", action_client=action_client,
                                        action_goal=init_config, robot_name=robot_name)
@@ -186,8 +200,12 @@ class Move(base_job.BaseJob):
                                            action_goal=pre_init_config, robot_name=robot_name)
             s_home = MoveJoint.MOVEJ(name="Home", action_client=action_client,
                                      action_goal=home_config, robot_name=robot_name)
-            wrapped = py_trees.composites.Sequence(name="MovePolicy", memory=True)
-            wrapped.add_children([
+            # The seam this whole effort is about is inside this sequence --
+            # s_init_1 -> policy -> s_init_2 -- so it has to be the overlapping
+            # kind. The gripper op in the middle is not overlappable and stays a
+            # strict barrier on its own, which is the behaviour that must not
+            # change: opening before the arm arrives drops the object.
+            wrapped = _move_sequence("MovePolicy", [
                 s_pre_init_1, s_init_1, policy,
                 s_init_2, s_place, s_open, s_init_3, s_pre_init_2, s_home,
             ])
