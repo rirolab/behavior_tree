@@ -97,6 +97,15 @@ class MOVEBYPOLICY(Move.MOVE):
         self.feedback_message = "running"
         return py_trees.common.Status.RUNNING
 
+    def make_command(self, uuid=None, enable_wait=False):
+        """
+        Export this policy execution as a complex action client command dictionary.
+        """
+        # Encode policy execution for MoveBlend composition.
+        return self._make_command(
+            "moveByPolicy", self.action_goal, uuid=uuid, enable_wait=enable_wait,
+        )
+
 
 def create_subtree(action_client, step_goal, **kwargs):
     """
