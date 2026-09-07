@@ -5,7 +5,8 @@ from geometry_msgs.msg import Point, Pose, Quaternion
 import std_msgs.msg as std_msgs
 
 from . import base_job
-from behavior_tree.subtrees import MoveBlend
+from behavior_tree.subtrees.MoveBlend import (
+    OVERLAP_DISPATCH_ON_START_PARAM, OVERLAP_THRESHOLD_PARAM, MoveBlend)
 from behavior_tree.subtrees import MovePose
 from behavior_tree.utils.validation_utils import StepValidationResult
 
@@ -72,9 +73,12 @@ class Move(base_job.BaseJob):
                     "square_job: blend_duration and timeout must be numeric"
                 )
                 return StepValidationResult.REJECT_GOAL
-            if blend_duration <= 0.0 or timeout <= 0.0 or blend_duration >= timeout:
+            # The value no longer sizes anything -- the blend shape is the
+            # mixer's progress threshold now -- but its presence is still what
+            # asks for an overlapped square, so it has to be a sane number.
+            if blend_duration <= 0.0 or timeout <= 0.0:
                 self._node.get_logger().warning(
-                    "square_job: blend_duration must be positive and shorter than timeout"
+                    "square_job: blend_duration must be positive"
                 )
                 return StepValidationResult.REJECT_GOAL
 
@@ -167,15 +171,16 @@ class Move(base_job.BaseJob):
                 )
             )
 
-        # Dispatch the square through complex action client blending while running.
+        # Chain the square so each side is admitted once the previous one has
+        # made enough progress. The composite decides only WHEN; the mixer that
+        # owns the controller decides what the two live motions sum to.
         if enable_blend:
-            square = MoveBlend.MoveBlend(
+            square = MoveBlend(
                 name="BlendSquare",
-                action_client=action_client,
-                timeout=timeout * len(blend_children),
-                blend_duration=blend_duration,
-                robot_name=robot_name,
                 children=blend_children,
+                threshold_param=OVERLAP_THRESHOLD_PARAM,
+                dispatch_param=OVERLAP_DISPATCH_ON_START_PARAM,
+                robot_name=robot_name,
             )
 
         # Repeat the full square loop when the payload asks for it.

@@ -9,7 +9,11 @@ import py_trees_ros
 import rclpy
 from action_msgs.msg import GoalStatus
 from std_msgs.msg import String
+from rcl_interfaces.msg import Parameter as ParameterMsg
+from rcl_interfaces.msg import ParameterType, ParameterValue
+from rcl_interfaces.srv import SetParameters
 from rclpy.node import Node
+from std_msgs.msg import Float32
 from rclpy.qos import QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
@@ -21,6 +25,11 @@ from riro_srvs.srv import StringGoalStatus
 from behavior_tree import decorators
 from behavior_tree.dynamic_behavior_tree import SplinteredReality, get_args, load_topic_list
 from behavior_tree.subtrees import Grnd2Blackboard
+from behavior_tree.subtrees.MoveBlend import (
+    OVERLAP_DISPATCH_ON_START_PARAM,
+    OVERLAP_THRESHOLD_PARAM,
+    MoveBlend,
+)
 from behavior_tree.utils.parameter_utils import make_string_list
 from behavior_tree.utils.validation_utils import (
     collect_blend_validation, validate_goal, validate_robot_names
@@ -49,7 +58,13 @@ def create_root(robot_names):
         topic_name="symbol_grounding",
     )
 
-    # Define arm/gripper goal state per robot in blackboard.
+    # Define goal state per robot in blackboard.
+    #
+    # arm_client publishes one goal-status channel per goal channel
+    # ("{robot}/arm_client/{arm,gripper}/goal_status") rather than a single one,
+    # because under overlap the arm and the gripper are driven independently:
+    # retiring an outgoing arm motion must not take the incoming motion's hold
+    # on the gripper down with it. Move.MOVE reads "{robot}/{channel}/goal_*".
     status_nodes = []
     for robot_name in robot_names:
         for goal_channel in ["arm", "gripper"]:
@@ -77,10 +92,93 @@ def create_root(robot_names):
             )
         )
 
+        # Single-arm policy goals -> single_policy_client publishes here. It
+        # writes the SAME keys as the primitive arm channel, because a policy
+        # step and a primitive step are both "the arm is doing something" as far
+        # as the tree is concerned, and MOVEBYPOLICY is a Move.MOVE on the arm
+        # channel. Move.MOVE filters by goal_id, so the idle publisher's stale
+        # id is ignored and whichever source owns the current goal wins.
+        status_nodes.append(
+            ToBlackboard(
+                name=f"{robot_name}_PolicyStatus2BB",
+                topic_name=f"{robot_name}/single_policy_client/goal_status",
+                topic_type=GoalStatus,
+                blackboard_variables={
+                    f"{robot_name}/arm/goal_id": "goal_info.goal_id.uuid",
+                    f"{robot_name}/arm/goal_status": "status",
+                },
+                qos_profile=py_trees_ros.utilities.qos_profile_unlatched(),
+            )
+        )
+
+        # Policy progress, on its own key rather than one of arm_client's slots.
+        # `step / max_steps` from the policy executor: bounded and monotonic,
+        # which is all the overlap trigger needs. Separate because arm_client
+        # owns the slot keys, and a primitive and a policy are live on the same
+        # arm exactly when the overlap is doing its job.
+        status_nodes.append(
+            ToBlackboard(
+                name=f"{robot_name}_PolicyProgress2BB",
+                topic_name=f"{robot_name}/stream/b/progress",
+                topic_type=Float32,
+                blackboard_variables={
+                    f"{robot_name}/policy/progress": "data",
+                },
+                qos_profile=py_trees_ros.utilities.qos_profile_unlatched(),
+            )
+        )
+
+        # Under overlap, arm motions stream through two mixer slots (a, b), and
+        # each slot reports its own goal id, status, and progress. The MOVE
+        # behaviours find themselves by matching their goal id against a slot.
+        # These mirror the arm channel above, one pair of nodes per slot, plus a
+        # progress feed the overlap composite watches to decide when to start
+        # the next motion.
+        for slot in ["a", "b"]:
+            prefix = f"{robot_name}/stream/{slot}"
+            status_nodes.append(
+                ToBlackboard(
+                    name=f"{robot_name}_arm_{slot}_Status2BB",
+                    topic_name=f"{prefix}/goal_status",
+                    topic_type=GoalStatus,
+                    blackboard_variables={
+                        f"{robot_name}/arm/{slot}/goal_id": "goal_info.goal_id.uuid",
+                        f"{robot_name}/arm/{slot}/goal_status": "status",
+                    },
+                    qos_profile=py_trees_ros.utilities.qos_profile_unlatched(),
+                )
+            )
+            status_nodes.append(
+                ToBlackboard(
+                    name=f"{robot_name}_arm_{slot}_Progress2BB",
+                    topic_name=f"{prefix}/progress",
+                    topic_type=Float32,
+                    blackboard_variables={
+                        f"{robot_name}/arm/{slot}/progress": "data",
+                    },
+                    qos_profile=py_trees_ros.utilities.qos_profile_unlatched(),
+                )
+            )
+
+    # Single dual-arm policy node publishes one goal-status channel
+    # ("dual_arm_client/goal_status"), read into the shared "dual/goal_id" /
+    # "dual/goal_status" keys consumed by PolicyDual.MOVEBYPOLICYDUAL. Not
+    # per-robot: one 16-dim policy owns both arms, so there is one goal.
+    dual_status_node = ToBlackboard(
+        name="dual_Status2BB",
+        topic_name="dual_arm_client/goal_status",
+        topic_type=GoalStatus,
+        blackboard_variables={
+            "dual/goal_id": "goal_info.goal_id.uuid",
+            "dual/goal_status": "status",
+        },
+        qos_profile=py_trees_ros.utilities.qos_profile_unlatched(),
+    )
+
     priorities = py_trees.composites.Selector("Priorities", memory=False)
     priorities.add_child(py_trees.behaviours.Running(name="Idle"))
 
-    root.add_children([grnd2bb] + status_nodes + [priorities])
+    root.add_children([grnd2bb] + status_nodes + [dual_status_node, priorities])
     return root
 
 
@@ -124,6 +222,11 @@ class MultiSplinteredReality(SplinteredReality):
             "close_pose_srv_channel": "/get_object_close_pose",
             "world_frame": "world",
             "frequency": 10.0,
+            # See MoveBlend: dispatch the next motion when the previous
+            # one starts moving, instead of when it reaches the threshold.
+            # Declared here so it always exists for `ros2 param set`, whether or
+            # not a launch file overrides it.
+            "overlap_dispatch_on_start": False,
         }
         for name, value in defaults.items():
             if not self.has_parameter(name):
@@ -133,6 +236,20 @@ class MultiSplinteredReality(SplinteredReality):
         # Raise an exception if any are invalid.
         self.robot_names = make_string_list(self.get_parameter("robot").value)
         validate_robot_names(self.robot_names, self.get_parameters_by_prefix("").keys())
+
+        # Single source of truth for where overlap starts: this node's
+        # `overlap_progress_threshold` (owned by the tree, read live by
+        # MoveBlend). Each arm mixer needs the same value on its own
+        # `progress_threshold`, but a node cannot read another node's
+        # parameters, so the tree pushes it to the mixers whenever it changes
+        # (see _sync_mixer_threshold, called each tick). Set /tree
+        # overlap_progress_threshold and the mixers follow -- no separate set.
+        self._mixer_param_clients = {
+            robot: self.create_client(
+                SetParameters, f"/{robot}/overlap_mixer/set_parameters")
+            for robot in self.robot_names
+        }
+        self._last_pushed_threshold = None
 
         self.rec_topic_list = rec_topic_list
         self.n_loop = n_loop
@@ -199,6 +316,28 @@ class MultiSplinteredReality(SplinteredReality):
                 )
             self.action_clients[robot_name] = client
 
+        # Single dual-arm policy client. A dual_policy_execute step triggers ONE
+        # dual policy node (not the per-arm arm_client clients above) through
+        # this shared "dual_arm_client/command" service.
+        self.dual_action_client = self.create_client(
+            StringGoalStatus,
+            "dual_arm_client/command",
+            qos_profile=qos_profile,
+        )
+
+        # Central policy manager command client. ALL policy-related jobs
+        # (single, dual, parallel) dispatch through "/policy_manager/command"
+        # instead of the per-arm / dual command services. PM only relays
+        # commands; goal_status is still published by the routed executor
+        # ITSELF on its existing "{robot}/arm_client/goal_status" /
+        # "dual_arm_client/goal_status" topic, so the existing ToBlackboard
+        # wiring stays unchanged.
+        self.policy_action_client = self.create_client(
+            StringGoalStatus,
+            "/policy_manager/command",
+            qos_profile=qos_profile,
+        )
+
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(
             buffer=self.tf_buffer,
@@ -206,6 +345,37 @@ class MultiSplinteredReality(SplinteredReality):
             spin_thread=True,
             qos=qos_profile,
         )
+
+    def _sync_mixer_threshold(self):
+        """Push overlap_progress_threshold onto each arm mixer's
+        progress_threshold, so the tree parameter is the single source of truth.
+
+        Only pushes on change, and only marks a value pushed once a mixer's
+        service was actually ready -- so it retries harmlessly until the mixers
+        come up, then goes quiet.
+        """
+        if not self.has_parameter("overlap_progress_threshold"):
+            return
+        value = float(self.get_parameter("overlap_progress_threshold").value)
+        if value == self._last_pushed_threshold:
+            return
+        pushed = False
+        for client in self._mixer_param_clients.values():
+            if not client.service_is_ready():
+                continue
+            request = SetParameters.Request()
+            request.parameters = [
+                ParameterMsg(
+                    name="progress_threshold",
+                    value=ParameterValue(
+                        type=ParameterType.PARAMETER_DOUBLE,
+                        double_value=value),
+                )
+            ]
+            client.call_async(request)
+            pushed = True
+        if pushed:
+            self._last_pushed_threshold = value
 
     def pre_tick_handler(self, tree):
         """
@@ -215,6 +385,9 @@ class MultiSplinteredReality(SplinteredReality):
         Args:
             tree (:class:`~py_trees.trees.BehaviourTree`): tree to investigate/manipulate.
         """
+        # Keep the arm mixers' overlap threshold in step with the tree's.
+        self._sync_mixer_threshold()
+
         # Look for the latest pending goal stored by any job subscriber. (Goal is the accepted entire plan.)
         goal = None
         for job in self.jobs:
@@ -275,9 +448,13 @@ class MultiSplinteredReality(SplinteredReality):
                             tf_buffer=self.tf_buffer,
                             rec_topic_list=self.rec_topic_list,
                             robot_name=requested_robot_names[0],
+                            policy_action_client=self.policy_action_client,
                         )
 
                     # Case: multi-robot step -> pass a mapping of robot_name to client.
+                    # The dual policy client is passed alongside for jobs that
+                    # trigger a single dual node (dual_policy_job); jobs that use
+                    # the per-arm clients simply absorb it via **kwargs.
                     else:
                         job_root = job.create_root(
                             {
@@ -289,6 +466,8 @@ class MultiSplinteredReality(SplinteredReality):
                             tf_buffer=self.tf_buffer,
                             rec_topic_list=self.rec_topic_list,
                             robot_names=requested_robot_names,
+                            dual_action_client=self.dual_action_client,
+                            policy_action_client=self.policy_action_client,
                         )
 
                     # Case: this job cannot handle the step -> try the next job.
@@ -330,7 +509,24 @@ class MultiSplinteredReality(SplinteredReality):
                     return
 
             # Chain all accepted step subtrees into one task sequence.
-            task = py_trees.composites.Sequence(name="Task", memory=True)
+            #
+            # An MoveBlend, because THIS is the barrier that makes a
+            # `primitive -> policy -> primitive` chain stop at every seam: each
+            # step is its own subtree, so overlapping within a step (which
+            # move_job already does) never reaches across one. Each step root
+            # reports its current child's progress upward, so this can start the
+            # next step while the current one is still finishing and let the
+            # mixer blend them.
+            #
+            # Inert until `overlap_progress_threshold` drops below 1.0: at 1.0
+            # it dispatches the next step only once the current one has
+            # succeeded, which is exactly Sequence(memory=True).
+            task = MoveBlend(
+                name="Task",
+                threshold_param=OVERLAP_THRESHOLD_PARAM,
+                dispatch_param=OVERLAP_DISPATCH_ON_START_PARAM,
+                progress_threshold=1.0,
+            )
             task.add_children(task_list)
 
             # Wrap the task with either a single-run selector or a loop decorator.
@@ -386,6 +582,8 @@ def main(args=None):
             "jobs.gripper_job.Move",
             "jobs.policy_job.Move",
             "jobs.dual_move_job.Move",
+            "jobs.dual_policy_job.Move",
+            "jobs.parallel_policy_job.Move",
         ],
         rec_topic_list=topic_list,
     )

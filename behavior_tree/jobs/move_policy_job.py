@@ -5,7 +5,9 @@ import std_msgs.msg as std_msgs
 
 from . import base_job
 from behavior_tree.utils.validation_utils import StepValidationResult
-from behavior_tree.subtrees import MovePose, Gripper, Policy, WorldModel, MoveBlend
+from behavior_tree.subtrees import MovePose, Gripper, Policy, WorldModel
+from behavior_tree.subtrees.MoveBlend import (
+    OVERLAP_DISPATCH_ON_START_PARAM, OVERLAP_THRESHOLD_PARAM, MoveBlend)
 
 
 ##############################################################################
@@ -51,7 +53,7 @@ class Move(base_job.BaseJob):
             for key in ("top_policy_skill_id", "approach_policy_skill_id"):
                 if key in step and not str(step[key]).strip():
                     return StepValidationResult.REJECT_GOAL
-            # Validate optional blend timing before creating MoveBlend composites.
+            # Validate the optional overlap switch before creating composites.
             if step.get("does_blend", False) or "blend_duration" in step:
                 if "blend_duration" not in step:
                     return StepValidationResult.REJECT_GOAL
@@ -143,13 +145,12 @@ class Move(base_job.BaseJob):
         pick = py_trees.composites.Sequence(name="MovePolicyPick", memory=True)
         if enable_blend:
             # Blend only the trajectory-to-policy pick entry; policy-to-policy stays live.
-            s_pick_approach_blend = MoveBlend.MoveBlend(
+            s_pick_approach_blend = MoveBlend(
                 name="PickApproachBlend",
-                action_client=action_client,
-                timeout=sum(float(child.timeout) for child in [s_move10, s_move11]),
-                blend_duration=blend_duration,
-                robot_name=robot_name,
                 children=[s_move10, s_move11],
+                threshold_param=OVERLAP_THRESHOLD_PARAM,
+                dispatch_param=OVERLAP_DISPATCH_ON_START_PARAM,
+                robot_name=robot_name,
             )
             pick.add_children([pose_est1, s_move12, s_pick_approach_blend, s_move13])
         else:

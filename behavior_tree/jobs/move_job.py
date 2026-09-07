@@ -7,8 +7,27 @@ import py_trees, py_trees_ros
 import std_msgs.msg as std_msgs
 
 from . import base_job
+from behavior_tree.utils.skill_registry_utils import skill_init_config
 from behavior_tree.utils.validation_utils import StepValidationResult
 from behavior_tree.subtrees import MoveJoint, MovePose, Gripper, Policy, WorldModel
+from behavior_tree.subtrees.MoveBlend import (
+    OVERLAP_DISPATCH_ON_START_PARAM,
+    OVERLAP_THRESHOLD_PARAM,
+    MoveBlend,
+)
+
+
+def _move_sequence(name, children):
+    """A sequence whose consecutive arm motions overlap.
+
+    Falls back to strict sequential wherever a child exposes no progress (a
+    gripper op, a world-model query), and everywhere when the threshold is 1.0.
+    """
+    seq = MoveBlend(name=name, threshold_param=OVERLAP_THRESHOLD_PARAM,
+                          dispatch_param=OVERLAP_DISPATCH_ON_START_PARAM,
+                          progress_threshold=1.0)
+    seq.add_children(children)
+    return seq
 
 
 ##############################################################################
@@ -141,7 +160,70 @@ class Move(base_job.BaseJob):
         blackboard.register_key(key="init_config", access=py_trees.common.Access.READ)
 
         if goal[idx].get("implementation") == "policy":
-            return Policy.create_subtree(action_client, goal[idx], robot_name=robot_name)
+            # Real-deploy: wrap the learned policy with joint-space waypoints.
+            # Sandwich: pre_init -> init -> policy -> init -> place -> open -> init -> pre_init -> home
+            # The policy deposits the object, then the arm places/retreats home.
+            init_config = blackboard.init_config
+            pre_init_config = self._read_optional_config(robot_name, "pre_init_config")
+            if pre_init_config is None:
+                pre_init_config = init_config
+            place_config = self._read_optional_config(robot_name, "place_config")
+            home_config = self._read_optional_config(robot_name, "home_config")
+            if place_config is None or home_config is None:
+                raise RuntimeError(
+                    "move_job policy branch requires 'place_config' and "
+                    "'home_config' parameters"
+                )
+            s_pre_init_1 = MoveJoint.MOVEJ(name="PreInit", action_client=action_client,
+                                           action_goal=pre_init_config, robot_name=robot_name)
+
+            # Send the approach to the SKILL's trained start pose, not the arm's
+            # generic init_config, when the registry knows one.
+            #
+            # Otherwise the arm is moved twice: here to the arm's init_config,
+            # and then again by the executor's blocking 4-second pre-move to the
+            # skill's. The second of those is dead time by construction -- it
+            # runs inside the policy goal, so by the time it finishes the arm has
+            # stopped and there is nothing left for the mixer to blend the policy
+            # into. Approaching the right pose here is what makes the executor's
+            # `init_pose_policy: expect` correct, and that pair is what removes
+            # the 4 s.
+            #
+            # Falls back to init_config whenever the registry cannot answer (cac
+            # not installed, unknown skill, a dual-arm skill), so this is inert
+            # rather than wrong when it does not apply.
+            approach_config = skill_init_config(
+                goal[idx].get("skill_id"), arm_dof=len(init_config)
+            )
+            if approach_config is None:
+                approach_config = init_config
+            s_init_1 = MoveJoint.MOVEJ(name="Init", action_client=action_client,
+                                       action_goal=approach_config,
+                                       robot_name=robot_name)
+            policy = Policy.create_subtree(action_client, goal[idx], robot_name=robot_name)
+            s_init_2 = MoveJoint.MOVEJ(name="Init2", action_client=action_client,
+                                       action_goal=init_config, robot_name=robot_name)
+            s_place = MoveJoint.MOVEJ(name="Place", action_client=action_client,
+                                      action_goal=place_config, robot_name=robot_name)
+            s_open = Gripper.GOTO_VIA_ARM(name="Open", action_client=action_client,
+                                          action_goal=blackboard.gripper_open_pos,
+                                          timeout=2.0, robot_name=robot_name)
+            s_init_3 = MoveJoint.MOVEJ(name="Init3", action_client=action_client,
+                                       action_goal=init_config, robot_name=robot_name)
+            s_pre_init_2 = MoveJoint.MOVEJ(name="PreInit2", action_client=action_client,
+                                           action_goal=pre_init_config, robot_name=robot_name)
+            s_home = MoveJoint.MOVEJ(name="Home", action_client=action_client,
+                                     action_goal=home_config, robot_name=robot_name)
+            # The seam this whole effort is about is inside this sequence --
+            # s_init_1 -> policy -> s_init_2 -- so it has to be the overlapping
+            # kind. The gripper op in the middle is not overlappable and stays a
+            # strict barrier on its own, which is the behaviour that must not
+            # change: opening before the arm arrives drops the object.
+            wrapped = _move_sequence("MovePolicy", [
+                s_pre_init_1, s_init_1, policy,
+                s_init_2, s_place, s_open, s_init_3, s_pre_init_2, s_home,
+            ])
+            return wrapped
 
         obj         = goal[idx]['object']
         destination = goal[idx]['destination']
@@ -185,8 +267,14 @@ class Move(base_job.BaseJob):
                                   action_goal={'pose': "Plan"+idx+"/grasp_top_pose"},
                                   robot_name=robot_name)
 
-        pick = py_trees.composites.Sequence(name="MovePick", memory=True)
-        pick.add_children([pose_est1, s_move10, s_move11, s_move12, s_move13, s_move14, s_move15])
+        # Open the gripper up front, not mid-chain: it is empty during the pick
+        # approach and usually already open (the robot starts open and a place
+        # leaves it open), so opening here is a harmless no-op that would only
+        # force a stop if left between Top2 and Approach. Up front it lets
+        # Top1->Top2->Approach blend as one descent; Close still breaks the chain
+        # so the grasp pose is reached exactly before the gripper closes.
+        pick = _move_sequence("MovePick",
+            [pose_est1, s_move12, s_move10, s_move11, s_move13, s_move14, s_move15])
 
 
         # ----------------- Place ---------------------
@@ -214,8 +302,10 @@ class Move(base_job.BaseJob):
                                  action_goal={'pose': "Plan"+idx+"/place_top_pose"},
                                  robot_name=robot_name)
         
-        place = py_trees.composites.Sequence(name="MovePlace", memory=True)
-        place.add_children([pose_est2, s_move20, s_move21, s_move22, s_move23, s_move24, s_init3])
+        # Overlap runs within the place chain: Top1->Top2->Approach blends, and
+        # Top->Init blends; the gripper Open breaks the chain at the release.
+        place = _move_sequence("MovePlace",
+            [pose_est2, s_move20, s_move21, s_move22, s_move23, s_move24, s_init3])
         
         task = py_trees.composites.Sequence(name="Move", memory=True)
         task.add_children([pick, place])

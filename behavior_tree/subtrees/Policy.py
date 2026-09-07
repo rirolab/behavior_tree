@@ -7,6 +7,11 @@ from action_msgs.msg import GoalStatus
 from riro_srvs.srv import StringGoalStatus
 
 from . import Move
+from .MoveBlend import (
+    OVERLAP_DISPATCH_ON_START_PARAM,
+    OVERLAP_THRESHOLD_PARAM,
+    MoveBlend,
+)
 
 
 class MOVEBYPOLICY(Move.MOVE):
@@ -32,7 +37,39 @@ class MOVEBYPOLICY(Move.MOVE):
             timeout=timeout,
             robot_name=robot_name,
         )
+
+        # A policy step CAN be overlapped, but not the way a primitive is.
+        #
+        # Its status comes on the plain arm channel: only one policy goal is
+        # ever in flight, so there is nothing to disambiguate between slots and
+        # Move.MOVE's slot matching would find nothing. Its *command*, though,
+        # goes through a mixer slot exactly like a streamed primitive, so the
+        # motion is blendable and the sequence above may start the next step
+        # before this one finishes.
+        self.stream_slots = ()
+        self.overlappable = True
+
+        # And progress comes from the policy executor rather than arm_client:
+        # `step / max_steps`, which is bounded and monotonic. Its own key, not
+        # one of the arm slots' -- arm_client owns those, and two writers on one
+        # key would race whenever a primitive and a policy are live together,
+        # which under overlap is the whole point.
+        self.progress_key = "policy/progress"
+        self.blackboard.register_key(
+            key=self.progress_key,
+            access=py_trees.common.Access.READ,
+        )
+
         self.logger.debug("%s.__init__()" % self.__class__.__name__)
+
+    def current_progress(self):
+        """Fraction of the policy's motion completed, in [0, 1], or None.
+
+        None until the executor publishes -- before that the sequence above
+        cannot overlap this step and falls back to sequential, which is the
+        safe reading of "we do not know how far along it is".
+        """
+        return self._read(self.progress_key)
 
     def update(self):
         """
@@ -111,6 +148,13 @@ def create_subtree(action_client, step_goal, **kwargs):
     """
     Create a policy execution subtree for one grounding step.
 
+    An MoveBlend rather than a plain Sequence, and not for its own sake --
+    with one child there is nothing here to overlap. It is so this root answers
+    `current_progress()` and `overlappable` for the sequence that chains the
+    steps: that is what lets a primitive start blending into this policy step,
+    and this step into the primitive after it. Inert until the tree's
+    `overlap_progress_threshold` drops below 1.0.
+
     Args:
         action_client (:class:`~rclpy.client.Client`): robot command client.
         step_goal (:obj:`dict`): policy command payload.
@@ -118,7 +162,12 @@ def create_subtree(action_client, step_goal, **kwargs):
     Returns:
        :class:`~py_trees.behaviour.Behaviour`: subtree root
     """
-    root = py_trees.composites.Sequence(name="Policy", memory=True)
+    root = MoveBlend(
+        name="Policy",
+        threshold_param=OVERLAP_THRESHOLD_PARAM,
+        dispatch_param=OVERLAP_DISPATCH_ON_START_PARAM,
+        progress_threshold=1.0,
+    )
     run_policy = MOVEBYPOLICY(
         name="MoveByPolicy",
         action_client=action_client,

@@ -62,21 +62,12 @@ def create_root():
                 qos_profile=py_trees_ros.utilities.qos_profile_unlatched(),
             )
         )
-    status_nodes.append(
-        ToBlackboard(
-            name="arm_BlendProgress2BB",
-            topic_name="arm_client/arm/blend_progress",
-            topic_type=String,
-            blackboard_variables={"arm/blend_progress": "data"},
-            qos_profile=py_trees_ros.utilities.qos_profile_unlatched(),
-        )
-    )
     # ---------------- Root->Priorities- -----------------------
     priorities = py_trees.composites.Selector("Priorities",
                                               memory=False)
     idle       = py_trees.behaviours.Running(name="Idle")
     priorities.add_child(idle)
-    
+
     root.add_children([grnd2bb] + status_nodes + [priorities])
     return root
 
@@ -126,6 +117,26 @@ class SplinteredReality(Node):
                 ("top_offset_z", Parameter.Type.DOUBLE),
                 ("frequency", 10.0),
                 ]
+        )
+
+        # Optional waypoints for policy deploys. Fall back to init_config in the
+        # jobs when not provided, so sim yamls that don't declare them still
+        # launch cleanly.
+        from rcl_interfaces.msg import ParameterDescriptor
+        self.declare_parameter(
+            "pre_init_config",
+            None,
+            ParameterDescriptor(dynamic_typing=True),
+        )
+        self.declare_parameter(
+            "place_config",
+            None,
+            ParameterDescriptor(dynamic_typing=True),
+        )
+        self.declare_parameter(
+            "home_config",
+            None,
+            ParameterDescriptor(dynamic_typing=True),
         )
 
         self.rec_topic_list  = rec_topic_list

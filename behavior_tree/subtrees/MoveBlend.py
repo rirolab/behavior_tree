@@ -1,466 +1,411 @@
-import json
-import typing
+"""A sequence whose consecutive arm motions overlap instead of running strictly one at a time.
 
-import numpy as np
+A plain ``Sequence(memory=True)`` ticks child N and refuses to touch child N+1
+until N returns SUCCESS. That is what forces the arm to stop dead at every
+waypoint: each motion runs to completion, then the next begins from rest.
+
+``MoveBlend`` keeps the same order and the same success semantics -- it
+succeeds only when the last child succeeds, fails the moment any child fails --
+but it starts ticking child N+1 early, as soon as child N reports its progress
+has crossed ``progress_threshold``. Both children then tick each cycle: N is
+still finishing while N+1 has been dispatched, so their motions are live at the
+same time and the mixer blends them. When N finally succeeds, authority passes
+to N+1, which may already have pulled N+2 in behind it.
+
+Overlap only happens between children that actually expose progress -- i.e.
+streamed arm motions. A gripper op or a world-model query reports no progress,
+so ``current_progress()`` returns None for it, the early-start test never fires,
+and the sequence falls back to strict sequential across that boundary. That is
+exactly the desired safety: the grasp closes only after the arm has arrived, the
+place happens only after the transit has finished.
+
+``progress_threshold`` here is the trigger the *tree* owns -- when to dispatch
+the next motion. How the two are combined once both are live (an additive
+velocity sum) is owned by the mixer, downstream. Setting the threshold to 1.0
+makes this behave exactly like ``Sequence(memory=True)``: the next child starts
+only when the current one is fully done.
+
+``dispatch_on_start`` splits that one trigger in two. Dispatching a motion is
+not free -- a tree tick at 2 Hz plus the primitive's IK, measured at 0.2 to
+0.44 s -- and under the threshold gate all of it is spent *after* the mixer
+already wanted to blend. Measured on the 80 mm square, a requested 0.75 fired
+at an effective 0.908, and 0.60 at 0.976, i.e. no overlap at all. With this on,
+the next motion is dispatched as soon as the newest one is moving at all, so
+that cost is paid while the previous motion still runs; the mixer's own
+``progress_threshold`` still decides when the blend actually opens.
+
+It is self-limiting, which is why there is no depth counter here: a dispatched
+motion sits ARMED until the mixer starts it, and an ARMED slot reports progress
+0.0, so the gate blocks again until the mixer moves on. At most three motions
+are ever in flight -- two slots plus one queued -- which is exactly what
+``dispatch_stream`` accepts before rejecting.
+
+Off by default because it changes the *sequential* baseline too. At threshold
+1.0 the mixer still runs the motions strictly one after another, but the
+planning dwell between them (measured 0.204 to 0.255 s of commanded standstill
+at each corner) disappears, since the next plan is built during the current
+motion. Any comparison against previously recorded sequential runs has to keep
+this off.
+"""
+
 import py_trees
-from action_msgs.msg import GoalStatus
-from behavior_tree.utils.blend_status import BlendPhase
-from behavior_tree.utils.blend_status import BlendProgressStatus
-from riro_srvs.srv import StringGoalStatus
+from py_trees import common
+
+# Node parameters that tune the overlap, read live from the tree node so
+# `ros2 param set /tree <param> <x>` takes effect without a restart. They live
+# here rather than in one job, because every composite that chains motions --
+# the move steps, the policy steps, and the sequence chaining the steps
+# themselves -- has to agree on them or the tree overlaps at two thresholds.
+#
+# 1.0 reproduces strict-sequential behaviour, so the default is a no-op.
+OVERLAP_THRESHOLD_PARAM = "overlap_progress_threshold"
+# Dispatch the next motion as soon as the previous one is moving, rather than
+# waiting for it to reach the threshold, so its planning cost is paid during the
+# previous motion instead of delaying the blend. Off by default: it also removes
+# the planning dwell from the strictly sequential baseline, so recorded
+# comparisons stay reproducible only while it is off.
+OVERLAP_DISPATCH_ON_START_PARAM = "overlap_dispatch_on_start"
 
 
 class MoveBlend(py_trees.composites.Composite):
-    """
-    Run a command sequence by sending incremental blend steps to complex action client.
-    """
 
-    def __init__(self, name, action_client, timeout=1.0, blend_duration=0.0, 
-                 check_contact=False, robot_name=None, goal_channel="arm", 
-                 children=None):
-        # Define the complex action client blend command schema used by this composite.
-        self.arm_goal_channel = "arm"
-        self.blend_action_type = "blend"
-        self.blend_initial_child_count = 2
-        self.blend_next_child_count = 1
-
-        # Use child motion nodes as the only source for blend commands.
-        if children is None:
-            children = []
-
-        # Validate blend configuration before pretick tree validation.
-        blend_duration, blend_reject_reason = self._validate_blend(
-            children, blend_duration, goal_channel, robot_name,
-        )
-
-        super(MoveBlend, self).__init__(name=name, children=children)
-
-        # Store complex action client command state for incremental blend dispatch.
-        self.cmd_req = action_client
-        self.timeout = timeout
-        self.blend_duration = blend_duration
-        self.check_contact = check_contact
+    def __init__(self, name="MoveBlend", children=None,
+                 progress_threshold=1.0, threshold_param=None,
+                 dispatch_on_start=False, dispatch_param=None,
+                 robot_name=None):
+        super().__init__(name=name, children=children)
+        # Which arm this composite chains motions for, when the tree runs more
+        # than one. Only used to reject a chain that mixes them.
         self.robot_name = robot_name
-        self.goal_channel = goal_channel
-        self.future = None
-        self.sent_goal = False
-        self.goal_uuid_des = None
-        self.chain_index = 0
-        self.completed_child_index = -1
-        self.blend_reject_reason = blend_reject_reason
+        # Set to a string when the composite is misconfigured, harvested by
+        # `utils.validation_utils.collect_blend_validation` in the pre-tick
+        # handler and used to refuse the whole job BEFORE the subtree is
+        # inserted. Without it a bad chain is not an error -- the gate simply
+        # never opens and the composite degrades to a plain Sequence, which is
+        # the right RUNTIME behaviour and a terrible way to find a typo.
+        self.blend_reject_reason = None
+        self._validate(children or [], progress_threshold)
+        # The fraction of a child's motion that must be done before the next
+        # child is dispatched. 1.0 == wait for full completion == plain
+        # Sequence.
+        self.progress_threshold = progress_threshold
+        # When set, read the threshold live from this node parameter each tick,
+        # so `ros2 param set /tree <param> <x>` retunes overlap on the fly. A
+        # node parameter, not a blackboard key: the job mirrors parameters onto
+        # the blackboard only once at startup, so a blackboard copy would stay
+        # frozen at its initial value and ros2 param set would appear to do
+        # nothing.
+        self.threshold_param = threshold_param
+        # Dispatch the next motion as soon as the newest one is *moving*,
+        # instead of waiting for it to reach the threshold. See the module
+        # docstring: this decouples "when to plan" from "when to blend", and
+        # it is off by default because it changes the sequential baseline.
+        self.dispatch_on_start = dispatch_on_start
+        self.dispatch_param = dispatch_param
+        self._node = None
+        # Highest index dispatched so far. Children 0..started are all live;
+        # authority (the child whose success advances the tree) is `current`.
+        self._started = 0
+        self._current = 0
 
-        # Read complex action client status from the same blackboard keys used by motion leaves.
-        self.blackboard = self.attach_blackboard_client(
-            name=self.name, namespace=self.robot_name,
-        )
-        self.goal_id_key = f"{self.goal_channel}/goal_id"
-        self.goal_status_key = f"{self.goal_channel}/goal_status"
-        self.blend_status_key = f"{self.goal_channel}/blend_status"
-        self.blend_progress_key = f"{self.goal_channel}/blend_progress"
-        self.blackboard.register_key(
-            key=self.goal_id_key, access=py_trees.common.Access.READ,
-        )
-        self.blackboard.register_key(
-            key=self.goal_status_key, access=py_trees.common.Access.READ,
-        )
-        self.blackboard.register_key(
-            key=self.blend_status_key, access=py_trees.common.Access.WRITE,
-        )
-        self.blackboard.register_key(
-            key=self.blend_progress_key, access=py_trees.common.Access.READ,
-        )
+    def _validate(self, children, progress_threshold):
+        """Record why this chain is misconfigured, or leave the reason unset.
 
-    def _validate_blend(self, children, blend_duration, goal_channel, robot_name):
+        Runs at construction, not at tick, so the job can be refused before the
+        subtree is ever inserted.
+
+        Deliberately short. The composite that this replaced rejected nine
+        things, and most of them do not survive the change of mechanism:
+
+          * it required every child to be on the arm channel, and at least two
+            of them. This one admits gripper ops and world-model queries on
+            purpose -- they report no progress, so the gate never opens for them
+            and the chain degrades to strictly sequential exactly where it must.
+            That is the fail-safe, not a misconfiguration.
+          * it checked `blend_duration` against each child timeout. There is no
+            `blend_duration` here: the blend shape belongs to the mixer's
+            progress threshold, and the composite only decides WHEN to admit.
+          * it required a child to export a complex action client command. This
+            one asks a child for `current_progress()` and nothing else.
+
+        What is left is what a chain cannot recover from at runtime.
         """
-        Validate child motions and blend timing for this composite.
-        """
-        # Convert blend duration once and keep any rejection reason as metadata.
-        blend_reject_reason = None
+        # A threshold outside [0, 1] is compared against a progress that never
+        # leaves it, so the gate is either always open or never open, silently.
         try:
-            blend_duration = float(blend_duration)
+            threshold = float(progress_threshold)
         except (TypeError, ValueError) as exc:
-            blend_duration = 0.0
-            blend_reject_reason = f"blend_duration must be numeric: {exc}"
-        if blend_reject_reason is None and blend_duration <= 0.0:
-            blend_reject_reason = "blend_duration must be positive"
-        if blend_reject_reason is None and goal_channel != self.arm_goal_channel:
-            blend_reject_reason = "MoveBlend only supports arm goal_channel"
-        if blend_reject_reason is None and len(children) < self.blend_initial_child_count:
-            blend_reject_reason = "MoveBlend requires at least two children"
+            self.blend_reject_reason = f"progress_threshold must be numeric: {exc}"
+            return
+        if not 0.0 <= threshold <= 1.0:
+            self.blend_reject_reason = (
+                f"progress_threshold must be within [0, 1], got {threshold}")
+            return
 
-        # Accept only arm motion leaves that can export complex action client commands.
-        if blend_reject_reason is None:
-            for child in children:
-                child_goal_channel = getattr(child, "goal_channel", self.arm_goal_channel)
-                if child_goal_channel != self.arm_goal_channel:
-                    blend_reject_reason = "MoveBlend only supports arm children"
-                    break
-                if not callable(getattr(child, "make_command", None)):
-                    blend_reject_reason = (
-                        "MoveBlend child must export a complex action client command, "
-                        f"got [{type(child).__name__}]"
-                    )
-                    break
-                child_robot_name = getattr(child, "robot_name", None)
-                if child_robot_name is not None:
-                    if robot_name is None:
-                        robot_name = child_robot_name
-                    elif child_robot_name != robot_name:
-                        blend_reject_reason = "MoveBlend children must target the same robot"
-                        break
-                try:
-                    child_timeout = float(child.timeout)
-                except (TypeError, ValueError) as exc:
-                    blend_reject_reason = f"MoveBlend child timeout must be numeric: {exc}"
-                    break
-                if child_timeout <= 0.0:
-                    blend_reject_reason = "MoveBlend child timeout must be positive"
-                    break
-                if blend_duration >= child_timeout:
-                    blend_reject_reason = "blend_duration must be shorter than each child timeout"
-                    break
-        return blend_duration, blend_reject_reason
+        # Two arms in one chain would overlap motions that never share a
+        # controller, so the seam it reports would not exist.
+        robots = {child.robot_name for child in children
+                  if getattr(child, "robot_name", None) is not None}
+        if len(robots) > 1:
+            self.blend_reject_reason = (
+                "children must target the same robot, got "
+                + ", ".join(sorted(robots)))
 
-    def initialise(self):
-        # Reset blend execution state whenever py_trees starts this composite.
-        self.future = None
-        self.sent_goal = False
-        self.goal_uuid_des = None
-        self.chain_index = 0
-        self.completed_child_index = -1
-        self.blackboard.unset(self.blend_status_key)
-        self.current_child = self.children[0] if self.children else None
-        for child in self.children:
-            child.blend_phase = None
-            child.status = py_trees.common.Status.INVALID
-            child.feedback_message = ""
+    def setup(self, **kwargs):
+        # py_trees_ros hands the ROS node in here; keep it so the threshold can
+        # be read live.
+        self._node = kwargs.get("node", self._node)
+        return True
 
-    def current_goal_id(self):
-        # Read the current goal id from the blackboard.
-        try:
-            return self.blackboard.get(self.goal_id_key)
-        except KeyError:
-            return None
+    def _threshold(self):
+        if self.threshold_param is not None and self._node is not None:
+            try:
+                value = self._node.get_parameter(self.threshold_param).value
+                if value is not None:
+                    return float(value)
+            except Exception:
+                pass
+        return float(self.progress_threshold)
 
-    def current_goal_status(self):
-        # Read the current goal status from the blackboard.
-        try:
-            return self.blackboard.get(self.goal_status_key)
-        except KeyError:
-            return None
+    def _dispatch_on_start(self):
+        if self.dispatch_param is not None and self._node is not None:
+            try:
+                value = self._node.get_parameter(self.dispatch_param).value
+                if value is not None:
+                    return bool(value)
+            except Exception:
+                pass
+        return bool(self.dispatch_on_start)
 
-    def current_blend_progress(self):
-        # Read the current blend progress JSON from the blackboard.
-        try:
-            progress = self.blackboard.get(self.blend_progress_key)
-        except KeyError:
-            return None
-        if not progress:
+    def _child_progress(self, child):
+        """Progress in [0,1] for a child, or None if it exposes none."""
+        getter = getattr(child, "current_progress", None)
+        if getter is None:
             return None
         try:
-            return json.loads(progress)
-        except (TypeError, ValueError):
+            return getter()
+        except Exception:
             return None
 
-    def goal_id_matches_blackboard(self):
-        # Match the blackboard goal id against the currently sent blend step.
-        goal_id = self.current_goal_id()
-        if goal_id is None or self.goal_uuid_des is None:
-            return False
-        match = self.goal_uuid_des == goal_id
-        return match.all() if hasattr(match, "all") else bool(match)
+    def _child_overlappable(self, child):
+        """Whether the NEXT child may be started early, before this-1 finishes.
 
-    def command_response_status(self):
-        # Convert immediate complex action client failures into a BT failure.
-        if self.future is None or not self.future.done():
-            return None
+        Only a motion whose command a mixer blends may: a gripper op runs on its
+        own controller and would act the instant it is dispatched -- close
+        before the arm reaches the grasp, open before it reaches the place -- so
+        it must wait. A world-model query is not a motion at all. Decided by
+        type, not by live progress: a not-yet-dispatched arm motion reports None
+        progress but is still overlappable.
 
-        try:
-            response = self.future.result()
-        except Exception as exc:
-            self.feedback_message = f"command service failed: {exc}"
-            return py_trees.common.Status.FAILURE
+        `overlappable` is set by Move.MOVE from its stream slots; the
+        `stream_slots` fallback keeps behaviours that predate the attribute
+        working. A nested MoveBlend answers for its own current child, so
+        a step subtree is as overlappable as whatever it is running.
+        """
+        flag = getattr(child, "overlappable", None)
+        if flag is not None:
+            return bool(flag)
+        return bool(getattr(child, "stream_slots", ()))
 
-        goal_status = getattr(response, "goal_status", None)
-        if goal_status is None:
-            return None
-        status = getattr(goal_status, "status", GoalStatus.STATUS_UNKNOWN)
-        failure_statuses = [
-            GoalStatus.STATUS_ABORTED,
-            GoalStatus.STATUS_UNKNOWN,
-            GoalStatus.STATUS_CANCELING,
-            GoalStatus.STATUS_CANCELED,
-        ]
-        if status not in failure_statuses:
-            return None
+    # ------------------------------------------------------------------
+    # Delegation, so these compose.
+    #
+    # A step subtree is a composite, and the sequence chaining the steps has to
+    # ask it the same two questions it asks a leaf. Answering for the current
+    # child is the right answer in both directions: a Policy step wrapping one
+    # MOVEBYPOLICY reports the policy's progress upward, and a move step
+    # reports whichever of its motions is live.
 
-        response_uuid = list(getattr(goal_status.goal_info.goal_id, "uuid", []))
-        if self.goal_uuid_des is not None and response_uuid:
-            if response_uuid != list(self.goal_uuid_des):
-                return None
-        elif self.goal_uuid_des is not None:
-            return None
+    @property
+    def overlappable(self):
+        # The child it is running, or -- before it has run at all -- the one it
+        # will run first. The gate above asks this of the NEXT child, which by
+        # definition has not been ticked yet, so answering from `current_child`
+        # alone would report every step non-overlappable and silently restore
+        # strict sequencing.
+        child = self.current_child
+        if child is None and self.children:
+            child = self.children[0]
+        return child is not None and self._child_overlappable(child)
 
-        self.feedback_message = "FAILURE"
-        return py_trees.common.Status.FAILURE
+    def current_progress(self):
+        child = self.current_child
+        return None if child is None else self._child_progress(child)
 
-    def command_from_child(self, child):
-        # Assume _validate_blend already verified make_command exists.
-        command = child.make_command(enable_wait=False)
+    def tick(self):
+        self.logger.debug("%s.tick()" % self.__class__.__name__)
 
-        # Blend children share the parent blend goal id and never wait independently.
-        command.pop("uuid", None)
-        command["enable_wait"] = False
-        return command
-
-    def _send_current_blend(self, commands):
-        # Send the first two commands once, then only the next command per handoff.
-        self.goal_uuid_des = np.random.randint(0, 255, size=16, dtype=np.uint8)
-        if self.chain_index == 0:
-            blend_children = commands[:self.blend_initial_child_count]
-        else:
-            blend_children = commands[
-                self.chain_index + 1:self.chain_index + 1 + self.blend_next_child_count
-            ]
-        blend_goal = {
-            "blend": True,
-            "chain_index": self.chain_index,
-            "chain_total": len(commands) - 1,
-            "children": blend_children,
-        }
-        cmd_str = json.dumps(
-            {
-                'action_type': self.blend_action_type,
-                'goal': json.dumps(blend_goal),
-                'uuid': self.goal_uuid_des.tolist(),
-                'goal_channel': self.goal_channel,
-                'timeout': self.timeout,
-                'blend_duration': self.blend_duration,
-                'check_contact': self.check_contact,
-                'enable_wait': False
-            }
-        )
-        req = StringGoalStatus.Request(data=cmd_str)
-        self.future = self.cmd_req.call_async(req)
-
-        # Mark this blend step as in-flight for status sync and tip tracking.
-        self.sent_goal = True
-        self.feedback_message = f"Sending blend step {self.chain_index + 1}"
-
-    def sync_child_statuses(self, new_status):
-        # Reflect the current blend state onto child action markers.
-        self.blackboard.unset(self.blend_status_key)
-
-        # Mark active blend children with blend metadata and py_trees status.
-        running_indexes = {self.chain_index, self.chain_index + 1}
-        for index, child in enumerate(self.children):
-            if new_status == py_trees.common.Status.SUCCESS:
-                # Mark every child done when the whole blend succeeds.
-                child.blend_phase = None
-                child.status = py_trees.common.Status.SUCCESS
-                child.feedback_message = ""
-            elif new_status == py_trees.common.Status.FAILURE and index in running_indexes:
-                # Mark only the active blend window failed on blend failure.
-                child.blend_phase = None
-                child.status = py_trees.common.Status.FAILURE
-                child.feedback_message = ""
-            elif index <= self.completed_child_index:
-                # Keep already handed-off children successful.
-                child.blend_phase = None
-                child.status = py_trees.common.Status.SUCCESS
-                child.feedback_message = ""
-            elif (
-                new_status == py_trees.common.Status.RUNNING
-                and self.sent_goal
-                and index == self.chain_index
-            ):
-                # Show the first child of the active blend window as blending out.
-                child.blend_phase = BlendPhase.RUNNING_BLEND_FIRST
-                child.status = py_trees.common.Status.RUNNING
-                child.feedback_message = child.blend_phase.name
-                self.blackboard.set(self.blend_status_key, child.blend_phase.value)
-            elif (
-                new_status == py_trees.common.Status.RUNNING
-                and self.sent_goal
-                and index == self.chain_index + 1
-            ):
-                # Show the second child of the active blend window as blending in.
-                child.blend_phase = BlendPhase.RUNNING_BLEND_SECOND
-                child.status = py_trees.common.Status.RUNNING
-                child.feedback_message = child.blend_phase.name
-            else:
-                # Clear children that are not active yet.
-                child.blend_phase = None
-                child.status = py_trees.common.Status.INVALID
-                child.feedback_message = ""
-
-        # Point py_trees visitors at a non-invalid child so root.tip() stays valid.
-        # This is for tree status display/debugging, not command dispatch or blend logic.
         if not self.children:
             self.current_child = None
-        elif new_status == py_trees.common.Status.RUNNING and self.sent_goal:
-            if self.completed_child_index == self.chain_index:
-                self.current_child = self.children[self.chain_index + 1]
-            else:
-                self.current_child = self.children[self.chain_index]
-        elif new_status == py_trees.common.Status.SUCCESS:
-            self.current_child = self.children[-1]
-        else:
-            self.current_child = self.children[self.chain_index]
+            self.stop(common.Status.SUCCESS)
+            yield self
+            return
 
-    def tick(self) -> typing.Iterator[py_trees.behaviour.Behaviour]:
-        # Drive the blend composite without ticking child actions directly.
-        self.logger.debug(f"{self.__class__.__name__}.tick()")
-        if self.status != py_trees.common.Status.RUNNING:
+        # Fresh entry (not resuming a RUNNING tick): reset and invalidate any
+        # children left non-INVALID from a previous run, matching Sequence.
+        if self.status != common.Status.RUNNING:
+            self._started = 0
+            self._current = 0
+            self.current_child = self.children[0]
             for child in self.children:
-                if child.status != py_trees.common.Status.INVALID:
-                    child.stop(py_trees.common.Status.INVALID)
+                if child.status != common.Status.INVALID:
+                    child.stop(common.Status.INVALID)
             self.initialise()
 
-        # Fail this composite if any child is already marked failed.
-        for child in self.children:
-            if child.status == py_trees.common.Status.FAILURE:
-                self.feedback_message = f"Blend child [{child.name}] failed"
-                new_status = py_trees.common.Status.FAILURE
-                self.sync_child_statuses(new_status)
-                self.stop(new_status)
+        # Tick every live child, from authority to newest-started, advancing
+        # authority as children succeed. A child that succeeds hands off to the
+        # next, which must itself be ticked this same cycle -- otherwise it sits
+        # a tick in INVALID and tip() finds no live leaf. This loop keeps going
+        # until the authority child is one that did not just succeed, mirroring
+        # how a plain Sequence flows straight from one success into the next.
+        while True:
+            newly_ticked = False
+            last = self._started
+            for index in range(self._current, last + 1):
+                if index >= len(self.children):
+                    break
+                child = self.children[index]
+                # SUCCESS: already handed off. FAILURE: a live overlap partner
+                # failed -- do NOT re-tick it, or Move.initialise (sent_goal =
+                # False) would resend it as a brand-new goal and silently revive
+                # a motion that was aborting. It is handled by the failure scan
+                # below instead.
+                if child.status in (common.Status.SUCCESS,
+                                    common.Status.FAILURE):
+                    continue
+                newly_ticked = True
+                for node in child.tick():
+                    yield node
+
+            # Any live child failed -- not only the authority one. An overlap
+            # partner (index > _current) can fail while the authority is still
+            # RUNNING; the sequence must still abandon cleanly rather than let
+            # the partner's stale state drive the early-start gate below.
+            for index in range(self._current,
+                               min(self._started, len(self.children) - 1) + 1):
+                if self.children[index].status == common.Status.FAILURE:
+                    failed = self.children[index]
+                    self._stop_from(0, common.Status.INVALID, skip=index)
+                    self.current_child = failed
+                    self.stop(common.Status.FAILURE)
+                    yield self
+                    return
+
+            advanced = False
+            while self._current < len(self.children):
+                child = self.children[self._current]
+                if child.status == common.Status.SUCCESS:
+                    self._current += 1
+                    if self._started < self._current:
+                        self._started = self._current
+                    advanced = True
+                    continue
+                break
+
+            # All children done?
+            if self._current >= len(self.children):
+                self.current_child = self.children[-1]
+                self.stop(common.Status.SUCCESS)
                 yield self
                 return
 
-        # Reject unavailable complex action client transport.
-        if self.cmd_req is None:
-            self.feedback_message = "no action client, did you call setup() on your tree?"
-            new_status = py_trees.common.Status.FAILURE
-            self.sync_child_statuses(new_status)
-            self.stop(new_status)
-            yield self
-            return
+            # Re-tick only when authority advanced onto a not-yet-ticked child,
+            # so it is never left INVALID for a whole tick. Otherwise this tick
+            # is done.
+            authority = self.children[self._current]
+            if advanced and authority.status == common.Status.INVALID:
+                continue
+            break
 
-        # Get commands from children already checked by blend validation.
-        try:
-            commands = [self.command_from_child(child) for child in self.children]
-        except Exception as exc:
-            self.feedback_message = f"Blend command build failed: {exc}"
-            new_status = py_trees.common.Status.FAILURE
-            self.sync_child_statuses(new_status)
-            self.stop(new_status)
-            yield self
-            return
+        # Should the next, not-yet-started child be dispatched now?
+        #
+        # Two conditions, both required:
+        #  - the NEWEST started child must be far enough along (its progress >=
+        #    threshold), and
+        #  - the NEXT child must itself be overlappable -- it must expose
+        #    progress. A gripper op or world-model query reports None, and must
+        #    NOT be started early: the gripper is on its own controller and would
+        #    act the instant it is dispatched, i.e. close before the arm has
+        #    reached the grasp pose, or open before the arm has reached the place
+        #    pose (dropping the object). So the chain goes strictly sequential
+        #    into a non-overlappable child: it waits for the newest to SUCCEED.
+        if self._started < len(self.children) - 1:
+            newest = self.children[self._started]
+            nxt = self.children[self._started + 1]
+            newest_progress = self._child_progress(newest)
+            if newest.status == common.Status.SUCCESS:
+                newest_progress = 1.0
 
-        # Send the first blend step.
-        if not self.sent_goal:
-            self._send_current_blend(commands)
-            new_status = py_trees.common.Status.RUNNING
-            self.sync_child_statuses(new_status)
-            self.status = new_status
-            for child in self.children[self.chain_index:self.chain_index + self.blend_initial_child_count]:
-                yield child
-            yield self
-            return
+            if self._child_overlappable(nxt):
+                if self._dispatch_on_start():
+                    # Dispatch as soon as the newest motion is actually moving.
+                    # Planning it costs a tree tick plus the primitive's IK, and
+                    # under the threshold gate all of that lands *after* the
+                    # mixer already wanted to blend, so the overlap starts late:
+                    # a requested 0.75 was measured firing at an effective
+                    # 0.908. Started here instead, that cost is paid while the
+                    # previous motion is still running.
+                    #
+                    # This cannot run away. A dispatched motion sits ARMED until
+                    # the mixer starts it, and an ARMED slot reports progress
+                    # 0.0, so the gate blocks again immediately -- at most one
+                    # motion is ever queued beyond the two live ones, which is
+                    # exactly what `dispatch_stream` accepts.
+                    start_next = (newest_progress is not None
+                                  and newest_progress > 0.0)
+                else:
+                    start_next = (newest_progress is not None
+                                  and newest_progress >= self._threshold())
+            else:
+                # Non-overlappable successor (gripper, query): only start it once
+                # the newest has genuinely finished.
+                start_next = newest.status == common.Status.SUCCESS
 
-        # Handle immediate complex action client rejection before waiting for status topics.
-        command_status = self.command_response_status()
-        if command_status is not None:
-            self.sync_child_statuses(command_status)
-            self.stop(command_status)
-            yield self
-            return
+            if start_next:
+                self._started += 1
+                # The freshly started child gets its first tick this cycle, so
+                # it dispatches without a one-tick lag.
+                child = self.children[self._started]
+                if child.status != common.Status.SUCCESS:
+                    for node in child.tick():
+                        yield node
 
-        # Keep running until complex action client publishes the goal id for this blend step.
-        if self.current_goal_id() is None:
-            new_status = py_trees.common.Status.RUNNING
-            self.sync_child_statuses(new_status)
-            self.status = new_status
-            for child in self.children[self.chain_index:self.chain_index + self.blend_initial_child_count]:
-                yield child
-            yield self
-            return
+        # Point current_child at a child that is actually RUNNING, so tip()
+        # resolves to a live leaf. The authority child is the natural choice,
+        # but a child that was only just started this tick, or one that has
+        # already succeeded, can leave tip() empty; fall back to the newest live
+        # child, then to the authority regardless.
+        self.current_child = self._live_child()
 
-        # Fail only when the blackboard status belongs to this blend goal id.
-        if (
-            self.goal_id_matches_blackboard() and \
-            self.current_goal_status() in (
-                GoalStatus.STATUS_ABORTED, GoalStatus.STATUS_UNKNOWN, 
-                GoalStatus.STATUS_CANCELING, GoalStatus.STATUS_CANCELED
-            )
-        ):
-            self.feedback_message = "FAILURE"
-            new_status = py_trees.common.Status.FAILURE
-            self.sync_child_statuses(new_status)
-            self.stop(new_status)
-            yield self
-            return
-
-        # Consume blend progress only when it reports this blend step uuid.
-        progress = self.current_blend_progress()
-        if (
-            progress is not None
-            and self.goal_uuid_des is not None
-            and progress.get("uuid") == list(self.goal_uuid_des)
-        ):
-            progress_status = progress.get("status")
-            if progress_status in (
-                BlendProgressStatus.ABORTED.value,
-                BlendProgressStatus.CANCELED.value,
-            ):
-                self.feedback_message = progress.get("message", "FAILURE")
-                new_status = py_trees.common.Status.FAILURE
-                self.sync_child_statuses(new_status)
-                self.stop(new_status)
-                yield self
-                return
-
-            # Advance one child when complex action client reports target tolerance.
-            completed_child_index = int(progress.get("completed_child_index", -1))
-            if (
-                progress_status == BlendProgressStatus.HANDOFF.value
-                and completed_child_index > self.completed_child_index
-            ):
-                self.completed_child_index = completed_child_index
-                if completed_child_index < len(commands) - 2:
-                    self.chain_index = completed_child_index + 1
-                    self.sent_goal = False
-                    self.future = None
-                    self._send_current_blend(commands)
-                self.feedback_message = f"Blend child {completed_child_index + 1} succeeded"
-
-        # Finish after the final complex action client blend step succeeds.
-        if (
-            self.goal_id_matches_blackboard() 
-            and self.current_goal_status() == GoalStatus.STATUS_SUCCEEDED
-        ):
-            self.completed_child_index = len(commands) - 1
-            self.feedback_message = "SUCCESSFUL"
-            new_status = py_trees.common.Status.SUCCESS
-            self.sync_child_statuses(new_status)
-            self.stop(new_status)
-            yield self
-            return
-
-        # Keep this composite running while the current blend step is active.
-        new_status = py_trees.common.Status.RUNNING
-        self.sync_child_statuses(new_status)
-        self.status = new_status
-        for child in self.children[self.chain_index:self.chain_index + self.blend_initial_child_count]:
-            yield child
+        self.status = common.Status.RUNNING
         yield self
 
-    def terminate(self, new_status):
-        # Cancel the active arm goal when this composite is interrupted.
-        self.logger.debug("%s.terminate()" % self.__class__.__name__)
-        if new_status == py_trees.common.Status.SUCCESS:
-            return
-        if self.current_goal_id() is None:
-            self.feedback_message = "goal_id is not available"
-            return
+    def _live_child(self):
+        """A started child that is currently RUNNING, for tip() to descend into.
 
-        status = self.current_goal_status()
-        if (
-            self.goal_id_matches_blackboard()  
-            and status in (GoalStatus.STATUS_ACCEPTED, GoalStatus.STATUS_EXECUTING)
-        ):
-            req = StringGoalStatus.Request()
-            req.data = json.dumps({'action_type': 'cancel_goal',
-                                   'goal_channel': self.goal_channel,
-                                   'enable_wait': True})
-            self.future = self.cmd_req.call_async(req)
-        self.logger.debug("%s.terminate()[%s->%s]" % (self.__class__.__name__, self.status, new_status))
+        Prefer the authority child (the one whose success advances the tree);
+        fall back to any other started-and-running child; last resort, the
+        authority child even if not RUNNING, so current_child is never None.
+        """
+        span = range(self._current, min(self._started + 1, len(self.children)))
+        for index in span:
+            if self.children[index].status == common.Status.RUNNING:
+                return self.children[index]
+        return self.children[self._current]
+
+    def _stop_from(self, start, status, skip=None):
+        for index in range(start, min(self._started + 1, len(self.children))):
+            if index == skip:
+                continue
+            child = self.children[index]
+            if child.status != common.Status.INVALID:
+                child.stop(status)
+
+    def stop(self, new_status=common.Status.INVALID):
+        # On INVALID (higher-priority interrupt), make sure every child we
+        # started is torn down, not just the authority one.
+        if new_status == common.Status.INVALID:
+            self._stop_from(0, common.Status.INVALID)
+            self._started = 0
+            self._current = 0
+        super().stop(new_status)

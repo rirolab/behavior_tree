@@ -17,7 +17,7 @@ class MOVEJ(Move.MOVE):
     command to the robot if it is cancelled or interrupted by a higher
     priority behaviour.
     """
-    def __init__(self, name, action_client, action_goal=None, timeout=3.0, robot_name=None):
+    def __init__(self, name, action_client, action_goal=None, timeout=2.0, robot_name=None):
         super(MOVEJ, self).__init__(name=name,
                                    action_client=action_client,
                                    action_goal=action_goal,
