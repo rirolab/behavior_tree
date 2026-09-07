@@ -501,6 +501,7 @@ def main(args=None):
                                                  ## ## 'jobs.jog_job.Move',
                                                  'jobs.gripper_job.Move',
                                                  'jobs.policy_job.Move',
+                                                 'jobs.robocerebra_policy_job.Move',
                                                  ## ## 'jobs.slide_job.Move',
                                                  ## ## 'jobs.attach_job.Move',
                                                  ## ## 'jobs.touch_job.Move'
