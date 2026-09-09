@@ -11,6 +11,7 @@ from behavior_tree.subtrees import (
     JointStateLogger,
     MoveJoint,
     MoveParallel,
+    MoveRingTransport,
     MovePose,
     Policy,
     RealControllerCommand,
@@ -480,25 +481,12 @@ class Move(base_job.BaseJob):
             ]
         )
 
-        # Queue above_mold_start as one left/right parallel stage.
-        above_mold_start_parallel = MoveParallel.MoveParallel(name="Preset_above_mold_start")
-        above_mold_start_parallel.add_children(
-            [
-                MoveJoint.MOVEJ(
-                    name=f"{left_robot}_above_mold_start",
-                    action_client=action_clients[left_robot],
-                    action_goal=above_mold_start_left_joint_goal,
-                    robot_name=left_robot,
-                    timeout=2*MOVE_TIME,
-                ),
-                MoveJoint.MOVEJ(
-                    name=f"{right_robot}_above_mold_start",
-                    action_client=action_clients[right_robot],
-                    action_goal=above_mold_start_right_joint_goal,
-                    robot_name=right_robot,
-                    timeout=2*MOVE_TIME,
-                ),
-            ]
+        # One common-clock trajectory keeps the ring stretched during transfer.
+        above_mold_start_parallel = MoveRingTransport.MOVE_RING(
+            name="above_mold_start",
+            left_goal=above_mold_start_left_joint_goal,
+            right_goal=above_mold_start_right_joint_goal,
+            timeout=2*MOVE_TIME,
         )
 
         # Stop this real-hardware port after the initial approach sequence for now.

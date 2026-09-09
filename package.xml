@@ -16,6 +16,8 @@
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>control_msgs</exec_depend>
+  <exec_depend>trajectory_msgs</exec_depend>
+  <exec_depend>complex_action_client</exec_depend>
   <exec_depend>action_msgs</exec_depend>
   <exec_depend>riro_msgs</exec_depend>
   <exec_depend>riro_srvs</exec_depend>
