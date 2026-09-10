@@ -53,9 +53,27 @@ class ToBlackboard(subscribers.ToBlackboard):
             key=self.goal_status_key,
             access=py_trees.common.Access.READ,
         )
-        self._debug_logger = get_debug_file_logger("bt", "tree")
+        self._debug_logger = None
         self._last_debug_snapshot = None
         self._last_debug_snapshot_time = 0.0
+
+    def setup(self, **kwargs):
+        # Keep the ROS subscriber setup from py_trees_ros.
+        super(ToBlackboard, self).setup(**kwargs)
+
+        # Enable file logging only when the tree node parameter asks for it.
+        node = kwargs.get("node")
+        enable_debug_file_logging = True
+        if node is not None and node.has_parameter("enable_bt_debug_file_logging"):
+            enable_debug_file_logging = node.get_parameter(
+                "enable_bt_debug_file_logging"
+            ).value
+            if not isinstance(enable_debug_file_logging, bool):
+                raise RuntimeError(
+                    f"{self.name}: enable_bt_debug_file_logging must be a bool"
+                )
+        if enable_debug_file_logging:
+            self._debug_logger = get_debug_file_logger("bt", "tree")
 
     @staticmethod
     def _goal_status_to_string(status):
@@ -82,6 +100,9 @@ class ToBlackboard(subscribers.ToBlackboard):
             return None
 
     def _log_snapshot(self, event, **fields):
+        # Skip debug file writes when BT debug file logging is disabled.
+        if self._debug_logger is None:
+            return
         snapshot = make_debug_snapshot(
             {
                 "event": event,

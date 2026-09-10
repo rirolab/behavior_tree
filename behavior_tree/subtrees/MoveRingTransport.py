@@ -6,21 +6,23 @@ import numpy as np
 import py_trees
 from action_msgs.msg import GoalStatus
 from control_msgs.action import FollowJointTrajectory
+from control_msgs.msg import JointTrajectoryControllerState
 from rclpy.action import ActionClient
 from rclpy.duration import Duration
+from rclpy.time import Time
 from rclpy.qos import QoSProfile, DurabilityPolicy, qos_profile_sensor_data
-from sensor_msgs.msg import JointState
 from std_msgs.msg import String
 
 from complex_action_client.ring_transport import (
     kdl_world_model, plan_ring_transport, trajectory_messages,
 )
+from complex_action_client.jtc_motion import controller_snapshot, prepend_hold
 
 
 class MOVE_RING(py_trees.behaviour.Behaviour):
     """One BT behavior owns both goals, their common clock and cancellation.
 
-    Planning uses the live starting joints and robot_description. No fallback to
+    Planning uses the live JTC references and robot_description. No fallback to
     independent MOVEJ: planning, acceptance or execution failure cancels the pair.
     """
     def __init__(self, name, left_goal, right_goal, timeout=10.):
@@ -53,34 +55,47 @@ class MOVE_RING(py_trees.behaviour.Behaviour):
                  param('ring_transport.right_controller', '/right_fr3_joint_trajectory_controller')]
         self.clients = [ActionClient(node, FollowJointTrajectory, name+'/follow_joint_trajectory') for name in names]
         self.subscriptions = [
-            node.create_subscription(JointState, '/joint_states', self._state, qos_profile_sensor_data),
             node.create_subscription(String, '/robot_description', self._description,
                                      QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)),
         ]
+        for arm, controller in enumerate(names):
+            self.subscriptions.append(node.create_subscription(
+                JointTrajectoryControllerState, controller+'/controller_state',
+                lambda msg, a=arm: self._state(a, msg), qos_profile_sensor_data))
         if node.has_parameter('robot_description'):
             self.description = node.get_parameter('robot_description').value
 
     def _description(self, message):
         self.description = message.data
 
-    def _state(self, message):
-        now = time.monotonic()
-        # Replace atomically so the planning snapshot cannot see half an update.
+    def _state(self, arm, message):
         samples = dict(self.samples)
-        for i, (name, position) in enumerate(zip(message.name, message.position)):
-            velocity = message.velocity[i] if i < len(message.velocity) else None
-            samples[name] = (float(position), velocity, now)
+        samples[arm] = (time.monotonic(), message)
         self.samples = samples
 
     def _snapshot(self):
         samples, now = self.samples, time.monotonic()
-        values = [samples.get(j) for arm in self.joints for j in arm]
-        if any(v is None or now-v[2] > .5 for v in values):
+        try:
+            return np.concatenate([controller_snapshot(samples.get(a), joints, now)[0]
+                                   for a, joints in enumerate(self.joints)])
+        except ValueError:
             return None
-        if any(v[1] is not None and (not np.isfinite(v[1]) or abs(v[1]) > .03) for v in values):
-            return None
-        q = np.array([v[0] for v in values])
-        return q if np.isfinite(q).all() else None
+
+    def _controller_clock_ns(self):
+        now, samples = time.monotonic(), self.samples
+        clocks = []
+        for arm in range(2):
+            sample = samples.get(arm)
+            if sample is None or not 0 <= now-sample[0] <= .5:
+                raise ValueError('Fresh ring controller clocks are required')
+            stamp = sample[1].header.stamp
+            ns = stamp.sec*10**9+stamp.nanosec
+            if ns <= 0:
+                raise ValueError('Invalid ring controller clock')
+            clocks.append(ns+round((now-sample[0])*1e9))
+        if max(clocks)-min(clocks) > 100_000_000:
+            raise ValueError('Ring controller clocks differ by more than 0.1 seconds')
+        return max(clocks)
 
     def initialise(self):
         self.session = dict(cancelled=False, handles=[None, None], results=[None, None],
@@ -151,11 +166,15 @@ class MOVE_RING(py_trees.behaviour.Behaviour):
             try:
                 plan = session['planning'].result()
                 latest = self._snapshot()
-                if latest is None or np.max(np.abs(latest-session['start'])) > .005:
-                    return self._failure('Robot moved while ring path was planned; refusing stale start')
-                stamp = self.node.get_clock().now()+Duration(seconds=self.lead)
+                if latest is None or np.max(np.abs(latest-session['start'])) > 1e-5:
+                    return self._failure('JTC reference changed while ring path was planned; refusing stale start')
+                rt_now = self._controller_clock_ns()
+                stamp = Time(nanoseconds=rt_now+round(self.lead*1e9))
                 trajectories = trajectory_messages(plan, self.joints, stamp.to_msg())
+                trajectories = [prepend_hold(trajectory, latest[a*7:a*7+7], rt_now-1_000_000_000)
+                                for a, trajectory in enumerate(trajectories)]
                 session['stamp_ns'] = stamp.nanoseconds
+                session['acceptance_deadline'] = now+self.lead-.3
                 session['deadline'] = now+self.lead+float(plan.times[-1])+5.
                 session['sent'] = True
                 for a, trajectory in enumerate(trajectories):
@@ -168,8 +187,12 @@ class MOVE_RING(py_trees.behaviour.Behaviour):
             except Exception as error:
                 return self._failure(str(error))
             return py_trees.common.Status.RUNNING
-        clock_ns = self.node.get_clock().now().nanoseconds
-        if any(h is None for h in session['handles']) and clock_ns >= session['stamp_ns']-300_000_000:
+        try:
+            clock_ns = self._controller_clock_ns()
+        except ValueError as error:
+            return self._failure(str(error))
+        if any(h is None for h in session['handles']) and (
+                clock_ns >= session['stamp_ns']-300_000_000 or now >= session['acceptance_deadline']):
             return self._failure('Both arms did not accept before the common start deadline')
         if now > session['deadline']:
             return self._failure('Ring execution timed out')

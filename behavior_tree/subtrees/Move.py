@@ -74,12 +74,26 @@ class MOVE(py_trees.behaviour.Behaviour):
             key=self.goal_status_key,
             access=py_trees.common.Access.READ,
         )
-        self._debug_logger = get_debug_file_logger("bt", "tree")
+        self._debug_logger = None
         self._last_debug_snapshot = None
         self._last_debug_snapshot_time = 0.0
         
     def setup(self, node):
         """ """
+        # Enable file logging only when the tree node parameter asks for it.
+        enable_debug_file_logging = True
+        if node.has_parameter("enable_bt_debug_file_logging"):
+            enable_debug_file_logging = node.get_parameter(
+                "enable_bt_debug_file_logging"
+            ).value
+            if not isinstance(enable_debug_file_logging, bool):
+                raise RuntimeError(
+                    f"{self.name}: enable_bt_debug_file_logging must be a bool"
+                )
+        if enable_debug_file_logging:
+            self._debug_logger = get_debug_file_logger("bt", "tree")
+
+        # Keep the existing setup feedback for behaviour introspection.
         self.feedback_message = f"{self.name}: setup"
         ## self.node = node
         ## self.node.create_subscription(GoalStatus, 'arm_client/goal_status',
@@ -119,6 +133,9 @@ class MOVE(py_trees.behaviour.Behaviour):
         return str(status)
 
     def debug_log(self, event, **fields):
+        # Skip debug file writes when BT debug file logging is disabled.
+        if self._debug_logger is None:
+            return
         self._debug_logger.log(
             event,
             behaviour_name=self.name,
@@ -130,6 +147,9 @@ class MOVE(py_trees.behaviour.Behaviour):
         )
 
     def debug_log_snapshot(self, event, interval_sec=2.0, **fields):
+        # Avoid snapshot work when there is no file logger.
+        if self._debug_logger is None:
+            return
         snapshot = make_debug_snapshot(
             {
                 "event": event,

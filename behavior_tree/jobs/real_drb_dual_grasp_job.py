@@ -14,9 +14,9 @@ from behavior_tree.subtrees import (
     MoveRingTransport,
     MovePose,
     Policy,
+    PolicyServer,
     RealControllerCommand,
     RingWorldModel,
-    Subprocess,
     Trigger,
     Wait,
 )
@@ -140,14 +140,18 @@ class Move(base_job.BaseJob):
         robot_name,
         timeout,
         joint_logger_kwargs,
+        enable_joint_logging=True,
     ):
         """
-        Chain one Cartesian move and one joint-state logger in one sequence.
+        Chain one Cartesian move and optionally one joint-state logger in one sequence.
         """
+        # Keep the wrapper node stable even when logging is disabled.
         move_pose_with_logger = py_trees.composites.Sequence(
             name=f"{name}WithLogger",
             memory=True,
         )
+
+        # Build the Cartesian replay motion that is required for task execution.
         move_pose = MovePose.MOVEP(
             name=name,
             action_client=action_client,
@@ -155,6 +159,11 @@ class Move(base_job.BaseJob):
             robot_name=robot_name,
             timeout=timeout,
         )
+        if not enable_joint_logging:
+            move_pose_with_logger.add_child(move_pose)
+            return move_pose_with_logger
+
+        # Attach the optional joint-state dump after the motion succeeds.
         joint_logger = JointStateLogger.JOINT_STATE_LOGGING(
             name=f"{name}JointLogger",
             **joint_logger_kwargs,
@@ -239,8 +248,12 @@ class Move(base_job.BaseJob):
         approach_robot = step.get("approach_robot")
         action_clients = action_client
         plan_name = "Plan" + idx
-        MOVE_TIME = 5.0
-        GRIPPER_TIME = 1.0
+        # MOVE_TIME = 5.0
+        MOVE_TIME = 2.0
+        # Use a softer return after policy control hands back to JTC.
+        RETURN_HOME_MOVE_TIME = 4.0
+        # GRIPPER_TIME = 1.0
+        GRIPPER_TIME = 0.5
 
         # Resolve the grounded left/right robot names and validate both roles.
         left_robot, right_robot = self.resolve_left_right_robots(step)
@@ -260,6 +273,17 @@ class Move(base_job.BaseJob):
             raise RuntimeError(
                 "real_drb_dual_grasp_job: missing action client for one or more robots"
             )
+
+        # Read whether pose replay joint-state logging should be part of the BT path.
+        enable_pose_replay_joint_logging = False
+        if self._node.has_parameter("enable_pose_replay_joint_logging"):
+            enable_pose_replay_joint_logging = self._node.get_parameter(
+                "enable_pose_replay_joint_logging"
+            ).value
+            if not isinstance(enable_pose_replay_joint_logging, bool):
+                raise RuntimeError(
+                    "real_drb_dual_grasp_job: enable_pose_replay_joint_logging must be a bool"
+                )
 
         # Reuse one shared joint-state logger configuration for pose replay logging.
         joint_logger_kwargs = {
@@ -430,6 +454,7 @@ class Move(base_job.BaseJob):
             timeout=MOVE_TIME,
             robot_name=approach_robot,
             joint_logger_kwargs=joint_logger_kwargs,
+            enable_joint_logging=enable_pose_replay_joint_logging,
         )
         move_approach_right_open = Gripper.GOTO(
             name="ApproachRobotGripperOpen",
@@ -453,10 +478,12 @@ class Move(base_job.BaseJob):
             timeout=MOVE_TIME*0.5,
             robot_name=approach_robot,
             joint_logger_kwargs=joint_logger_kwargs,
+            enable_joint_logging=enable_pose_replay_joint_logging,
         )
         move_approach_wait = Wait.WAIT(
             name="WaitBeforeClose",
-            duration=3.0,
+            # duration=3.0,
+            duration=0.1,
             robot_name=approach_robot,
         )
         move_approach_wait_until_trigger = Wait.WAIT_UNTIL_TRIGGER(
@@ -489,15 +516,20 @@ class Move(base_job.BaseJob):
             timeout=2*MOVE_TIME,
         )
 
-        # Stop this real-hardware port after the initial approach sequence for now.
-        root = py_trees.composites.Sequence(name="RealDrbDualGrasp", memory=True)
-        root.add_children(
+        # Keep the deterministic regrasp/above-mold preparation as one branch;
+        # policy mode will overlap it with the place-camera prewarm request.
+        pre_policy_motion = py_trees.composites.Sequence(
+            name="PlacementPreparationMotion",
+            memory=True,
+        )
+        pre_policy_motion.add_children(
             [
                 pose_estimator,
                 move_approach_seq,
-                above_mold_start_parallel
+                above_mold_start_parallel,
             ]
         )
+        root = py_trees.composites.Sequence(name="RealDrbDualGrasp", memory=True)
 
         # if does_policy_grasp:
         #     ### For test!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -642,67 +674,37 @@ class Move(base_job.BaseJob):
                 robot_name=left_robot,
             )
 
-            # Read the relative output log directory for external policy subprocesses.
-            subprocess_output_log_dir = None
-            if self._node.has_parameter("subprocess_output_log_dir"):
-                subprocess_output_log_dir = str(
-                    self._node.get_parameter("subprocess_output_log_dir").value
-                ).strip()
-                if subprocess_output_log_dir == "":
-                    subprocess_output_log_dir = None
-
-            # Build the Orbbec shared-memory receiver command for the reward camera stream.
-            orbbec_zmq_to_shm_receiver_command = [
-                "bash",
-                "-lc",
-                (
-                    "source /home/manip/anaconda3/etc/profile.d/conda.sh && "
-                    "conda activate real-panda-orbbec-sam2-reward && "
-                    "cd /home/manip/drb_ws/IsaacSim-Hil-Serl/examples/"
-                    "reward_real_placement_fr3 && "
-                    "python tools/orbbec_zmq_to_shm_receiver.py "
-                    "--connect tcp://192.168.0.16:6001 "
-                    "--rgb_shm_name drb_orbbec "
-                    "--heatmap_shm_name drb_orbbec_depth_heatmap "
-                    "--show_monitor"
-                ),
-            ]
-
-            # Build the chained placement-and-fit inference command.
-            chained_policy_inference_command = [
-                "bash",
-                "-lc",
-                (
-                    "cd /home/manip/drb_ws/IsaacSim-Hil-Serl && "
-                    "source .venv/bin/activate && "
-                    "python examples/chained_policy_inference.py "
-                    "--stage1_exp_name real_placement_panda_simple_force_base_orbbec "
-                    "--stage1_profile real "
-                    "--stage1_scenario_name placement "
-                    "--stage1_scenario_run_number 6 "
-                    "--stage1_checkpoint_step 11000 "
-                    "--stage2_exp_name real_fit_fr3_base_no_heatmap "
-                    "--stage2_profile real "
-                    "--stage2_scenario_name fit_fr3_base_no_heatmap "
-                    "--stage2_scenario_run_number 2 "
-                    "--stage2_checkpoint_step 19000 "
-                    "--num_full_inference 1 "
-                    "--with_intervention "
-                    "--stage1_move_fr3_home_before_gripper_reset "
-                    "--stage1_close_fr3_gripper_after_reset "
-                    "--stage2_close_fr3_gripper_before_offset_move "
-                    "--stage2_post_reset_policy_delay_seconds 0 "
-                    "--stage2_fr3_gripper_close_to_policy_delay_seconds 0 "
-                    "--no-stage2_move_to_stage1_home_on_finish "
-                    "--show_camera_preview "
-                    "--print_every 1 "
-                    "--stage2_pre_open_y_offset_m 0 "
-                    "--stage2_pre_open_z_offset_m 0 "
-                    "--no-policy_argmax "
-                    "--abort_on_stage1_failure "
-                    "--stage2_force_fr3_gripper_close"
-                ),
-            ]
+            # Resolve the long-lived policy server endpoint used by BT policy triggers.
+            policy_server_url = "http://127.0.0.1:5080"
+            if self._node.has_parameter("policy_server_url"):
+                policy_server_url = str(
+                    self._node.get_parameter("policy_server_url").value
+                ).strip() or policy_server_url
+            place_fit_policy_timeout = 100.0
+            if self._node.has_parameter("policy_server_place_fit_timeout_sec"):
+                place_fit_policy_timeout = float(
+                    self._node.get_parameter("policy_server_place_fit_timeout_sec").value
+                )
+            camera_prepare_timeout = 140.0
+            if self._node.has_parameter("policy_server_camera_prepare_timeout_sec"):
+                camera_prepare_timeout = float(
+                    self._node.get_parameter("policy_server_camera_prepare_timeout_sec").value
+                )
+            placement_camera_prepare = PolicyServer.PREPARE_POLICY(
+                name="PreparePlacementPolicyCamera",
+                policy="place_fit",
+                server_url=policy_server_url,
+                timeout=camera_prepare_timeout,
+            )
+            placement_preparation_with_camera = MoveParallel.MoveParallel(
+                name="PlacementPreparationWithCameraPrewarm"
+            )
+            placement_preparation_with_camera.add_children(
+                [
+                    pre_policy_motion,
+                    placement_camera_prepare,
+                ]
+            )
 
             # Switch both real arms into cartesian impedance before external policy execution.
             policy_switch_cartesian = RealControllerCommand.REAL_CONTROLLER_COMMAND(
@@ -727,45 +729,12 @@ class Move(base_job.BaseJob):
                 )
             )
 
-            # Run the Orbbec receiver until its ready logs appear.
-            orbbec_zmq_to_shm_receiver = Subprocess.SUBPROCESS(
-                name="OrbbecZmqToShmReceiver",
-                command=orbbec_zmq_to_shm_receiver_command,
-                success_text_list=[
-                    "[orbbec_zmq_to_shm_receiver] connect*ext_cam_robot*ext_cam_robot_z_heatmap",
-                    "[orbbec_zmq_to_shm_receiver] opened",
-                ],
-                timeout=60.0,
-                output_log_dir=subprocess_output_log_dir,
-            )
-
-            # Run the chained placement-and-fit policy until both stages report success.
-            chained_policy_inference = Subprocess.SUBPROCESS(
-                name="ChainedPlacementFitPolicyInference",
-                command=chained_policy_inference_command,
-                success_text_list=[
-                    "[chained] stage1 success",
-                    "[chained] stage2 success at",
-                ],
-                failure_text_list=[
-                    {
-                        "or": [
-                            "[chained] stage1 ended at*success=False",
-                            "[chained] stage2 ended at*success=False",
-                        ],
-                    },
-                ],
-                timeout=100.0,
-                output_log_dir=subprocess_output_log_dir,
-            )
-
-            # Keep the receiver alive while chained placement-and-fit inference runs.
-            placement_fit_subprocess_group = Subprocess.PROCESS_GROUP_SEQ(
-                name="PlacementFitSubprocessGroupSeq",
-                children=[
-                    orbbec_zmq_to_shm_receiver,
-                    chained_policy_inference,
-                ],
+            # Trigger the preloaded placement+fit chain through the HIL-SERL server.
+            placement_fit_policy_request = PolicyServer.RUN_POLICY(
+                name="RunPlacementFitPolicyServer",
+                policy="place_fit",
+                server_url=policy_server_url,
+                timeout=place_fit_policy_timeout,
             )
 
             # Close the cartesian command HTTP gate after the chained policy finishes.
@@ -790,6 +759,26 @@ class Move(base_job.BaseJob):
                 timeout=10.0,
             )
 
+            # Keep the command gate protected while the external policy executes.
+            placement_fit_policy_body = py_trees.composites.Sequence(
+                name="PlacementFitPolicyControlBody",
+                memory=True,
+            )
+            placement_fit_policy_body.add_children(
+                [
+                    placement_cartesian_command_gate_enable,
+                    placement_fit_policy_request,
+                ]
+            )
+            placement_fit_policy_with_cleanup = PolicyServer.RUN_WITH_CLEANUP(
+                name="PlacementFitPolicyWithCleanup",
+                body=placement_fit_policy_body,
+                cleanup_children=[
+                    placement_cartesian_command_gate_pause,
+                    policy_switch_jtc,
+                ],
+            )
+
             # Return both arms to base_start with JTC after the external policy finishes.
             policy_base_start_parallel = MoveParallel.MoveParallel(
                 name="PolicyBaseStartParallel"
@@ -801,14 +790,14 @@ class Move(base_job.BaseJob):
                         action_client=action_clients[left_robot],
                         action_goal=base_start_left_joint_goal,
                         robot_name=left_robot,
-                        timeout=MOVE_TIME,
+                        timeout=RETURN_HOME_MOVE_TIME,
                     ),
                     MoveJoint.MOVEJ(
                         name=f"{right_robot}_PolicyBaseStart",
                         action_client=action_clients[right_robot],
                         action_goal=base_start_right_joint_goal,
                         robot_name=right_robot,
-                        timeout=MOVE_TIME,
+                        timeout=RETURN_HOME_MOVE_TIME,
                     ),
                 ]
             )
@@ -817,13 +806,14 @@ class Move(base_job.BaseJob):
             root.add_children(
                 [
                     # wait_until_trigger_temp,
+                    placement_preparation_with_camera,
                     policy_switch_cartesian,
-                    placement_cartesian_command_gate_enable,
-                    placement_fit_subprocess_group,
-                    placement_cartesian_command_gate_pause,
-                    policy_switch_jtc,
+                    placement_fit_policy_with_cleanup,
                     policy_base_start_parallel,
                 ]
             )
+
+        if not does_policy_grasp:
+            root.add_child(pre_policy_motion)
 
         return root

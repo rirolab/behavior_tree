@@ -4,6 +4,8 @@ import time
 import py_trees
 from riro_srvs.srv import StringString
 
+from behavior_tree.transition_trace import elapsed_seconds, trace_event
+
 
 class REAL_CONTROLLER_COMMAND(py_trees.behaviour.Behaviour):
     """
@@ -37,6 +39,8 @@ class REAL_CONTROLLER_COMMAND(py_trees.behaviour.Behaviour):
         self.sent_goal = False
         self.deadline = None
         self.future = None
+        self.request_started_perf = None
+        self.timeout_traced = False
         # Track the latest bridge response for BT feedback.
         self.result_status = None
         self.result_message = ""
@@ -69,6 +73,8 @@ class REAL_CONTROLLER_COMMAND(py_trees.behaviour.Behaviour):
         self.sent_goal = False
         self.deadline = time.monotonic() + self.timeout
         self.future = None
+        self.request_started_perf = None
+        self.timeout_traced = False
         # Reset the cached bridge response before sending a new request.
         self.result_status = None
         self.result_message = ""
@@ -101,6 +107,15 @@ class REAL_CONTROLLER_COMMAND(py_trees.behaviour.Behaviour):
             command = dict(self.resolve_command())
             req = StringString.Request()
             req.data = json.dumps(command)
+            self.request_started_perf = time.perf_counter()
+            trace_event(
+                "bt",
+                "controller_switch.send",
+                name=self.name,
+                service=self.controller_manager_bridge_service_name,
+                command=command,
+                timeout_sec=self.timeout,
+            )
             self.future = self.client.call_async(req)
             self.sent_goal = True
             self.feedback_message = (
@@ -113,11 +128,26 @@ class REAL_CONTROLLER_COMMAND(py_trees.behaviour.Behaviour):
             # Convert transport- or bridge-level failures into BT failure feedback.
             exception = self.future.exception()
             if exception is not None:
+                trace_event(
+                    "bt",
+                    "controller_switch.exception",
+                    name=self.name,
+                    service=self.controller_manager_bridge_service_name,
+                    elapsed_sec=elapsed_seconds(self.request_started_perf),
+                    error=exception,
+                )
                 self.feedback_message = f"real controller command failed: {exception}"
                 return py_trees.common.Status.FAILURE
 
             response = self.future.result()
             if response is None:
+                trace_event(
+                    "bt",
+                    "controller_switch.no_response",
+                    name=self.name,
+                    service=self.controller_manager_bridge_service_name,
+                    elapsed_sec=elapsed_seconds(self.request_started_perf),
+                )
                 self.feedback_message = "real controller command returned no response"
                 return py_trees.common.Status.FAILURE
 
@@ -125,10 +155,26 @@ class REAL_CONTROLLER_COMMAND(py_trees.behaviour.Behaviour):
             try:
                 payload = json.loads(response.data or "{}")
             except json.JSONDecodeError:
+                trace_event(
+                    "bt",
+                    "controller_switch.invalid_json",
+                    name=self.name,
+                    service=self.controller_manager_bridge_service_name,
+                    elapsed_sec=elapsed_seconds(self.request_started_perf),
+                    response=response.data,
+                )
                 self.feedback_message = "real controller bridge returned invalid JSON"
                 return py_trees.common.Status.FAILURE
 
             if not isinstance(payload, dict):
+                trace_event(
+                    "bt",
+                    "controller_switch.invalid_payload",
+                    name=self.name,
+                    service=self.controller_manager_bridge_service_name,
+                    elapsed_sec=elapsed_seconds(self.request_started_perf),
+                    response=payload,
+                )
                 self.feedback_message = (
                     "real controller bridge returned an invalid payload"
                 )
@@ -137,6 +183,16 @@ class REAL_CONTROLLER_COMMAND(py_trees.behaviour.Behaviour):
             self.result_status = "succeeded" if bool(payload.get("success")) else "aborted"
             self.result_message = str(payload.get("message", "") or "")
             self.result_payload = dict(payload.get("payload") or {})
+            trace_event(
+                "bt",
+                "controller_switch.response",
+                name=self.name,
+                service=self.controller_manager_bridge_service_name,
+                elapsed_sec=elapsed_seconds(self.request_started_perf),
+                success=bool(payload.get("success")),
+                message=self.result_message,
+                payload=self.result_payload,
+            )
 
             if self.result_status == "succeeded":
                 requested_profile = str(
@@ -163,6 +219,16 @@ class REAL_CONTROLLER_COMMAND(py_trees.behaviour.Behaviour):
 
         if time.monotonic() < self.deadline:
             return py_trees.common.Status.RUNNING
+        if not self.timeout_traced:
+            trace_event(
+                "bt",
+                "controller_switch.timeout",
+                name=self.name,
+                service=self.controller_manager_bridge_service_name,
+                elapsed_sec=elapsed_seconds(self.request_started_perf),
+                timeout_sec=self.timeout,
+            )
+            self.timeout_traced = True
         self.feedback_message = "real controller command timed out"
         return py_trees.common.Status.FAILURE
 
@@ -214,6 +280,8 @@ class CARTESIAN_COMMAND_HTTP_GATE(py_trees.behaviour.Behaviour):
         self.sent_goal = False
         self.deadline = None
         self.future = None
+        self.request_started_perf = None
+        self.timeout_traced = False
 
         # Track the latest gate response for BT feedback.
         self.result_status = None
@@ -251,6 +319,8 @@ class CARTESIAN_COMMAND_HTTP_GATE(py_trees.behaviour.Behaviour):
         self.sent_goal = False
         self.deadline = time.monotonic() + self.timeout
         self.future = None
+        self.request_started_perf = None
+        self.timeout_traced = False
 
         # Reset the cached gate response before sending a new command.
         self.result_status = None
@@ -326,6 +396,15 @@ class CARTESIAN_COMMAND_HTTP_GATE(py_trees.behaviour.Behaviour):
             # Forward the validated cartesian command gate payload as JSON.
             req = StringString.Request()
             req.data = json.dumps(command)
+            self.request_started_perf = time.perf_counter()
+            trace_event(
+                "bt",
+                "cartesian_gate.send",
+                name=self.name,
+                service=self.cartesian_command_http_gate_service_name,
+                command=command,
+                timeout_sec=self.timeout,
+            )
             self.future = self.client.call_async(req)
             self.sent_goal = True
             self.feedback_message = (
@@ -338,6 +417,14 @@ class CARTESIAN_COMMAND_HTTP_GATE(py_trees.behaviour.Behaviour):
         if self.future is not None and self.future.done():
             exception = self.future.exception()
             if exception is not None:
+                trace_event(
+                    "bt",
+                    "cartesian_gate.exception",
+                    name=self.name,
+                    service=self.cartesian_command_http_gate_service_name,
+                    elapsed_sec=elapsed_seconds(self.request_started_perf),
+                    error=exception,
+                )
                 self.feedback_message = (
                     f"cartesian command HTTP gate failed: {exception}"
                 )
@@ -345,6 +432,13 @@ class CARTESIAN_COMMAND_HTTP_GATE(py_trees.behaviour.Behaviour):
 
             response = self.future.result()
             if response is None:
+                trace_event(
+                    "bt",
+                    "cartesian_gate.no_response",
+                    name=self.name,
+                    service=self.cartesian_command_http_gate_service_name,
+                    elapsed_sec=elapsed_seconds(self.request_started_perf),
+                )
                 self.feedback_message = (
                     "cartesian command HTTP gate returned no response"
                 )
@@ -354,12 +448,28 @@ class CARTESIAN_COMMAND_HTTP_GATE(py_trees.behaviour.Behaviour):
             try:
                 payload = json.loads(response.data or "{}")
             except json.JSONDecodeError:
+                trace_event(
+                    "bt",
+                    "cartesian_gate.invalid_json",
+                    name=self.name,
+                    service=self.cartesian_command_http_gate_service_name,
+                    elapsed_sec=elapsed_seconds(self.request_started_perf),
+                    response=response.data,
+                )
                 self.feedback_message = (
                     "cartesian command HTTP gate returned invalid JSON"
                 )
                 return py_trees.common.Status.FAILURE
 
             if not isinstance(payload, dict):
+                trace_event(
+                    "bt",
+                    "cartesian_gate.invalid_payload",
+                    name=self.name,
+                    service=self.cartesian_command_http_gate_service_name,
+                    elapsed_sec=elapsed_seconds(self.request_started_perf),
+                    response=payload,
+                )
                 self.feedback_message = (
                     "cartesian command HTTP gate returned an invalid payload"
                 )
@@ -369,6 +479,16 @@ class CARTESIAN_COMMAND_HTTP_GATE(py_trees.behaviour.Behaviour):
             self.result_status = "succeeded" if bool(payload.get("success")) else "aborted"
             self.result_message = str(payload.get("message", "") or "")
             self.result_payload = dict(payload.get("payload") or {})
+            trace_event(
+                "bt",
+                "cartesian_gate.response",
+                name=self.name,
+                service=self.cartesian_command_http_gate_service_name,
+                elapsed_sec=elapsed_seconds(self.request_started_perf),
+                success=bool(payload.get("success")),
+                message=self.result_message,
+                payload=self.result_payload,
+            )
 
             if self.result_status == "succeeded":
                 if self.result_message:
@@ -390,5 +510,15 @@ class CARTESIAN_COMMAND_HTTP_GATE(py_trees.behaviour.Behaviour):
         # Keep running while the service call is still in flight.
         if time.monotonic() < self.deadline:
             return py_trees.common.Status.RUNNING
+        if not self.timeout_traced:
+            trace_event(
+                "bt",
+                "cartesian_gate.timeout",
+                name=self.name,
+                service=self.cartesian_command_http_gate_service_name,
+                elapsed_sec=elapsed_seconds(self.request_started_perf),
+                timeout_sec=self.timeout,
+            )
+            self.timeout_traced = True
         self.feedback_message = "cartesian command HTTP gate timed out"
         return py_trees.common.Status.FAILURE

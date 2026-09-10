@@ -110,6 +110,9 @@ class MultiSplinteredReality(SplinteredReality):
             "policy_preload_enabled": True,
             "policy_unload_enabled": True,
             "policy_preload_timeout_sec": 60.0,
+            "enable_bt_debug_file_logging": True,
+            "bt_py_trees_logging_level": "DEBUG",
+            "bt_unicode_tree_debug": True,
             "additional_parameter_roots": ["pose_presets"],
             "drb_mode": "policy" # "teleport_ring", or "policy"
         }
@@ -136,9 +139,15 @@ class MultiSplinteredReality(SplinteredReality):
         self.blackboard.preloaded_policies = []
         self.blackboard.bt_start_time = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
 
+        # Read whether py_trees_ros should render unicode tree debug output.
+        unicode_tree_debug = self.get_parameter("bt_unicode_tree_debug").value
+        if not isinstance(unicode_tree_debug, bool):
+            raise RuntimeError("bt_unicode_tree_debug must be a bool")
+
+        # Build the py_trees_ros tree using the configured debug rendering mode.
         self.tree = py_trees_ros.trees.BehaviourTree(
             root=create_root(self.robot_names),
-            unicode_tree_debug=True,
+            unicode_tree_debug=unicode_tree_debug,
         )
         self.tree.add_pre_tick_handler(self.pre_tick_handler)
         self.tree.add_post_tick_handler(self.post_tick_handler)
@@ -607,8 +616,8 @@ def main(args=None):
         topic_list = None
     else:
         topic_list = load_topic_list(args.topic_json)
+    # Start with the historical default until node parameters are available.
     py_trees.logging.level = py_trees.logging.Level.DEBUG
-
     splintered_reality = MultiSplinteredReality(
         jobs=[
             # "jobs.pick_job.Move",
@@ -630,6 +639,17 @@ def main(args=None):
         ],
         rec_topic_list=topic_list,
     )
+
+    # Apply the configured py_trees console logging level after parameter loading.
+    py_trees_logging_level = str(
+        splintered_reality.get_parameter("bt_py_trees_logging_level").value
+    ).strip().upper()
+    if not hasattr(py_trees.logging.Level, py_trees_logging_level):
+        raise RuntimeError(
+            "bt_py_trees_logging_level must be one of DEBUG, INFO, WARN, ERROR"
+        )
+    py_trees.logging.level = getattr(py_trees.logging.Level, py_trees_logging_level)
+
     rclpy.get_default_context().on_shutdown(splintered_reality.shutdown)
     if not splintered_reality.setup():
         console.logerror("failed to setup the tree, aborting.")

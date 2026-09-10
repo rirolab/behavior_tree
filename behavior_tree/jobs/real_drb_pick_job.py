@@ -12,9 +12,9 @@ from behavior_tree.subtrees import (
     MoveParallel,
     MovePose,
     Policy,
+    PolicyServer,
     RealControllerCommand,
     RingWorldModel,
-    Subprocess,
     Trigger,
     Wait,
 )
@@ -128,14 +128,18 @@ class Move(base_job.BaseJob):
         robot_name,
         timeout,
         joint_logger_kwargs,
+        enable_joint_logging=True,
     ):
         """
-        Chain one Cartesian move and one joint-state logger in one sequence.
+        Chain one Cartesian move and optionally one joint-state logger in one sequence.
         """
+        # Keep the wrapper node stable even when logging is disabled.
         move_pose_with_logger = py_trees.composites.Sequence(
             name=f"{name}WithLogger",
             memory=True,
         )
+
+        # Build the Cartesian replay motion that is required for task execution.
         move_pose = MovePose.MOVEP(
             name=name,
             action_client=action_client,
@@ -143,6 +147,11 @@ class Move(base_job.BaseJob):
             robot_name=robot_name,
             timeout=timeout,
         )
+        if not enable_joint_logging:
+            move_pose_with_logger.add_child(move_pose)
+            return move_pose_with_logger
+
+        # Attach the optional joint-state dump after the motion succeeds.
         joint_logger = JointStateLogger.JOINT_STATE_LOGGING(
             name=f"{name}JointLogger",
             **joint_logger_kwargs,
@@ -221,8 +230,10 @@ class Move(base_job.BaseJob):
         plan_name = "Plan" + idx
         step = goal[idx]
         action_clients = action_client
-        MOVE_TIME = 5.0
-        GRIPPER_MOVE_TIME = 1.0
+        # MOVE_TIME = 5.0
+        MOVE_TIME = 2.0
+        GRIPPER_MOVE_TIME = 0.5
+        # GRIPPER_MOVE_TIME = 1.0
 
         # Resolve the grounded left/right robot names and verify both clients exist.
         left_robot, right_robot = self.resolve_left_right_robots(step)
@@ -234,6 +245,17 @@ class Move(base_job.BaseJob):
             raise RuntimeError(
                 "real_drb_pick_job: missing action client for one or more robots"
             )
+
+        # Read whether pose replay joint-state logging should be part of the BT path.
+        enable_pose_replay_joint_logging = False
+        if self._node.has_parameter("enable_pose_replay_joint_logging"):
+            enable_pose_replay_joint_logging = self._node.get_parameter(
+                "enable_pose_replay_joint_logging"
+            ).value
+            if not isinstance(enable_pose_replay_joint_logging, bool):
+                raise RuntimeError(
+                    "real_drb_pick_job: enable_pose_replay_joint_logging must be a bool"
+                )
 
         # Reuse one shared joint-state logger configuration for pose replay logging.
         joint_logger_kwargs = {
@@ -343,48 +365,28 @@ class Move(base_job.BaseJob):
 
         # External pick actor replaces the arm-client policy payload in policy mode.
         if does_policy_grasp:
-            # left_robot_policy_goal = self.make_policy_goal(
-            #     step,
-            #     left_robot,
-            #     idx,
-            #     default_timeout=MOVE_TIME,
-            # )
-            # if left_robot_policy_goal is None:
-            #     raise RuntimeError(
-            #         f"real_drb_pick_job: missing valid policy goal for robot [{left_robot}]"
-            #     )
-            subprocess_output_log_dir = None
-            if self._node.has_parameter("subprocess_output_log_dir"):
-                subprocess_output_log_dir = str(
-                    self._node.get_parameter("subprocess_output_log_dir").value
-                ).strip()
-                if subprocess_output_log_dir == "":
-                    subprocess_output_log_dir = None
-            azure_kinect_shm_publisher_command = [
-                "bash",
-                "-lc",
-                (
-                    "source /home/manip/anaconda3/etc/profile.d/conda.sh && "
-                    "conda activate real-panda-orbbec-sam2-reward && "
-                    "cd /home/manip/drb_ws/IsaacSim-Hil-Serl/examples/experiments/"
-                    "azure_kinect_dk_no_ros_python && "
-                    "python azure_kinect_shm_publisher.py --config "
-                    "config/pointcloud_server.yaml"
-                ),
-            ]
-            real_pick_panda_actor_command = [
-                "bash",
-                "-lc",
-                (
-                    "cd /home/manip/drb_ws/IsaacSim-Hil-Serl && "
-                    "source .venv/bin/activate && "
-                    "bash run/actor.sh --exp_name real_pick_panda --profile real "
-                    "--scenario_name pick_panda --scenario_run_number=2 "
-                    "--eval_checkpoint_step=58000 --eval_n_trajs=1 "
-                    "--show_camera_preview --show_reward_camera_preview "
-                    "--eval_print_every 1"
-                ),
-            ]
+            # Resolve the long-lived policy server endpoint used by BT policy triggers.
+            policy_server_url = "http://127.0.0.1:5080"
+            if self._node.has_parameter("policy_server_url"):
+                policy_server_url = str(
+                    self._node.get_parameter("policy_server_url").value
+                ).strip() or policy_server_url
+            pick_policy_timeout = 60.0
+            if self._node.has_parameter("policy_server_pick_timeout_sec"):
+                pick_policy_timeout = float(
+                    self._node.get_parameter("policy_server_pick_timeout_sec").value
+                )
+            camera_prepare_timeout = 140.0
+            if self._node.has_parameter("policy_server_camera_prepare_timeout_sec"):
+                camera_prepare_timeout = float(
+                    self._node.get_parameter("policy_server_camera_prepare_timeout_sec").value
+                )
+            pick_camera_prepare = PolicyServer.PREPARE_POLICY(
+                name="PreparePickPolicyCamera",
+                policy="pick",
+                server_url=policy_server_url,
+                timeout=camera_prepare_timeout,
+            )
 
         # Move both robots to the initial joint preset in parallel.
         base_start_parallel = MoveParallel.MoveParallel(name="BaseStartParallel")
@@ -419,15 +421,10 @@ class Move(base_job.BaseJob):
 
         # Assemble the full pick sequence in execution order.
         root = py_trees.composites.Sequence(name="RealDrbPick", memory=True)
-        root.add_children(
-            [
-                base_start_parallel,
-                pose_estimator,
-            ]
-        )
 
         if does_policy_grasp:
-            # Replay the second stage while opening the left gripper in parallel.
+            # Replay the measured left-arm joint start while moving the right
+            # arm to its existing Cartesian regrasp target.
             stack_side_start_parallel = MoveParallel.MoveParallel(
                 name="StackSideStartParallel"
             )
@@ -438,7 +435,7 @@ class Move(base_job.BaseJob):
                         action_client=action_clients[left_robot],
                         action_goal=stack_side_start_left_joint_goal,
                         robot_name=left_robot,
-                        timeout=MOVE_TIME,
+                        timeout=3.0,
                     ),
                     self.make_move_pose_with_logger(
                         name=f"{right_robot}_StackSideStart",
@@ -447,6 +444,7 @@ class Move(base_job.BaseJob):
                         robot_name=right_robot,
                         timeout=MOVE_TIME,
                         joint_logger_kwargs=joint_logger_kwargs,
+                        enable_joint_logging=enable_pose_replay_joint_logging,
                     ),
                     Gripper.GOTO(
                         name="LeftPolicyGripperOpen",
@@ -456,6 +454,31 @@ class Move(base_job.BaseJob):
                         timeout=GRIPPER_MOVE_TIME,
                         robot_name=left_robot,
                     )
+                ]
+            )
+
+            # Prewarm RGB/LAS and run an early SAM2 tracking pass while the
+            # complete move to the pick preparation pose is in flight. The
+            # policy server reseeds SAM2 again after this parallel joins so
+            # policy step 1 uses tracking anchored at the final start pose.
+            pick_preparation_motion = py_trees.composites.Sequence(
+                name="PickPreparationMotion",
+                memory=True,
+            )
+            pick_preparation_motion.add_children(
+                [
+                    base_start_parallel,
+                    pose_estimator,
+                    stack_side_start_parallel,
+                ]
+            )
+            pick_preparation_with_camera = MoveParallel.MoveParallel(
+                name="PickPreparationWithCameraPrewarm"
+            )
+            pick_preparation_with_camera.add_children(
+                [
+                    pick_preparation_motion,
+                    pick_camera_prepare,
                 ]
             )
 
@@ -487,41 +510,12 @@ class Move(base_job.BaseJob):
                 )
             )
 
-            # Run the Azure Kinect shared-memory publisher until its ready logs appear.
-            azure_kinect_shm_publisher = Subprocess.SUBPROCESS(
-                name="AzureKinectShmPublisher",
-                command=azure_kinect_shm_publisher_command,
-                success_text_list=[
-                    "Opened Azure Kinect shared-memory publisher",
-                    "Publishing Azure RGB",
-                    "Publishing Azure heatmap",
-                    "Using native Azure Kinect library",
-                ],
-                timeout=60.0,
-                output_log_dir=subprocess_output_log_dir,
-            )
-
-            # Run the external real-pick actor until its final evaluation logs appear.
-            real_pick_panda_actor = Subprocess.SUBPROCESS(
-                name="RealPickPandaActor",
-                command=real_pick_panda_actor_command,
-                success_text_list=[
-                    "Evaluation Trajectory*episode_return*success*failure*done",
-                    "Final Success Rate",
-                    "Final Failure Rate",
-                    "Mean Episode Return",
-                ],
-                timeout=60.0,
-                output_log_dir=subprocess_output_log_dir,
-            )
-
-            # Keep the publisher alive while the external real-pick actor executes.
-            pick_subprocess_group = Subprocess.PROCESS_GROUP_SEQ(
-                name="PickSubprocessGroupSeq",
-                children=[
-                    azure_kinect_shm_publisher,
-                    real_pick_panda_actor,
-                ],
+            # Trigger the preloaded pick policy through the long-lived HIL-SERL server.
+            pick_policy_request = PolicyServer.RUN_POLICY(
+                name="RunPickPolicyServer",
+                policy="pick",
+                server_url=policy_server_url,
+                timeout=pick_policy_timeout,
             )
 
             # Close the cartesian command HTTP gate after the external actor finishes.
@@ -533,19 +527,6 @@ class Move(base_job.BaseJob):
                     },
                     timeout=10.0,
                 )
-            )
-
-            # Chain gate control and the external real-pick process group.
-            left_external_pick_policy_seq = py_trees.composites.Sequence(
-                name="LeftExternalPickPolicySeq",
-                memory=True,
-            )
-            left_external_pick_policy_seq.add_children(
-                [
-                    pick_cartesian_command_gate_enable,
-                    pick_subprocess_group,
-                    pick_cartesian_command_gate_pause,
-                ]
             )
 
             # Execute the left-arm policy through complex_action_client.
@@ -577,6 +558,26 @@ class Move(base_job.BaseJob):
                 timeout=10.0,
             )
 
+            # Always pause the command gate and restore JTC, including camera/policy failures.
+            pick_policy_body = py_trees.composites.Sequence(
+                name="PickPolicyControlBody",
+                memory=True,
+            )
+            pick_policy_body.add_children(
+                [
+                    pick_cartesian_command_gate_enable,
+                    pick_policy_request,
+                ]
+            )
+            left_external_pick_policy_seq = PolicyServer.RUN_WITH_CLEANUP(
+                name="LeftExternalPickPolicyWithCleanup",
+                body=pick_policy_body,
+                cleanup_children=[
+                    pick_cartesian_command_gate_pause,
+                    left_policy_switch_jtc,
+                ],
+            )
+
             # Close the left gripper after the policy handoff returns to JTC.
             left_policy_gripper_close = Gripper.GOTO(
                 name="LeftPolicyGripperClose",
@@ -589,17 +590,17 @@ class Move(base_job.BaseJob):
 
             root.add_children(
                 [
-                    stack_side_start_parallel,
+                    pick_preparation_with_camera,
                     left_policy_switch_cartesian,
                     # wait_until_trigger_temp,
                     left_external_pick_policy_seq,
-                    left_policy_switch_jtc,
                     left_policy_gripper_close,
                 ]
             )
 
         if does_manual_grasp:
-            # Replay the second stage with a left joint move and a right pose move plus logging.
+            # Replay the measured left-arm joint start and the existing right-arm
+            # Cartesian regrasp target before manual grasping.
             stack_side_start_parallel = MoveParallel.MoveParallel(
                 name="StackSideStartParallel"
             )
@@ -619,6 +620,7 @@ class Move(base_job.BaseJob):
                         robot_name=right_robot,
                         timeout=MOVE_TIME,
                         joint_logger_kwargs=joint_logger_kwargs,
+                        enable_joint_logging=enable_pose_replay_joint_logging,
                     ),
                 ]
             )
@@ -660,6 +662,8 @@ class Move(base_job.BaseJob):
 
             root.add_children(
                 [
+                    base_start_parallel,
+                    pose_estimator,
                     stack_side_start_parallel,
                     left_manual_grasp_move,
                     left_manual_grasp_open,
@@ -667,5 +671,8 @@ class Move(base_job.BaseJob):
                     left_manual_grasp_close,
                 ]
             )
+
+        if not does_policy_grasp and not does_manual_grasp:
+            root.add_children([base_start_parallel, pose_estimator])
 
         return root
