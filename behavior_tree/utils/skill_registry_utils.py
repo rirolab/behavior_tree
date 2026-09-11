@@ -13,9 +13,16 @@ numbers into a tree parameter would give the two sides somewhere to disagree,
 and the failure mode of disagreeing -- the policy starting a few centimetres off
 its trained pose -- is silent: the task just fails more often.
 
-The registry lives in complex_action_client's share directory, so this is a
-soft dependency: if cac is not installed, or the skill has no ``init_config``,
-these return None and the caller keeps its previous behaviour.
+The registry is owned by ``policy_manager``, the node that dispatches these
+skills, so this is a soft dependency: if that package is not installed, or the
+skill has no ``init_config``, these return None and the caller keeps its
+previous behaviour.
+
+It used to read the file out of ``complex_action_client``'s share directory,
+where the registry lived before the merge. That path stopped existing and the
+loader's own ``except`` swallowed the failure by design, so every lookup
+returned None, in silence, on every run -- the mechanism was merged and inert.
+That is why the empty case now says so once.
 """
 
 import os
@@ -24,28 +31,80 @@ import yaml
 
 _CACHE = {}
 
+# Where the registry lives, unless `set_registry_path` says otherwise. A tuple,
+# because "the package that owns it" is the answer and the path inside it is
+# an implementation detail of that package.
+_REGISTRY_PACKAGE = "policy_manager"
+_REGISTRY_RELATIVE_PATH = ("config", "skill_registry.yaml")
+
+
+def set_registry_path(path):
+    """Point the loader at a specific file, or back at the default with None.
+
+    For a tree that is given `skill_registry_path` as a parameter: the tree and
+    policy_manager have to read the SAME file, and the way to guarantee that is
+    to pass policy_manager's parameter through rather than to have each side
+    find its own.
+    """
+    _CACHE.clear()
+    _CACHE["path"] = path
+
+
+def registry_path():
+    """The file this loader reads, or None when it cannot be located."""
+    if _CACHE.get("path"):
+        return _CACHE["path"]
+    try:
+        from ament_index_python.packages import get_package_share_directory
+
+        return os.path.join(get_package_share_directory(_REGISTRY_PACKAGE),
+                            *_REGISTRY_RELATIVE_PATH)
+    except Exception:
+        return None
+
 
 def _registry():
     """The parsed registry, or {} if it cannot be read. Loaded once."""
     if "skills" in _CACHE:
         return _CACHE["skills"]
     skills = {}
-    try:
-        from ament_index_python.packages import get_package_share_directory
-
-        path = os.path.join(
-            get_package_share_directory("complex_action_client"),
-            "config",
-            "skill_registry.yaml",
-        )
-        with open(path, "r", encoding="utf-8") as handle:
-            skills = (yaml.safe_load(handle) or {}).get("skills") or {}
-    except Exception:
-        # Absent or unreadable is not an error here: the caller falls back to
-        # the arm's own init_config, which is what it used before this existed.
-        skills = {}
+    why = None
+    path = registry_path()
+    if path is None:
+        why = "package [{}] is not installed".format(_REGISTRY_PACKAGE)
+    else:
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                skills = (yaml.safe_load(handle) or {}).get("skills") or {}
+            if not skills:
+                why = "[{}] lists no skills".format(path)
+        except Exception as exc:
+            # Absent or unreadable is not fatal here: the caller falls back to
+            # the arm's own init_config, which is what it used before this
+            # existed. It is worth SAYING, though -- the version of this that
+            # said nothing had been returning None for every skill since the
+            # merge and no test and no log noticed.
+            why = "[{}]: {}".format(path, exc)
+    if why:
+        _log_once("skill registry unavailable, so every skill's trained start "
+                  "pose falls back to the arm's own init_config -- " + why)
     _CACHE["skills"] = skills
     return skills
+
+
+def _log_once(message):
+    """Say it on the ROS log if there is one, on stderr if there is not."""
+    if _CACHE.get("logged"):
+        return
+    _CACHE["logged"] = True
+    try:
+        import rclpy.logging
+
+        rclpy.logging.get_logger("skill_registry").warning(message)
+    except Exception:
+        import sys
+
+        sys.stderr.write("skill_registry: " + message + "\n")
 
 
 def skill_init_config(skill_id, arm_dof=7):

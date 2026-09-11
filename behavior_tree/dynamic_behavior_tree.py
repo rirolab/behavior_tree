@@ -116,6 +116,13 @@ class SplinteredReality(Node):
                 ("grasp_offset_z", Parameter.Type.DOUBLE),
                 ("top_offset_z", Parameter.Type.DOUBLE),
                 ("frequency", 10.0),
+                # Overlap knobs, read live by MoveBlend through
+                # `self._node.get_parameter(...)`. Undeclared here until now,
+                # so on this tree -- the one FR3, OM-X and RoboCerebra run --
+                # the lookup raised, MoveBlend swallowed it and every chain was
+                # strictly sequential no matter what the yaml said.
+                ("overlap_progress_threshold", 1.0),
+                ("overlap_dispatch_on_start", False),
                 ]
         )
 

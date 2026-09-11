@@ -222,6 +222,15 @@ class MultiSplinteredReality(SplinteredReality):
             "close_pose_srv_channel": "/get_object_close_pose",
             "world_frame": "world",
             "frequency": 10.0,
+            # How far into an arm motion the next one is dispatched, as a
+            # fraction of progress (0..1); 1.0 is strict sequential. Read live
+            # by MoveBlend and pushed to each arm's mixer by
+            # _sync_mixer_threshold. Declared explicitly rather than left to
+            # automatically_declare_parameters_from_overrides, which only
+            # covers it when a yaml happens to set it -- and a
+            # `ros2 param set /tree overlap_progress_threshold` on a run that
+            # did not is how overlap gets turned on.
+            "overlap_progress_threshold": 1.0,
             # See MoveBlend: dispatch the next motion when the previous
             # one starts moving, instead of when it reaches the threshold.
             # Declared here so it always exists for `ros2 param set`, whether or
