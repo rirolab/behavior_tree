@@ -75,6 +75,60 @@ class MOVEBYPOLICY(Move.MOVE):
 
         self.logger.debug("%s.__init__()" % self.__class__.__name__)
 
+    #: The only statuses a PLAIN CHANNEL report may finish a policy step with.
+    #: Read by `current_goal_status`; see its docstring for why SUCCEEDED is not
+    #: among them.
+    CHANNEL_FAILURES = (
+        GoalStatus.STATUS_ABORTED,
+        GoalStatus.STATUS_CANCELING,
+        GoalStatus.STATUS_CANCELED,
+    )
+
+    def current_goal_status(self):
+        """This policy's status -- from its SLOT, or a refusal from the channel.
+
+        The inherited reader takes whichever source carries this behaviour's
+        goal id, slot first and the plain channel after it, and for a policy the
+        second half of that is not safe. cac says so itself: a slot-mode policy
+        does not own the arm channel (`_policy_manager_client`
+        `_start_policy_controller_mode` writes it only for a policy this node
+        publishes itself, and `_finish_policy_request` commits a terminal only
+        for one that `owns_channel`). The container reports this motion on the
+        slot the mixer granted it (`policy_slot_node.py`, through
+        `mixer_slot.py`), and that is the one place its SUCCESS can come from.
+
+        So a channel-level status may FAIL this step and may not finish it:
+
+          * ABORTED / CANCELED / CANCELING is the refusal path, and it has to
+            keep working. cac aborts a policy before any slot exists -- a
+            request policy_manager will not take, a worker that raises -- and
+            writes (this goal's id, ABORTED) on the channel together
+            (`_action_utils._aborted_goal_status`). Nothing else will ever tell
+            the tree, so dropping it would hang the step until its timeout.
+          * anything else, SUCCEEDED included, is not this motion's answer and
+            reads as "no answer yet", which leaves the step RUNNING until its
+            slot reports.
+
+        Defence in depth, and the depth is the point: cac keeps the channel's
+        goal id and status paired so a foreign terminal cannot carry this
+        policy's id at all, and this makes the tree refuse the one that would
+        matter even if it did. TREE2B measured what the missing half costs -- a
+        policy step finishing 0.12 s after its goal went out, before the mixer
+        had granted the container a slot, every step behind it dispatched at
+        once and three motions dropped for want of a free slot.
+        """
+        slot = self._owning_slot()
+        if slot is not None:
+            return self._read(self.slot_keys[slot]["goal_status"])
+        channel = self._owning_channel()
+        if channel is not None:
+            status = self._read(self.channel_keys[channel]["goal_status"])
+            return status if status in self.CHANNEL_FAILURES else None
+        # No fallback to the first channel's key. The inherited one reads a
+        # status nothing has matched an id against, which for a policy is
+        # another motion's by construction.
+        return None
+
     def dispatch_floor(self):
         """The progress at which the next motion may be DISPATCHED, or None.
 
