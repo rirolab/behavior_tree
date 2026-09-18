@@ -171,6 +171,33 @@ class SplinteredReality(Node):
             ParameterDescriptor(dynamic_typing=True),
         )
 
+        # The bounds a chain file is validated against, and the composition the
+        # mixer is running. Optional in the same way and for the same reason:
+        # a deployment that runs no chain file sets none of them, and
+        # `chain_job` is the only thing that reads them -- it refuses rather
+        # than guesses when they are absent, since a built-in table would check
+        # one robot's pose against another robot's limits.
+        self.declare_parameter(
+            "joint_limit_lower",
+            None,
+            ParameterDescriptor(dynamic_typing=True),
+        )
+        self.declare_parameter(
+            "joint_limit_upper",
+            None,
+            ParameterDescriptor(dynamic_typing=True),
+        )
+        self.declare_parameter(
+            "gripper_limit",
+            None,
+            ParameterDescriptor(dynamic_typing=True),
+        )
+        self.declare_parameter(
+            "mixer_composition",
+            None,
+            ParameterDescriptor(dynamic_typing=True),
+        )
+
         self.rec_topic_list  = rec_topic_list
         
         self.n_loop          = n_loop

@@ -217,3 +217,24 @@ def skill_init_config(skill_id, arm_dof=7):
         # A pose that does not cover the arm columns is not a pose. Falling
         # back beats moving to a partially specified one.
         return None
+
+
+def skill_init_pose(skill_id, arm_dof=7):
+    """A skill's whole ``init_pose``, arm columns then gripper, or None.
+
+    What `chain_spec.resolve` needs to fill in a `pose: hub` step: the values
+    the CONTAINER serves, in its own `action_joints` order. It is
+    ``skill_init_config`` and ``skill_init_gripper`` joined rather than a third
+    reading of the registry, so a hub step and the approach that aims at it
+    cannot disagree about where the policy starts.
+
+    Seven values on a deployment whose skill declares no gripper column, eight
+    where it does -- which is exactly what `resolve` reads (`len(pose) > 7`
+    decides whether the hub carries a jaw target). Nothing here assumes eight,
+    and nothing assumes seven either: the width is the caller's ``arm_dof``.
+    """
+    arm = skill_init_config(skill_id, arm_dof=arm_dof)
+    if arm is None:
+        return None
+    gripper = skill_init_gripper(skill_id, arm_dof=arm_dof)
+    return list(arm) if gripper is None else list(arm) + [gripper]

@@ -18,8 +18,8 @@ class MOVE(py_trees.behaviour.Behaviour):
     priority behaviour.
     """
 
-    def __init__(self, name, action_client, action_goal=None, timeout=1, 
-                 robot_name=None, goal_channel="arm"):
+    def __init__(self, name, action_client, action_goal=None, timeout=1,
+                 robot_name=None, goal_channel="arm", claim=None):
         """
         Initialise a robot action command behaviour.
 
@@ -36,6 +36,24 @@ class MOVE(py_trees.behaviour.Behaviour):
                 per channel, so it is load-bearing again. ``None`` means the
                 route is the client's to decide and the behaviour watches both
                 channels -- see ``status_channels``.
+            claim: this motion's own request fields, or None -- the seam it
+                asks the mixer for (``claim_progress_threshold``,
+                ``claim_closure``, ``claim_smoothing``,
+                ``claim_passthrough_only``, popped by
+                ``_stream_client.CLAIM_KWARGS``), how it is planned
+                (``plan_from_arm``), and the span a carried gripper column
+                moves over (``passthrough_ramp`` /
+                ``passthrough_ramp_fraction``). Merged into the command LAST,
+                so a motion that states a field beats the node-level default
+                the behaviour would otherwise compute for it.
+
+                A dict rather than named arguments, and read by no behaviour:
+                cac forwards every key it does not own
+                (``_action_server.py`` ``rejected_command_keys``), so the tree
+                does not have to learn a field to pass one on. It is per
+                MOTION, not a ``MoveBlend`` attribute -- the composite chains
+                children and knows nothing about what any of them claims; the
+                mixer takes the seam from the incoming motion's own claim.
         """
         super(MOVE, self).__init__(name=name)
 
@@ -43,6 +61,7 @@ class MOVE(py_trees.behaviour.Behaviour):
         self.robot_name    = robot_name
         self.goal_channel  = goal_channel
         self.action_goal   = action_goal
+        self.claim         = dict(claim) if claim else None
         self.sent_goal     = False
         self.cmd_req       = action_client
         self.future        = None
@@ -114,6 +133,11 @@ class MOVE(py_trees.behaviour.Behaviour):
                 "goal_id": f"{self.slot_channel}/{slot}/goal_id",
                 "goal_status": f"{self.slot_channel}/{slot}/goal_status",
                 "progress": f"{self.slot_channel}/{slot}/progress",
+                # Whether the producer in this slot says its motion may be
+                # handed over from. Only a producer that HAS a predicate
+                # publishes it, so this key is usually absent and `_read`
+                # answers None -- "no answer", which is not "no".
+                "handover": f"{self.slot_channel}/{slot}/handover",
             }
             self.slot_keys[slot] = keys
             for key in keys.values():
@@ -151,6 +175,11 @@ class MOVE(py_trees.behaviour.Behaviour):
         if self.robot_name is not None:
             command["robot_name"] = self.robot_name
         command.update(kwargs)
+        # Last, so this motion's own statement wins over a default a subclass
+        # computed for it -- a step whose chain file names its ramp is not
+        # overridden by the tree's `gripper_ramp` node parameter.
+        if self.claim:
+            command.update(self.claim)
         return command
         
     def setup(self, node):
@@ -264,6 +293,46 @@ class MOVE(py_trees.behaviour.Behaviour):
         if slot is None:
             return None
         return self._read(self.slot_keys[slot]["progress"])
+
+    def handover_ready(self):
+        """The producer's own "ready to be handed over from", or None.
+
+        None when nothing publishes it, which is every planned trajectory: a
+        primitive's readiness IS its progress, and there is no second question
+        to ask about it.
+        """
+        slot = self._owning_slot()
+        if slot is None:
+            return None
+        return self._read(self.slot_keys[slot]["handover"])
+
+    def ready_for_successor(self, threshold, dispatch_on_start=False):
+        """May the NEXT motion be dispatched now?
+
+        The composite chaining motions asks this of the one that is running,
+        instead of testing its progress itself. Two behaviours answer it
+        differently and the difference is not a threshold:
+
+          * a planned trajectory ends where it said it would, so its successor
+            can be planned from its target at any time -- which is what
+            `dispatch_on_start` buys, paying the plan's 0.2-0.44 s while this
+            motion still runs.
+          * a policy ends where it ends. A successor dispatched at progress > 0
+            of a policy is planned from an arm nobody knows, so MOVEBYPOLICY
+            overrides this and refuses until its container says the arm has
+            stopped (`Policy.MOVEBYPOLICY.ready_for_successor`).
+
+        The default is the test this replaced, unchanged: progress at or past
+        the threshold, with a SUCCESS counting as 1.0 whatever the topics say.
+        """
+        if self.status == py_trees.common.Status.SUCCESS:
+            return True
+        progress = self.current_progress()
+        if progress is None:
+            return False
+        if dispatch_on_start:
+            return progress > 0.0
+        return progress >= threshold
 
     def goal_matches_blackboard(self):
         """

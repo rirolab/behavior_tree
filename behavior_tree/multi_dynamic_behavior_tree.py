@@ -13,7 +13,7 @@ from rcl_interfaces.msg import Parameter as ParameterMsg
 from rcl_interfaces.msg import ParameterType, ParameterValue
 from rcl_interfaces.srv import SetParameters
 from rclpy.node import Node
-from std_msgs.msg import Float32
+from std_msgs.msg import Bool, Float32
 from rclpy.qos import QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
@@ -96,41 +96,17 @@ def create_root(robot_names):
             )
         )
 
-        # Single-arm policy goals -> single_policy_client publishes here. It
-        # writes the SAME keys as the primitive arm channel, because a policy
-        # step and a primitive step are both "the arm is doing something" as far
-        # as the tree is concerned, and MOVEBYPOLICY is a Move.MOVE on the arm
-        # channel. Move.MOVE filters by goal_id, so the idle publisher's stale
-        # id is ignored and whichever source owns the current goal wins.
-        status_nodes.append(
-            ToBlackboard(
-                name=f"{robot_name}_PolicyStatus2BB",
-                topic_name=f"{robot_name}/single_policy_client/goal_status",
-                topic_type=GoalStatus,
-                blackboard_variables={
-                    f"{robot_name}/arm/goal_id": "goal_info.goal_id.uuid",
-                    f"{robot_name}/arm/goal_status": "status",
-                },
-                qos_profile=py_trees_ros.utilities.qos_profile_unlatched(),
-            )
-        )
-
-        # Policy progress, on its own key rather than one of arm_client's slots.
-        # `step / max_steps` from the policy executor: bounded and monotonic,
-        # which is all the overlap trigger needs. Separate because arm_client
-        # owns the slot keys, and a primitive and a policy are live on the same
-        # arm exactly when the overlap is doing its job.
-        status_nodes.append(
-            ToBlackboard(
-                name=f"{robot_name}_PolicyProgress2BB",
-                topic_name=f"{robot_name}/stream/b/progress",
-                topic_type=Float32,
-                blackboard_variables={
-                    f"{robot_name}/policy/progress": "data",
-                },
-                qos_profile=py_trees_ros.utilities.qos_profile_unlatched(),
-            )
-        )
+        # A policy's goal status and progress are NOT fed here. Both used to be:
+        # `single_policy_client/goal_status` into the plain arm keys, and slot
+        # b's progress into a `policy/progress` key of its own. Both were
+        # statements about a deployment with one policy container. A slot-mode
+        # policy is reported by the CONTAINER on whichever slot the mixer
+        # granted it (`policy_slot_node.py`, `mixer_slot.py`), and cac
+        # publishes nothing for it at all
+        # (`_policy_manager_client.py`) -- so the first fed a channel nobody
+        # writes and the second read slot b whether or not the policy was in
+        # it. MOVEBYPOLICY is now a slot-matching Move.MOVE and finds itself in
+        # the slot feeds below, the same way a streamed primitive does.
 
         # Under overlap, arm motions stream through two mixer slots (a, b), and
         # each slot reports its own goal id, status, and progress. The MOVE
@@ -159,6 +135,24 @@ def create_root(robot_names):
                     topic_type=Float32,
                     blackboard_variables={
                         f"{robot_name}/arm/{slot}/progress": "data",
+                    },
+                    qos_profile=py_trees_ros.utilities.qos_profile_unlatched(),
+                )
+            )
+            # And the producer's own "ready to be handed over from", beside its
+            # progress rather than folded into it: a progress held back until a
+            # producer was ready would misreport where its motion is, and the
+            # mixer opens its seam on that number. Only a producer that HAS a
+            # predicate publishes here -- a policy container does, a planned
+            # trajectory does not -- so this key is often absent, and the
+            # behaviour reading it treats absence as "no answer", not "no".
+            status_nodes.append(
+                ToBlackboard(
+                    name=f"{robot_name}_arm_{slot}_Handover2BB",
+                    topic_name=f"{prefix}/handover",
+                    topic_type=Bool,
+                    blackboard_variables={
+                        f"{robot_name}/arm/{slot}/handover": "data",
                     },
                     qos_profile=py_trees_ros.utilities.qos_profile_unlatched(),
                 )
@@ -240,6 +234,13 @@ class MultiSplinteredReality(SplinteredReality):
             # Declared here so it always exists for `ros2 param set`, whether or
             # not a launch file overrides it.
             "overlap_dispatch_on_start": False,
+            # The composition the arm mixers are configured for. `chain_job`
+            # READS it and refuses a chain file that asks for another one; it
+            # never sets it -- a tree that reconfigured a mixer out of a task
+            # file would change how every other producer on that arm is
+            # composed, for the rest of the session. Empty is "this deployment
+            # does not mirror it here", and the job then says so and runs.
+            "mixer_composition": "",
         }
         for name, value in defaults.items():
             if not self.has_parameter(name):
@@ -593,6 +594,9 @@ def main(args=None):
             "jobs.pick_job.Move",
             "jobs.place_job.Move",
             "jobs.move_job.Move",
+            # The chain file, driven by the tree exactly as
+            # `docs/overlap/harness/merge_chain.py` drives it.
+            "jobs.chain_job.Move",
             "jobs.gripper_job.Move",
             "jobs.policy_job.Move",
             "jobs.dual_move_job.Move",

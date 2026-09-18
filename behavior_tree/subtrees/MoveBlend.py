@@ -68,6 +68,48 @@ OVERLAP_THRESHOLD_PARAM = "overlap_progress_threshold"
 OVERLAP_DISPATCH_ON_START_PARAM = "overlap_dispatch_on_start"
 
 
+def child_progress(child):
+    """A child's progress, or None when it does not report one."""
+    getter = getattr(child, "current_progress", None)
+    if getter is None:
+        return None
+    try:
+        return getter()
+    except Exception:
+        return None
+
+
+def default_ready_for_successor(child, threshold, dispatch_on_start=False):
+    """"May the motion after this one be dispatched?", for a plain motion.
+
+    The test this composite used to make inline, kept in one place because two
+    callers make it: this composite, for a child too old to answer for itself,
+    and ``Move.MOVE.ready_for_successor``, which is the answer for every
+    planned trajectory.
+
+    A SUCCESS admits whatever the topics say -- authority has already passed.
+    Otherwise progress decides, with two rules on top:
+
+      * ``dispatch_on_start`` first, so it still works at threshold 1.0: its
+        whole purpose is to pay the plan's 0.2-0.44 s during the previous
+        motion, including on a sequential baseline where the blend never opens.
+      * at threshold 1.0 without it, only a terminal admits -- NOT progress
+        1.0. A producer reports 1.0 at its last step while its motion is still
+        being blended out (a policy's fade runs past it), and 1.0 is the file's
+        way of saying "wait for this to be done".
+    """
+    if child.status == common.Status.SUCCESS:
+        return True
+    progress = child_progress(child)
+    if progress is None:
+        return False
+    if dispatch_on_start:
+        return progress > 0.0
+    if threshold >= 1.0:
+        return False
+    return progress >= threshold
+
+
 class MoveBlend(py_trees.composites.Composite):
 
     # Class-level defaults, and they are load-bearing rather than tidy:
@@ -216,13 +258,24 @@ class MoveBlend(py_trees.composites.Composite):
 
     def _child_progress(self, child):
         """Progress in [0,1] for a child, or None if it exposes none."""
-        getter = getattr(child, "current_progress", None)
-        if getter is None:
-            return None
-        try:
-            return getter()
-        except Exception:
-            return None
+        return child_progress(child)
+
+    def _child_ready(self, child):
+        """Ask the child whether the motion after it may be dispatched now.
+
+        A child that answers `ready_for_successor` answers; one that does not --
+        a behaviour older than the hook, or a test double -- gets the default
+        test, which is what this composite used to make inline.
+        """
+        hook = getattr(child, "ready_for_successor", None)
+        if callable(hook):
+            try:
+                return bool(hook(self._threshold(), self._dispatch_on_start()))
+            except TypeError:
+                # A hook of the older one-argument shape.
+                return bool(hook(self._threshold()))
+        return default_ready_for_successor(
+            child, self._threshold(), self._dispatch_on_start())
 
     def _child_overlappable(self, child):
         """Whether the NEXT child may be started early, before this-1 finishes.
@@ -369,30 +422,26 @@ class MoveBlend(py_trees.composites.Composite):
         if self._started < len(self.children) - 1:
             newest = self.children[self._started]
             nxt = self.children[self._started + 1]
-            newest_progress = self._child_progress(newest)
-            if newest.status == common.Status.SUCCESS:
-                newest_progress = 1.0
 
             if self._child_overlappable(nxt):
-                if self._dispatch_on_start():
-                    # Dispatch as soon as the newest motion is actually moving.
-                    # Planning it costs a tree tick plus the primitive's IK, and
-                    # under the threshold gate all of that lands *after* the
-                    # mixer already wanted to blend, so the overlap starts late:
-                    # a requested 0.75 was measured firing at an effective
-                    # 0.908. Started here instead, that cost is paid while the
-                    # previous motion is still running.
-                    #
-                    # This cannot run away. A dispatched motion sits ARMED until
-                    # the mixer starts it, and an ARMED slot reports progress
-                    # 0.0, so the gate blocks again immediately -- at most one
-                    # motion is ever queued beyond the two live ones, which is
-                    # exactly what `dispatch_stream` accepts.
-                    start_next = (newest_progress is not None
-                                  and newest_progress > 0.0)
-                else:
-                    start_next = (newest_progress is not None
-                                  and newest_progress >= self._threshold())
+                # The NEWEST child decides, not this composite. What makes a
+                # motion safe to hand over from is the motion's own business: a
+                # planned trajectory ends where it said it would, so its
+                # successor may be planned early (`dispatch_on_start`, paying
+                # the plan's 0.2-0.44 s while this one still runs -- a requested
+                # 0.75 was otherwise measured firing at an effective 0.908); a
+                # policy ends where it ends, and a successor planned at its
+                # progress > 0 is planned from an arm nobody knows. So the
+                # question is asked of the child and `dispatch_on_start` is
+                # passed IN rather than applied here, which is what lets
+                # MOVEBYPOLICY refuse it.
+                #
+                # This cannot run away. A dispatched motion sits ARMED until the
+                # mixer starts it, and an ARMED slot reports progress 0.0, so
+                # the gate blocks again immediately -- at most one motion is
+                # ever queued beyond the two live ones, which is exactly what
+                # `dispatch_stream` accepts.
+                start_next = self._child_ready(newest)
             else:
                 # Non-overlappable successor (gripper, query): only start it once
                 # the newest has genuinely finished.

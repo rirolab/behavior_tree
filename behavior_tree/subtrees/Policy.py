@@ -19,7 +19,8 @@ class MOVEBYPOLICY(Move.MOVE):
     Execute policy through complex_action_client.
     """
 
-    def __init__(self, name, action_client, action_goal=None, timeout=5.0, robot_name=None):
+    def __init__(self, name, action_client, action_goal=None, timeout=5.0,
+                 robot_name=None, end_handover=None, early_retreat=False):
         """
         Initialise a policy execution behaviour.
 
@@ -29,6 +30,19 @@ class MOVEBYPOLICY(Move.MOVE):
             action_goal (:obj:`dict`): policy command payload.
             timeout (:obj:`float`): command timeout in seconds.
             robot_name (:obj:`str`): optional robot namespace.
+            end_handover (:obj:`dict`): this skill's ``end_handover`` as its
+                container describes it -- ``progress_threshold`` (where the next
+                motion may OPEN its seam) and, when the skill declares one,
+                ``still_from`` (where it stops MOVING THE ARM, which is where
+                the next motion may be DISPATCHED). Read at build time from
+                ``skill_facts(skill_id)``, the same dict the chain driver reads.
+                None when the container describes none, and the successor then
+                waits for the terminal.
+            early_retreat (:obj:`bool`): whether this step's file allows the
+                next motion to be dispatched before this policy's terminal at
+                all. False keeps the sequential behaviour whatever the
+                container declares -- it is the chain file's per-step switch,
+                not a property of the skill.
         """
         super(MOVEBYPOLICY, self).__init__(
             name=name,
@@ -38,38 +52,88 @@ class MOVEBYPOLICY(Move.MOVE):
             robot_name=robot_name,
         )
 
-        # A policy step CAN be overlapped, but not the way a primitive is.
-        #
-        # Its status comes on the plain arm channel: only one policy goal is
-        # ever in flight, so there is nothing to disambiguate between slots and
-        # Move.MOVE's slot matching would find nothing. Its *command*, though,
-        # goes through a mixer slot exactly like a streamed primitive, so the
-        # motion is blendable and the sequence above may start the next step
-        # before this one finishes.
-        self.stream_slots = ()
-        self.overlappable = True
+        self.end_handover = dict(end_handover) if end_handover else None
+        self.early_retreat = bool(early_retreat)
 
-        # And progress comes from the policy executor rather than arm_client:
-        # `step / max_steps`, which is bounded and monotonic. Its own key, not
-        # one of the arm slots' -- arm_client owns those, and two writers on one
-        # key would race whenever a primitive and a policy are live together,
-        # which under overlap is the whole point.
-        self.progress_key = "policy/progress"
-        self.blackboard.register_key(
-            key=self.progress_key,
-            access=py_trees.common.Access.READ,
-        )
+        # A policy step is a slot motion, and is found the way every other one
+        # is: by matching its own goal id against each slot's.
+        #
+        # It used to declare `stream_slots = ()` and read a hard-wired
+        # `policy/progress` key fed from slot b, which was true only of a
+        # deployment with one policy container whose motion always landed
+        # there. A slot-mode policy is reported by the CONTAINER on whichever
+        # slot it claimed (`policy_slot_node.py` publishes goal_status and
+        # progress on its slot; `mixer_slot.py` serves them), and cac
+        # deliberately publishes nothing for it
+        # (`_policy_manager_client.py`) -- so a tree reading slot b saw
+        # nothing at all whenever the container was granted slot a, and could
+        # not overlap the step. Inheriting `Move.MOVE`'s slot matching is both
+        # the fix and one fewer thing for the tree to know.
+        #
+        # `overlappable` follows the slots, as it does everywhere else, so it
+        # needs no statement here either.
 
         self.logger.debug("%s.__init__()" % self.__class__.__name__)
 
-    def current_progress(self):
-        """Fraction of the policy's motion completed, in [0, 1], or None.
+    def dispatch_floor(self):
+        """The progress at which the next motion may be DISPATCHED, or None.
 
-        None until the executor publishes -- before that the sequence above
-        cannot overlap this step and falls back to sequential, which is the
-        safe reading of "we do not know how far along it is".
+        ``still_from`` when the skill declares one -- where it stops moving the
+        arm -- and its ``progress_threshold`` otherwise. Two different floors
+        for two different questions, and the declared one is deliberately the
+        lower of the two on every skill that states it (cube_diag: 0.61 against
+        0.70), because dispatching is what costs the plan's 0.2-0.44 s and that
+        has to be paid BEFORE the seam may open, not after.
         """
-        return self._read(self.progress_key)
+        if not self.end_handover:
+            return None
+        floor = self.end_handover.get("still_from")
+        if floor is None:
+            floor = self.end_handover.get("progress_threshold")
+        return None if floor is None else float(floor)
+
+    def ready_for_successor(self, threshold, dispatch_on_start=False):
+        """May the motion after this policy be dispatched now?
+
+        Not the default test, and `dispatch_on_start` is deliberately ignored:
+        a primitive ends at the target it was planned to, so its successor can
+        be planned from that target at any time, while a policy ends where it
+        ends. A retreat dispatched at progress > 0 of a policy is planned from
+        an arm nobody knows -- it is planned from the MEASURED arm, mid-episode,
+        which is not where the policy will leave it.
+
+        Two terms, and the second is the container's, not the tree's:
+
+          * progress at or past `dispatch_floor()`, the fraction the skill
+            declared. Nobody can observe that fraction in time -- certifying
+            stillness costs `still_for` seconds after the arm stops, and a
+            policy stops 0.3-0.5 s before its own terminal.
+          * the container's handover flag, which is its own predicate over its
+            own commanded window and the measured jaws
+            (`policy_slot_node._handover_ready`). One predicate, declared beside
+            the skill; a tree evaluating a second one of its own tolerance
+            would be a second opinion rather than a veto.
+
+        A SUCCESS admits regardless -- that is the terminal, and it is the ONLY
+        thing that admits when the file did not ask for an early retreat, or
+        when the container describes no handover at all. Note what is not here:
+        `progress >= 1.0`. A policy's progress reaches 1.0 at its last frame
+        while its weight is still leaving (the mixer retires it at the fade's
+        end, `policy_slot: finished`), so 1.0 is not the terminal.
+        """
+        if self.status == py_trees.common.Status.SUCCESS:
+            return True
+        if not self.early_retreat:
+            return False
+        floor = self.dispatch_floor()
+        if floor is None:
+            return False
+        progress = self.current_progress()
+        if progress is None or progress < floor:
+            return False
+        # `is True`, not truthiness: None is "the producer publishes no
+        # predicate", which must not read as ready.
+        return self.handover_ready() is True
 
     def update(self):
         """
@@ -180,6 +244,12 @@ def create_subtree(action_client, step_goal, **kwargs):
         action_goal=step_goal,
         timeout=float(step_goal.get("timeout", 5.0)),
         robot_name=kwargs.get("robot_name"),
+        # What the container describes for this skill, and what the chain file
+        # asks of this step. Both None/False for a job that knows neither, and
+        # the step is then sequential -- its successor waits for the terminal,
+        # which is what every policy job did before the hook existed.
+        end_handover=kwargs.get("end_handover"),
+        early_retreat=kwargs.get("early_retreat", False),
     )
     root.add_child(run_policy)
     return root

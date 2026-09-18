@@ -18,7 +18,8 @@ class MOVEJ(Move.MOVE):
     priority behaviour.
     """
     def __init__(self, name, action_client, action_goal=None, timeout=2.0,
-                 robot_name=None, gripper=None, gripper_ramp_param=None):
+                 robot_name=None, gripper=None, gripper_ramp_param=None,
+                 claim=None):
         """
         Args:
             gripper: a gripper position to carry through this motion's own
@@ -35,12 +36,19 @@ class MOVEJ(Move.MOVE):
                 motion's own out-seam. Read live, since the composite that
                 chains this motion reads the same parameter live and the two
                 must not overlap at two numbers.
+            claim: this motion's own request fields -- see ``Move.MOVE``. A
+                chain file's step states its seam here
+                (``claim_progress_threshold``), the step after a policy adds
+                ``plan_from_arm``, and a step whose file names a ramp states
+                that too, which is why the claim is merged after the value
+                ``gripper_ramp_param`` produces.
         """
         super(MOVEJ, self).__init__(name=name,
                                    action_client=action_client,
                                    action_goal=action_goal,
                                    timeout=timeout,
-                                   robot_name=robot_name)
+                                   robot_name=robot_name,
+                                   claim=claim)
         self.gripper = gripper
         self.gripper_ramp_param = gripper_ramp_param
         self.logger.debug("%s.__init__()" % self.__class__.__name__)
