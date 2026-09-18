@@ -347,6 +347,20 @@ class MultiSplinteredReality(SplinteredReality):
         # ITSELF on its existing "{robot}/arm_client/goal_status" /
         # "dual_arm_client/goal_status" topic, so the existing ToBlackboard
         # wiring stays unchanged.
+        #
+        # NOTHING SERVES THIS NAME. policy_manager's request service is
+        # "/policy_manager/request" (policy_manager.py `request_service_name`),
+        # and it REFUSES a request carrying no
+        # `policy_manager_result_shm_name` -- the shared-memory buffer the
+        # policy's samples come back in, which complex_action_client allocates
+        # per request (`_policy_manager_client._send_policy_manager_request`).
+        # A tree calling policy_manager directly has no such buffer to name, so
+        # the right destination for a policy step is the arm's own command
+        # service: cac's `moveByPolicy` handler allocates the buffer, calls
+        # policy_manager, and keeps controller ownership
+        # (`_action_server.py` -> `_move_by_policy`). Kept here, unused by the
+        # single-robot path below, because the dual and parallel policy jobs
+        # still ask for it by name and rewiring them is their owner's call.
         self.policy_action_client = self.create_client(
             StringGoalStatus,
             "/policy_manager/command",
@@ -463,7 +477,18 @@ class MultiSplinteredReality(SplinteredReality):
                             tf_buffer=self.tf_buffer,
                             rec_topic_list=self.rec_topic_list,
                             robot_name=requested_robot_names[0],
-                            policy_action_client=self.policy_action_client,
+                            # THIS arm's command service, not the central one
+                            # above: a policy step is a motion on one arm, and
+                            # the node that turns `moveByPolicy` into a running
+                            # policy is that arm's client (it allocates the
+                            # result buffer, calls policy_manager, and holds the
+                            # controller). The container then reports the motion
+                            # on whichever mixer slot it claimed, which is what
+                            # `Move.MOVE`'s slot matching already reads --
+                            # `move_job`'s own policy branch has passed this
+                            # client since before the central one existed.
+                            policy_action_client=self.action_clients[
+                                requested_robot_names[0]],
                         )
 
                     # Case: multi-robot step -> pass a mapping of robot_name to client.

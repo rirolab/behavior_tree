@@ -110,6 +110,23 @@ def default_ready_for_successor(child, threshold, dispatch_on_start=False):
     return progress >= threshold
 
 
+def ask_ready(child, threshold, dispatch_on_start=False):
+    """"May the motion after this child be dispatched?", asked of the child.
+
+    One place, because two callers ask it: the composite about each of its own
+    children, and a composite that is itself somebody's child, forwarding the
+    question to the motion inside it.
+    """
+    hook = getattr(child, "ready_for_successor", None)
+    if callable(hook):
+        try:
+            return bool(hook(threshold, dispatch_on_start))
+        except TypeError:
+            # A hook of the older one-argument shape.
+            return bool(hook(threshold))
+    return default_ready_for_successor(child, threshold, dispatch_on_start)
+
+
 class MoveBlend(py_trees.composites.Composite):
 
     # Class-level defaults, and they are load-bearing rather than tidy:
@@ -267,15 +284,37 @@ class MoveBlend(py_trees.composites.Composite):
         a behaviour older than the hook, or a test double -- gets the default
         test, which is what this composite used to make inline.
         """
-        hook = getattr(child, "ready_for_successor", None)
-        if callable(hook):
-            try:
-                return bool(hook(self._threshold(), self._dispatch_on_start()))
-            except TypeError:
-                # A hook of the older one-argument shape.
-                return bool(hook(self._threshold()))
-        return default_ready_for_successor(
-            child, self._threshold(), self._dispatch_on_start())
+        return ask_ready(child, self._threshold(), self._dispatch_on_start())
+
+    def ready_for_successor(self, threshold, dispatch_on_start=False):
+        """May the motion after this SUBTREE be dispatched now?
+
+        A composite is asked this whenever it is itself a child of another one,
+        which is every policy step in a chain: `Policy.create_subtree` wraps its
+        `MOVEBYPOLICY` in one of these, and the chain's own composite holds the
+        wrapper, not the leaf. Without this method that question fell to
+        `default_ready_for_successor`, whose answer under `dispatch_on_start` is
+        `progress > 0` -- so the retreat after a policy was dispatched the
+        instant the policy reported its first frame, and `MOVEBYPOLICY`'s own
+        answer (the skill's declared floor and the container's handover flag)
+        was never asked at all. The predicate was there; nothing reached it.
+
+        The question is passed DOWN unchanged, with the caller's threshold and
+        dispatch rule rather than this composite's own: the successor being
+        asked about is the caller's, so the rule that governs it is the
+        caller's. Answering with this composite's own threshold would ask a
+        different question -- a `Policy` wrapper's is 1.0 with dispatch off,
+        under which a plain child never admits anything.
+
+        A subtree with motions of its own still to come admits nothing, whatever
+        its running child says: its successor follows the LAST of them.
+        """
+        if not self.children:
+            return False
+        newest = min(self._started, len(self.children) - 1)
+        if newest < len(self.children) - 1:
+            return False
+        return ask_ready(self.children[newest], threshold, dispatch_on_start)
 
     def _child_overlappable(self, child):
         """Whether the NEXT child may be started early, before this-1 finishes.

@@ -496,6 +496,26 @@ class SplinteredReality(Node):
                         
             if job.status == py_trees.common.Status.SUCCESS or job.status == py_trees.common.Status.FAILURE or job.status == py_trees.common.Status.INVALID:
                 console.loginfo(f"{job.name}: post_tick_handler finished [{job.status}]")
+                # BEFORE the prune, and before `current_job` is dropped: a job
+                # that answers for its own run answers here, while its subtree
+                # is still in the tree. `chain_job` prints the `RESULT` line
+                # this way -- the one line that says what the run did, in the
+                # chain driver's own format, and the only thing a comparison of
+                # the two drivers has to read from the tree's log. Jobs that
+                # define no `post_tick` are untouched, which is all of them but
+                # that one.
+                for handler in self.jobs:
+                    reporter = getattr(handler, "post_tick", None)
+                    if not callable(reporter):
+                        continue
+                    try:
+                        reporter()
+                    except Exception as exc:
+                        # A job that cannot summarise itself must not take the
+                        # tree down on the way out of a finished run.
+                        console.logwarn(
+                            f"{getattr(handler, 'name', handler)}: post_tick "
+                            f"raised [{exc}]")
                 tree.prune_subtree(job.id)
                 self.current_job = None
 
