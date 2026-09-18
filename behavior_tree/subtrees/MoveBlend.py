@@ -69,6 +69,14 @@ OVERLAP_DISPATCH_ON_START_PARAM = "overlap_dispatch_on_start"
 
 class MoveBlend(py_trees.composites.Composite):
 
+    # Class-level defaults, and they are load-bearing rather than tidy:
+    # `Composite.__init__` calls `self.add_child(child)` once per constructor
+    # child, so the `add_child` override below runs BEFORE `__init__` has
+    # assigned either attribute. Without these the constructor would raise
+    # AttributeError on any chain built the old way.
+    robot_name = None
+    blend_reject_reason = None
+
     def __init__(self, name="MoveBlend", children=None,
                  progress_threshold=1.0, threshold_param=None,
                  dispatch_on_start=False, dispatch_param=None,
@@ -142,14 +150,42 @@ class MoveBlend(py_trees.composites.Composite):
                 f"progress_threshold must be within [0, 1], got {threshold}")
             return
 
+        self._validate_robots(children)
+
+    def _validate_robots(self, children):
+        """Refuse a chain that mixes two arms, whenever its children arrive.
+
+        Split out of `_validate` and called from `add_child` as well, since the
+        chains that matter are not built through the constructor: `_move_sequence`
+        (`move_job.py:26-29`) and `Policy.create_subtree` (`Policy.py:165-172`)
+        construct empty and then `add_children`, so validating only the
+        constructor argument left the two-arm refusal dead everywhere a job
+        builds one.
+
+        Sets a reason, never clears one: a threshold already found bad keeps its
+        message, which is the precedence `_validate` has always had -- it returns
+        before the robot check when the threshold does not parse.
+        """
         # Two arms in one chain would overlap motions that never share a
         # controller, so the seam it reports would not exist.
         robots = {child.robot_name for child in children
                   if getattr(child, "robot_name", None) is not None}
-        if len(robots) > 1:
+        if len(robots) > 1 and self.blend_reject_reason is None:
             self.blend_reject_reason = (
                 "children must target the same robot, got "
                 + ", ".join(sorted(robots)))
+
+    def add_child(self, child):
+        """Add a child, then re-check the chain it now makes.
+
+        `add_children` routes through here, so both arrival paths are covered.
+        During construction this runs before `__init__` sets
+        `blend_reject_reason = None`, which wipes whatever it found and lets
+        `_validate` re-decide -- so the constructor's behaviour is unchanged.
+        """
+        child_id = super().add_child(child)
+        self._validate_robots(self.children)
+        return child_id
 
     def setup(self, **kwargs):
         # py_trees_ros hands the ROS node in here; keep it so the threshold can

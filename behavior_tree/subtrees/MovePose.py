@@ -53,7 +53,7 @@ class MOVEP(Move.MOVE):
         if self.cmd_req is None:
             self.feedback_message = \
               "no action client, did you call setup() on your tree?"
-            return py_trees.Status.FAILURE
+            return py_trees.common.Status.FAILURE
 
         if not self.sent_goal:
             self.goal_uuid_des = np.random.randint(0, 255, size=16,
@@ -139,7 +139,7 @@ class MOVES(Move.MOVE):
         if self.cmd_req is None:
             self.feedback_message = \
               "no action client, did you call setup() on your tree?"
-            return py_trees.Status.FAILURE
+            return py_trees.common.Status.FAILURE
 
         if not self.sent_goal:
             self.goal_uuid_des = np.random.randint(0, 255, size=16,
@@ -239,7 +239,7 @@ class MOVEPR(Move.MOVE):
         if self.cmd_req is None:
             self.feedback_message = \
               "no action client, did you call setup() on your tree?"
-            return py_trees.Status.FAILURE
+            return py_trees.common.Status.FAILURE
 
         if not self.sent_goal or (self.action_cont and self.action_goal['pose'] is not None):
             self.goal_uuid_des = np.random.randint(0, 255, size=16,
@@ -325,7 +325,7 @@ class MOVEPROOT(Move.MOVE):
         if self.cmd_req is None:
             self.feedback_message = \
               "no action client, did you call setup() on your tree?"
-            return py_trees.Status.FAILURE
+            return py_trees.common.Status.FAILURE
 
         if not self.sent_goal:
             self.goal_uuid_des = np.random.randint(0, 255, size=16,

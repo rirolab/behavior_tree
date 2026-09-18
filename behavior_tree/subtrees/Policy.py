@@ -167,6 +167,12 @@ def create_subtree(action_client, step_goal, **kwargs):
         threshold_param=OVERLAP_THRESHOLD_PARAM,
         dispatch_param=OVERLAP_DISPATCH_ON_START_PARAM,
         progress_threshold=1.0,
+        # The same arm the MOVEBYPOLICY below runs on. The chain that chains
+        # these steps asks its children which arm they are for, and
+        # `MoveBlend._validate_robots` reads exactly this attribute to refuse a
+        # chain mixing two -- so a policy step that answered None could not trip
+        # the check and read as unowned to the chain above.
+        robot_name=kwargs.get("robot_name"),
     )
     run_policy = MOVEBYPOLICY(
         name="MoveByPolicy",

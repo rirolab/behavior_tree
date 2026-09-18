@@ -35,7 +35,7 @@ class GOTO(Move.MOVE):
         if self.cmd_req is None:
             self.feedback_message = \
               "no action client, did you call setup() on your tree?"
-            return py_trees.Status.FAILURE
+            return py_trees.common.Status.FAILURE
 
         if not self.sent_goal:
             self.goal_uuid_des = np.random.randint(0, 255, size=16,

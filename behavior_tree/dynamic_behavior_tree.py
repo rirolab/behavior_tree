@@ -29,7 +29,32 @@ from behavior_tree.subtrees import Grnd2Blackboard
 ## from .subtrees import Status2Blackboard
 from behavior_tree import decorators
 from behavior_tree.utils.validation_utils import collect_blend_validation, validate_goal
-from py_trees_ros.subscribers import ToBlackboard 
+from py_trees_ros.subscribers import ToBlackboard
+
+# How often the tree ticks, in hertz, when the launch file does not say.
+#
+# Named rather than written into the parameter list below so the default and the
+# guard can be read without constructing the node, which needs a ROS graph. The
+# rate is not a detail: at every boundary the mixer does NOT overlap, one tick
+# period is the dead time between the two motions.
+DEFAULT_TICK_FREQUENCY = 10.0
+
+
+def tick_period(frequency, owner="dynamic_behavior_tree"):
+    """The loop period for a requested tick rate, or a refusal.
+
+    A non-positive rate has no period. Falling back to a default instead of
+    refusing would run the tree at a rate nobody asked for, and the resulting
+    dead time would look like a mixer problem.
+
+    `owner` names the tree in the refusal, so the multi-arm tree keeps saying
+    which of the two it is.
+    """
+    frequency = float(frequency)
+    if frequency <= 0.0:
+        raise RuntimeError("{} frequency must be positive".format(owner))
+    return rclpy.duration.Duration(nanoseconds=int(1e9 / frequency))
+
 
 def create_root():
     """
@@ -115,7 +140,7 @@ class SplinteredReality(Node):
                 ("arm_base_frame", Parameter.Type.STRING),
                 ("grasp_offset_z", Parameter.Type.DOUBLE),
                 ("top_offset_z", Parameter.Type.DOUBLE),
-                ("frequency", 10.0),
+                ("frequency", DEFAULT_TICK_FREQUENCY),
                 # Overlap knobs, read live by MoveBlend through
                 # `self._node.get_parameter(...)`. Undeclared here until now,
                 # so on this tree -- the one FR3, OM-X and RoboCerebra run --
@@ -167,9 +192,7 @@ class SplinteredReality(Node):
 
         # Convert the requested tick frequency into a stable loop period.
         self.frequency = float(self.get_parameter("frequency").value)
-        if self.frequency <= 0.0:
-            raise RuntimeError("dynamic_behavior_tree frequency must be positive")
-        self.tick_period = rclpy.duration.Duration(nanoseconds=int(1e9 / self.frequency))
+        self.tick_period = tick_period(self.frequency)
         
         self.jobs = []
         for job in jobs:

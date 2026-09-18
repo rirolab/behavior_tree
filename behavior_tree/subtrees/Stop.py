@@ -29,7 +29,7 @@ class STOP(Move.MOVE):
         if self.cmd_req is None:
             self.feedback_message = \
               "no action client, did you call setup() on your tree?"
-            return py_trees.Status.FAILURE
+            return py_trees.common.Status.FAILURE
 
         if not self.sent_goal:
             cmd_str = json.dumps({'action_type': 'cancel_goal',

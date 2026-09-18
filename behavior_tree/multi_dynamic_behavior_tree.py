@@ -21,6 +21,10 @@ from tf2_ros.transform_listener import TransformListener
 from py_trees_ros import exceptions
 from py_trees_ros.subscribers import ToBlackboard
 from riro_srvs.srv import StringGoalStatus
+from behavior_tree.dynamic_behavior_tree import (
+    DEFAULT_TICK_FREQUENCY,
+    tick_period,
+)
 
 from behavior_tree import decorators
 from behavior_tree.dynamic_behavior_tree import SplinteredReality, get_args, load_topic_list
@@ -221,7 +225,7 @@ class MultiSplinteredReality(SplinteredReality):
             "rnd_pose_srv_channel": "/get_object_rnd_pose",
             "close_pose_srv_channel": "/get_object_close_pose",
             "world_frame": "world",
-            "frequency": 10.0,
+            "frequency": DEFAULT_TICK_FREQUENCY,
             # How far into an arm motion the next one is dispatched, as a
             # fraction of progress (0..1); 1.0 is strict sequential. Read live
             # by MoveBlend and pushed to each arm's mixer by
@@ -279,11 +283,12 @@ class MultiSplinteredReality(SplinteredReality):
         self.tree.add_post_tick_handler(self.post_tick_handler)
         self.initComms()
 
-        # Convert the requested tick frequency into a stable loop period.
+        # Convert the requested tick frequency into a stable loop period, through
+        # the same helper the single-arm tree uses: two copies of the guard is
+        # how the two trees come to tick at different rates for the same yaml.
         self.frequency = float(self.get_parameter("frequency").value)
-        if self.frequency <= 0.0:
-            raise RuntimeError("multi_dynamic_behavior_tree frequency must be positive")
-        self.tick_period = rclpy.duration.Duration(nanoseconds=int(1e9 / self.frequency))
+        self.tick_period = tick_period(self.frequency,
+                                       owner="multi_dynamic_behavior_tree")
 
         self.jobs = []
         for job in jobs:

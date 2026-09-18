@@ -64,7 +64,7 @@ class REMOVE(py_trees.behaviour.Behaviour):
         if self.cmd_req is None:
             self.feedback_message = \
               "no action client, did you call setup() on your tree?"
-            return py_trees.Status.FAILURE
+            return py_trees.common.Status.FAILURE
 
         if not self.sent_goal:
             req = StringNone.Request(data=self.action_goal['obj_name'])
