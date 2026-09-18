@@ -56,6 +56,30 @@ def tick_period(frequency, owner="dynamic_behavior_tree"):
     return rclpy.duration.Duration(nanoseconds=int(1e9 / frequency))
 
 
+def apply_log_level(node, wanted):
+    """Set py_trees' verbosity from a node's `log_level`, and say what it is.
+
+    Both entry points used to set DEBUG unconditionally, before any node
+    existed. At 50 Hz that is the whole tick trace and the whole ASCII display
+    fifty times a second: 83 MB and 1,566,288 lines for one 26 s chain,
+    measured -- which also makes anything that greps the log while it grows
+    quadratic. A run that wants the trace asks for it by name.
+
+    An unknown name is refused to INFO rather than silently ignored: a run
+    started with `log_level:=DEBGU` that quietly logged nothing extra would be
+    debugged twice.
+    """
+    name = str(wanted or "INFO").upper()
+    level = getattr(py_trees.logging.Level, name, None)
+    if level is None:
+        node.get_logger().warning(
+            "log_level {!r} is not one of {}; using INFO".format(
+                wanted, ", ".join(l.name for l in py_trees.logging.Level)))
+        level = py_trees.logging.Level.INFO
+    py_trees.logging.level = level
+    return level
+
+
 def create_root():
     """
     Create a basic tree and start a 'Topics2BB' work sequence that
@@ -198,6 +222,35 @@ class SplinteredReality(Node):
             ParameterDescriptor(dynamic_typing=True),
         )
 
+        # How a chain file's steps are PACED, and by which names the arm is
+        # read. Optional in the same way as the bounds above: a deployment that
+        # runs no chain file states none of them, and `chain_job` falls back to
+        # the other driver's own defaults (`chain_spec.PacingArgs`) so that a
+        # run which states them hands ONE set of numbers to both drivers.
+        # `timeout_scale` is the arm client's -- it divides the requested
+        # timeout by it -- and `chain_joints` / `gripper_joint` are the mixer's
+        # own column names, needed to read `/joint_states` by name rather than
+        # by position.
+        # py_trees' own verbosity. DEBUG was set unconditionally by both
+        # entry points, and at 50 Hz that is the whole tick trace and the whole
+        # ASCII display fifty times a second -- 83 MB and 1,566,288 lines for
+        # one 26 s chain, measured. A run that wants the trace asks for it.
+        self.declare_parameters(
+            namespace="",
+            parameters=[
+                ("log_level", "INFO", ParameterDescriptor(dynamic_typing=True)),
+                ("chain_timeout", None, ParameterDescriptor(dynamic_typing=True)),
+                ("chain_speed", None, ParameterDescriptor(dynamic_typing=True)),
+                ("chain_gripper_speed", None, ParameterDescriptor(dynamic_typing=True)),
+                ("chain_min_step", None, ParameterDescriptor(dynamic_typing=True)),
+                ("timeout_scale", None, ParameterDescriptor(dynamic_typing=True)),
+                ("chain_joints", None, ParameterDescriptor(dynamic_typing=True)),
+                ("gripper_joint", None, ParameterDescriptor(dynamic_typing=True)),
+            ],
+        )
+
+        self.apply_log_level()
+
         self.rec_topic_list  = rec_topic_list
         
         self.n_loop          = n_loop
@@ -230,6 +283,10 @@ class SplinteredReality(Node):
         console.loginfo("dynamic_behavior_tree: initialized")
 
         
+    def apply_log_level(self):
+        """This node's `log_level`, applied to py_trees. See the module function."""
+        return apply_log_level(self, self.get_parameter("log_level").value)
+
     def initComms(self):
         """Initialize communications"""
         qos_profile = QoSProfile(
@@ -576,7 +633,6 @@ def main(args=None):
         topic_list = None
     else:
         topic_list = load_topic_list(args.topic_json)
-    py_trees.logging.level = py_trees.logging.Level.DEBUG
 
     # TODO: import a list of jobs from a json file or ROS parameter server.
     # Keep the default job on the top

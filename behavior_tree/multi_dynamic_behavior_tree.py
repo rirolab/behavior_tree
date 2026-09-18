@@ -241,6 +241,10 @@ class MultiSplinteredReality(SplinteredReality):
             # composed, for the rest of the session. Empty is "this deployment
             # does not mirror it here", and the job then says so and runs.
             "mixer_composition": "",
+            # py_trees' verbosity, which was DEBUG unconditionally in `main`.
+            # See `apply_log_level`: at 50 Hz DEBUG is 83 MB of tick trace per
+            # chain, and nothing in a real run reads it.
+            "log_level": "INFO",
         }
         for name, value in defaults.items():
             if not self.has_parameter(name):
@@ -248,6 +252,8 @@ class MultiSplinteredReality(SplinteredReality):
 
         # Store robot names and validate them. 
         # Raise an exception if any are invalid.
+        self.apply_log_level()
+
         self.robot_names = make_string_list(self.get_parameter("robot").value)
         validate_robot_names(self.robot_names, self.get_parameters_by_prefix("").keys())
 
@@ -612,7 +618,6 @@ def main(args=None):
         topic_list = None
     else:
         topic_list = load_topic_list(args.topic_json)
-    py_trees.logging.level = py_trees.logging.Level.DEBUG
 
     splintered_reality = MultiSplinteredReality(
         jobs=[

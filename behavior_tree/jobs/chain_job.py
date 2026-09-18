@@ -37,6 +37,7 @@ Reference: `subtrees/MoveJoint.py`, `subtrees/Policy.py`, `subtrees/Gripper.py`,
 `subtrees/MoveBlend.py`, `utils/skill_registry_utils.py`.
 """
 
+import copy
 import json
 import os
 import sys
@@ -46,6 +47,7 @@ import py_trees
 import std_msgs.msg as std_msgs
 
 from . import base_job
+from behavior_tree.utils.arm_trace import ArmTrace
 from behavior_tree.utils.skill_registry_utils import skill_facts, skill_init_pose
 from behavior_tree.utils.validation_utils import StepValidationResult
 from behavior_tree.subtrees import Gripper, MoveJoint, Policy
@@ -88,6 +90,26 @@ class ChainJobError(RuntimeError):
 # is the same protection without the reach.
 COMPOSITION_PARAM = "mixer_composition"
 
+# The per-arm parameters the pacing is read from, and what each is.
+#
+# A chain file states each step's `speed`; the other three numbers are the
+# run's, not the file's, and the harness passes them on its command line
+# (`--timeout`, `--gripper-speed`, `--min-step`). The defaults below are that
+# parser's, so a deployment that sets none of them paces exactly as the driver
+# does with no flags -- and a run that sets them feeds BOTH drivers from one
+# place rather than two.
+#
+# `timeout_scale` is the arm client's own: `moveJoint` divides the requested
+# timeout by it, so the number in the request is wall-clock seconds TIMES the
+# scale. It is read here rather than assumed, since a tree that guessed 0.5 on
+# a robot configured for 1.0 would plan every step at half its length.
+PACING_PARAMS = (("chain_timeout", 4.0),
+                 ("chain_speed", None),
+                 ("chain_gripper_speed", 0.4),
+                 ("chain_min_step", 1.0))
+TIMEOUT_SCALE_PARAM = "timeout_scale"
+DEFAULT_TIMEOUT_SCALE = 0.5
+
 
 def _claim_for(step):
     """The request fields one resolved step carries, or None.
@@ -113,19 +135,148 @@ def _claim_for(step):
     return claim or None
 
 
+def chain_timeouts(resolved, args, scale, origin, gripper_origin, trace=None):
+    """What each step's request asks for as its `timeout`, in the file's order.
+
+    ONE pacing, which is the whole reason `chain_spec.pacing` is a package
+    rather than a function in a driver: `schedule_with_speeds` decides each
+    step's WALL-CLOCK duration from how far it travels and how fast the file
+    asks it to go, and the number that goes in the request is that duration
+    times `timeout_scale`, since the arm client divides by it on the way in
+    (`Pacer.requested`). Both drivers compute it from the same inputs, so both
+    plan the same T and every claim describes the same closure.
+
+    A step that FOLLOWS a policy is not paced here: a policy ends where it ends,
+    so the distance is unknown until that step is dispatched. Those get a
+    callable, which reads the arm at dispatch and answers then -- the same
+    reading `chain_spec.Pacer` makes at the same moment. Without a `trace` to
+    read there is nothing to measure and they fall back to the fixed timeout,
+    said out loud by the caller rather than silently.
+
+    A policy step gets None: it takes as long as its episode takes, and its
+    own timeout is the skill's.
+
+    THE UNIT, and it is not the same on both paths. `moveJoint` divides the
+    requested timeout by `timeout_scale` (trajectory_manager does it, once), so
+    an arm step asks for its wall-clock duration TIMES the scale. A GRIPPER step
+    does not go through a planner at all: `gripperGotoPosViaArm` builds the
+    trajectory itself and spans exactly the seconds it is handed
+    (`_action_functions.py`). Scaling that one would make the jaws move at half
+    their length -- measured: 0.984 s against the other driver's 1.825 s for the
+    same jaw travel of the same file, because that driver sends its gripper
+    steps as `moveJoint` and never meets this path. So the conversion happens
+    per step, here, where both units are in view, and nowhere else.
+    """
+    timings = chain_spec.schedule_with_speeds(
+        resolved, origin, gripper_origin, args, scale)
+    out = []
+    for step, (duration, _reason, measured) in zip(resolved, timings):
+        if step["kind"] != "prim":
+            out.append(None)
+        elif measured:
+            out.append(_measured_timeout(step, args, scale, trace))
+        elif step.get("gripper_only"):
+            out.append(duration)
+        else:
+            out.append(duration * scale)
+    return out
+
+
+def _stamps(child, attribute):
+    """Every `attribute` a behaviour or its descendants carries, non-None.
+
+    A step is one behaviour or a subtree of them -- a policy step is a wrapper
+    around its motion -- so the step's own instants are the instants of the
+    motions inside it.
+    """
+    try:
+        nodes = list(child.iterate())
+    except Exception:
+        nodes = [child]
+    return [value for value in (getattr(n, attribute, None) for n in nodes)
+            if value is not None]
+
+
+def _first_stamp(child, attribute):
+    """The earliest of them: when this step STARTED doing whatever it does."""
+    found = _stamps(child, attribute)
+    return min(found) if found else None
+
+
+def _last_stamp(child, attribute):
+    """The latest of them: when the whole step was done with it."""
+    found = _stamps(child, attribute)
+    return max(found) if found else None
+
+
+def _measured_timeout(step, args, scale, trace):
+    """The dispatch-time pacing of one step that follows a policy.
+
+    A callable, evaluated when the step is actually sent: `chain_spec.Pacer`
+    does exactly this for the other driver -- read the arm, measure the
+    distance from there, and hand `step_duration` the step's own speed.
+
+    Always an arm step, so always the scaled unit: `chain_spec` refuses a
+    gripper step straight after a policy (it would hold the arm at a pose
+    nobody knows yet), which is the only way one could arrive here.
+    """
+    fixed = float(args.timeout)
+
+    def resolve():
+        try:
+            return _paced()
+        except Exception:
+            # This runs inside a tick, at the moment the request is built. A
+            # raise here would take the tree down over a pacing number, so the
+            # fixed timeout stands in -- the value this step had before it was
+            # paced at all.
+            return fixed
+
+    def _paced():
+        here = None if trace is None else trace.current_config()
+        if here is None or len(here) != len(step["target"]):
+            # Nothing measured, or a pose of the wrong width: the fixed
+            # timeout, which is what this step had before it was paced at all.
+            # Visible in the run either way -- the plan the mixer describes
+            # carries this number as its closure -- and the job already said
+            # so once when it built the chain from a cold trace.
+            return fixed
+        grip = None if trace is None else trace.current_gripper()
+        local = args
+        speed = step.get("speed")
+        if speed is not None and speed != args.speed:
+            local = copy.copy(args)
+            local.speed = speed
+        distance = max(abs(a - b) for a, b in zip(here, step["target"]))
+        jaw = (abs(step["gripper"] - grip)
+               if step["gripper"] is not None and grip is not None else None)
+        duration, _why = chain_spec.step_duration(distance, jaw, local, scale)
+        return duration * scale
+
+    return resolve
+
+
 def build_children(resolved, action_client, policy_action_client,
-                   robot_name=None, timeout=4.0, facts=None):
+                   robot_name=None, timeout=4.0, facts=None, timeouts=None):
     """The behaviours for one resolved chain, in the file's order.
 
     `facts` maps skill id -> the container's §4 entry, so the step AFTER a
     policy can carry that policy's `end_handover`. Passed in rather than looked
     up here, because the caller has already asked for it to resolve the hubs
     and asking twice would be two answers to one question.
+
+    `timeouts` is `chain_timeouts` for this chain, one entry per step: the
+    file's pacing. None leaves every step at the job's fixed `timeout`, which
+    is what a caller with no deployment to read from gets.
     """
     facts = facts or {}
     children = []
     previous = None
-    for step in resolved:
+    for index, step in enumerate(resolved):
+        # The step's own paced timeout, or the fixed one where nothing paced
+        # it. A policy's timeout is its episode's and is not paced here.
+        paced = None if timeouts is None else timeouts[index]
+        step_timeout = timeout if paced is None else paced
         if step["kind"] == "policy":
             skill_id = step["skill_id"]
             handover = (facts.get(skill_id) or {}).get("end_handover")
@@ -141,10 +292,22 @@ def build_children(resolved, action_client, policy_action_client,
             # The jaws' own step: their own client, their own barrier. Never
             # overlapped INTO -- `Gripper.GOTO` says so itself -- and the seam
             # OUT of it is the NEXT step's threshold, which the file may lower.
+            #
+            # It carries its claim like every other step. On a wiring where the
+            # jaws are a column of the arm controller the motion goes out
+            # through a slot, and a step that arrived there with no claim was
+            # described by the mixer's node default (0.70) instead of the
+            # file's 1.0 -- the seam the file says nothing may overlap into.
+            #
+            # `enable_wait=False`, as the other driver sends every step: a call
+            # that returns only once the jaws have arrived holds the plan gate
+            # for the length of the jaw motion, so the successor's plan would
+            # start after this step rather than during it.
             child = Gripper.GOTO(
                 name=step["label"], action_client=action_client,
-                action_goal=step["gripper"], timeout=timeout,
-                robot_name=robot_name)
+                action_goal=step["gripper"], timeout=step_timeout,
+                robot_name=robot_name, claim=_claim_for(step),
+                enable_wait=False)
         else:
             claim = _claim_for(step)
             if previous is not None and previous["kind"] == "policy":
@@ -172,14 +335,15 @@ def build_children(resolved, action_client, policy_action_client,
                 # hold` resolves to None here, and that is what keeps a grip
                 # across the retreat.
                 gripper=step.get("gripper"),
-                timeout=timeout, robot_name=robot_name, claim=claim)
+                timeout=step_timeout, robot_name=robot_name, claim=claim)
         children.append(child)
         previous = step
     return children
 
 
 def build_chain_root(resolved, action_client, policy_action_client,
-                     robot_name=None, timeout=4.0, facts=None, name="Chain"):
+                     robot_name=None, timeout=4.0, facts=None, name="Chain",
+                     timeouts=None):
     """One `MoveBlend` over the whole file.
 
     `dispatch_on_start=True`, passed explicitly and not through a node
@@ -198,7 +362,8 @@ def build_chain_root(resolved, action_client, policy_action_client,
                      dispatch_on_start=True, robot_name=robot_name)
     root.add_children(build_children(
         resolved, action_client, policy_action_client,
-        robot_name=robot_name, timeout=timeout, facts=facts))
+        robot_name=robot_name, timeout=timeout, facts=facts,
+        timeouts=timeouts))
     return root
 
 
@@ -216,6 +381,17 @@ class Move(base_job.BaseJob):
         self._reported = False
         self._gripper_in_file = False
         self._root = None
+        self._resolved = []
+        self._timeouts = None
+        self._trace = None
+        # One trace per arm, subscribed NOW rather than at goal time: the first
+        # thing a chain needs from it is where the arm is, and a subscription
+        # created in the same call that reads it has heard nothing yet.
+        self._traces = {}
+        for robot_name in (getattr(node, "robot_names", None) or [None]):
+            trace = self.build_trace(robot_name)
+            if trace is not None:
+                self._traces[robot_name] = trace
 
     # ------------------------------------------------------------------
     # Goal handling
@@ -281,6 +457,78 @@ class Move(base_job.BaseJob):
         width = tuple(float(v) for v in width) if width else None
         return limits, width
 
+    def pacing_for(self, robot_name):
+        """`(PacingArgs, timeout_scale)` for this arm.
+
+        The four numbers `chain_spec.step_duration` reads, and the scale the
+        request is expressed in. Each is optional and each default is the other
+        driver's own (`merge_chain.py`'s parser), so a deployment that states
+        none of them paces exactly as that driver does with no flags -- and a
+        run that states them hands both drivers one set of numbers instead of
+        two.
+        """
+        values = {}
+        for key, fallback in PACING_PARAMS:
+            value = self._read_optional_config(robot_name, key)
+            # `chain_speed` unset is not a number but a statement -- "pace
+            # every step at the fixed timeout" -- which is what `--speed`
+            # unset means to the other driver, so None survives as None.
+            values[key] = fallback if value is None else float(value)
+        args = chain_spec.PacingArgs(
+            timeout=values["chain_timeout"],
+            speed=values["chain_speed"],
+            gripper_speed=values["chain_gripper_speed"],
+            min_step=values["chain_min_step"])
+        scale = self._read_optional_config(robot_name, TIMEOUT_SCALE_PARAM)
+        if scale is None:
+            # The arm client's number, and a wrong guess at it paces every step
+            # of the run wrong -- so it is said, not swallowed.
+            self._node.get_logger().warning(
+                "chain_job: {} states no {}; pacing this chain at {} , which "
+                "is what the arm client's own parameter defaults to. A "
+                "deployment configured for another scale plans every step at "
+                "the wrong length.".format(robot_name or "the tree",
+                                           TIMEOUT_SCALE_PARAM,
+                                           DEFAULT_TIMEOUT_SCALE))
+            scale = DEFAULT_TIMEOUT_SCALE
+        scale = float(scale)
+        if scale <= 0.0:
+            raise ChainJobError(
+                "chain_job: {} is {}; the arm client divides by it, so it must "
+                "be positive.".format(TIMEOUT_SCALE_PARAM, scale))
+        return args, scale
+
+    def joints_for(self, robot_name):
+        """`(chain joints, gripper joint or None)` for this arm, or `(None, None)`.
+
+        The names the mixer composes, in the mixer's order -- the same source
+        the joint limits come from. Needed to read the arm at all: a pose
+        assembled out of `/joint_states` by position would be whichever arm the
+        publisher happened to list first.
+        """
+        joints = self._read_optional_config(robot_name, "chain_joints")
+        gripper = self._read_optional_config(robot_name, "gripper_joint")
+        if not joints:
+            return None, None
+        return [str(j) for j in joints], (str(gripper) if gripper else None)
+
+    def build_trace(self, robot_name):
+        """This arm's `ArmTrace`, or None when it declares no joint names.
+
+        The commanded gripper comes from the arm's own mixer, whose node name
+        this tree already spells out to push its threshold
+        (`multi_dynamic_behavior_tree`), and the measured one from the robot.
+        An arm with no `chain_joints` gets none, and the run then answers
+        `unknown` rather than a verdict nobody recorded.
+        """
+        joints, gripper_joint = self.joints_for(robot_name)
+        if not joints:
+            return None
+        namespace = "/{}".format(robot_name) if robot_name else ""
+        return ArmTrace(
+            self._node, joints, gripper_joint,
+            command_topic="{}/overlap_mixer/command_state".format(namespace))
+
     def mixer_composition(self):
         """The composition the running mixer is configured for, or None.
 
@@ -311,7 +559,7 @@ class Move(base_job.BaseJob):
             # Nothing to compare against: the tree cannot read another node's
             # parameters directly, and a deployment that does not mirror it
             # here gets the file's word for it, said out loud.
-            self._node.get_logger().warn(
+            self._node.get_logger().warning(
                 "chain_job: the file asks for composition '{}' and this tree "
                 "cannot see the mixer's ({} unset); running anyway"
                 .format(wanted, COMPOSITION_PARAM))
@@ -391,23 +639,116 @@ class Move(base_job.BaseJob):
         self._reported = False
         self._gripper_in_file = any(s.get("gripper") is not None
                                     for s in resolved)
+
+        # ONE pacing. The other driver plans each step from how far it travels
+        # and how fast the file asks it to go; a job that timed its steps its
+        # own way would plan a different T, and every claim would describe a
+        # different closure for the same file.
+        trace = self._traces.get(robot_name)
+        args, scale = self.pacing_for(robot_name)
+        origin = None if trace is None else trace.current_config()
+        # A pose of the wrong width is not a pose: `zip` would truncate it
+        # against the step's target and measure a distance over whichever
+        # joints happened to line up.
+        width = next((len(s["target"]) for s in resolved
+                      if s.get("target") is not None), None)
+        if origin is not None and width is not None and len(origin) != width:
+            self._node.get_logger().warning(
+                "chain_job: this arm reports {} joints and this file's steps "
+                "name {}; pacing the first step from the file instead"
+                .format(len(origin), width))
+            origin = None
+        if origin is None:
+            # The arm's own pose is the origin of the FIRST step's distance,
+            # and the other driver reads it at the same moment
+            # (`merge_chain.run_chain`). Without it the first step is paced
+            # from its own target -- a distance of zero, so the floor -- and
+            # that is worth a line rather than a silently short first move.
+            first = next((s["target"] for s in resolved
+                          if s.get("target") is not None), None)
+            origin = list(first) if first is not None else []
+            self._node.get_logger().warning(
+                "chain_job: nothing has reported this arm's joints yet, so "
+                "the first step is paced from its own target. Every later "
+                "step chains off the one before it and is unaffected.")
+        self._timeouts = chain_timeouts(
+            resolved, args, scale, origin,
+            None if trace is None else trace.current_gripper(), trace=trace)
+        self._trace = trace
+        self._resolved = resolved
+
         self._root = build_chain_root(
             resolved, action_client, policy_action_client,
-            robot_name=robot_name, facts=facts, name=spec["task"])
+            robot_name=robot_name, facts=facts, name=spec["task"],
+            timeouts=self._timeouts)
         return self._root
 
     # ------------------------------------------------------------------
     # Result
 
+    def jaw_window(self, root):
+        """`(start, end, released_at)` -- the TRANSPORT, or `(None, None, None)`.
+
+        The stretch over which the jaws are asked for nothing: from the end of
+        the LAST policy in the file to the dispatch of the first step after it
+        that commands the gripper. A measured gripper that will not reach its
+        command in there is holding something; outside it a gap is a jaw on its
+        way somewhere, which is not the question.
+
+        The same window the other driver takes (`merge_chain.run_result`), off
+        the same two events -- when the policy's motion ended, and when the
+        releasing step's request went out -- which the motions themselves stamp
+        (`Move.MOVE.dispatched_at` / `finished_at`).
+        """
+        last = next((i for i in range(len(self._resolved) - 1, -1, -1)
+                     if self._resolved[i]["kind"] == "policy"), None)
+        if last is None:
+            # No policy, so no transport: nothing carried anything anywhere.
+            return None, None, None
+        policy = root.children[last]
+        start = _last_stamp(policy, "finished_at") \
+            or _first_stamp(policy, "dispatched_at")
+        if start is None:
+            return None, None, None
+        for index in range(last + 1, len(self._resolved)):
+            step = self._resolved[index]
+            if step.get("gripper") is None:
+                continue
+            end = _first_stamp(root.children[index], "dispatched_at")
+            if end is not None and end > start:
+                return start, end, step["label"]
+        return start, None, None
+
+    def jaw_verdict(self, root):
+        """`(held, jaw_gap, released_at)` for this run's `RESULT` line.
+
+        `n/a` when the file commands no gripper at all -- a robot without one
+        is a valid deployment, not a failed run. `None` (printed `unknown`)
+        when nothing published a column over the window, since `false` there
+        would say the jaws were empty and what happened is that nobody spoke.
+        The test itself is the shared one, so the two drivers' verdicts are one
+        function's output rather than two opinions.
+        """
+        if not self._gripper_in_file:
+            return "n/a", None, None
+        if self._trace is None:
+            return None, None, None
+        start, end, released_at = self.jaw_window(root)
+        if start is None:
+            return None, None, None
+        held, gap = chain_spec.jaws_held(
+            self._trace.commanded_gripper(), self._trace.measured_gripper(),
+            (start, end if end is not None else self._trace.now()))
+        return held, gap, released_at
+
     def post_tick(self):
         """The `RESULT` line, once, when the chain stops running.
 
-        The driver's formatter, so the fields compare. `held` is `n/a` when the
-        file names no gripper column -- a robot without one is a valid
-        deployment, not a failed run -- and `unknown` where a jaw trace exists
-        but nothing published over the transport. This job holds no trace, so
-        it answers `n/a` or `unknown`; a run that wants the jaw verdict records
-        the columns and passes them through `chain_spec.jaws_held`.
+        The driver's formatter, so the fields compare -- the jaw verdict
+        included: the columns come from the deployment's own transport (the
+        mixer's `~/command_state` for what was commanded, `/joint_states` for
+        what the jaws did) and go through `chain_spec.jaws_held`, which is the
+        test the other driver makes.
         """
         root = self._root
         if root is None or self._reported:
@@ -418,9 +759,16 @@ class Move(base_job.BaseJob):
         self._reported = True
         done = sum(1 for child in root.children
                    if child.status == py_trees.common.Status.SUCCESS)
+        try:
+            held, gap, released_at = self.jaw_verdict(root)
+        except Exception as exc:
+            # The verdict is one field of the line; the line itself says what
+            # the run did and must be printed either way.
+            self._node.get_logger().warning(
+                "chain_job: the jaw verdict could not be taken [{}]".format(exc))
+            held, gap, released_at = None, None, None
         line = chain_spec.run_result(
-            self._task, done, self._steps,
-            None if self._gripper_in_file else "n/a", None, None,
+            self._task, done, self._steps, held, gap, released_at,
             time.time() - (self._started_at or time.time()))
         print(line)
         sys.stdout.flush()

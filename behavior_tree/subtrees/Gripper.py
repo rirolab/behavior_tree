@@ -25,16 +25,42 @@ class GOTO(Move.MOVE):
     command to the robot if it is cancelled or interrupted by a higher
     priority behaviour.
     """
-    def __init__(self, name, action_client, action_goal=None, force=1., check_contact=False, timeout=5, robot_name=None):
+    def __init__(self, name, action_client, action_goal=None, force=1., check_contact=False, timeout=5, robot_name=None,
+                 claim=None, enable_wait=True):
+        """
+        Args:
+            enable_wait: whether cac's service call returns only once the jaws
+                have arrived. True is what every job here has always sent, and
+                it is right for a job that has nothing else to do meanwhile.
+                A CHAIN passes False: the whole point of a chain is that the
+                next step is dispatched while this one runs, and a call that
+                does not return until the jaws are done holds the plan gate
+                open for the length of the jaw motion -- so the successor's
+                plan starts after this step instead of during it, and the seam
+                out of a gripper step can never be anything but sequential.
+                The terminal is read off the status channel either way, which
+                is what this behaviour already does.
+            claim: this step's own request fields, or None -- see
+                ``Move.MOVE``. A gripper step of a chain file states a
+                threshold like every other step (1.0: the seam nothing may
+                overlap INTO), and on a wiring where the jaws are a column of
+                the arm controller the motion goes out through a slot and is
+                claimed there like any other. Sent with the command rather than
+                derived here: which writer carries it out is the client's
+                answer, and a claim the client has no slot for is ignored by
+                it, not by this behaviour.
+        """
         super(GOTO, self).__init__(name=name,
                                    action_client=action_client,
                                    action_goal=action_goal,
                                    robot_name=robot_name,
-                                   goal_channel=None)
+                                   goal_channel=None,
+                                   claim=claim)
 
         self.force         = force
         self.check_contact = check_contact
         self.timeout       = timeout
+        self.enable_wait   = bool(enable_wait)
 
         # A gripper's own motion is its own step, never overlapped *into*.
         #
@@ -50,6 +76,64 @@ class GOTO(Move.MOVE):
         # passthrough column the motion really does go out through a slot.
         self.overlappable = False
 
+    def make_command(self, uuid=None, enable_wait=None):
+        """Export this gripper move as a complex action client command.
+
+        Built here rather than inline in ``update`` so that what this
+        behaviour asks the stack to do can be read without ticking it, which is
+        how every other motion in this package is pinned.
+
+        NOT through ``Move._make_command``: this command names no channel and
+        no robot, and has never carried either -- the writer is the client's
+        answer (``ArmClient._gripper_writer``) and adding fields to a request
+        that has worked on every wiring would be a change nobody asked for.
+        """
+        command = {'action_type': 'gripperGotoPos',
+                   'goal': self.action_goal,
+                   'force': self.force,
+                   'check_contact': self.check_contact,
+                   'timeout': self.requested_timeout(),
+                   'enable_wait': (self.enable_wait if enable_wait is None
+                                   else bool(enable_wait))}
+        if uuid is not None:
+            command['uuid'] = uuid
+        # Last, so this step's own statement wins. cac forwards the fields it
+        # recognises to whichever writer carries the motion out
+        # (`_action_functions.GRIPPER_CLAIM_KWARGS`) and ignores them on a
+        # wiring with no slot to claim.
+        if self.claim:
+            command.update(self.claim)
+        return command
+
+    def ready_for_successor(self, threshold, dispatch_on_start=False):
+        """May the NEXT motion be dispatched now? -- at this step's START.
+
+        A gripper step is short: about one plan round trip (ROBUST1D §C floors
+        a jaw move at 1.00 s and a plan takes 0.2-0.44 s). The inherited answer
+        is `progress > 0`, which is the tick the MIXER starts the jaws moving,
+        so the successor's plan begins with a fraction of a second left and
+        whether it is armed before the jaws stop is a race -- the same file
+        opening a seam in one run and not the next.
+
+        So the question is answered at this step's own start instead: once this
+        motion holds a slot it has been planned, armed and handed to the mixer,
+        and its successor's plan round trip runs against the WHOLE jaw motion
+        rather than what is left of it. Nothing about the seam moves here --
+        the mixer still decides it, from the successor's claim and the veto
+        that holds it until the jaws are still (rule iii). This decides only
+        when the successor is planned, which is the harness's own rule (it
+        waits for the previous step to reach a slot).
+
+        Off the streaming path -- a gripper with an action server of its own --
+        no slot ever carries this goal, and the chain then waits for SUCCESS,
+        which is what a motion the mixer never sees has to do.
+        """
+        if self.status == py_trees.common.Status.SUCCESS:
+            return True
+        if not dispatch_on_start:
+            return super(GOTO, self).ready_for_successor(
+                threshold, dispatch_on_start)
+        return self._owning_slot() is not None
 
     def update(self):
         self.logger.debug("%s.update()" % self.__class__.__name__)
@@ -62,13 +146,8 @@ class GOTO(Move.MOVE):
         if not self.sent_goal:
             self.goal_uuid_des = np.random.randint(0, 255, size=16,
                                             dtype=np.uint8)            
-            cmd_str = json.dumps({'action_type': 'gripperGotoPos',
-                                  'goal': self.action_goal,
-                                  'uuid': self.goal_uuid_des.tolist(),
-                                  'force': self.force,
-                                  'check_contact': self.check_contact,
-                                  'timeout': self.timeout,
-                                  'enable_wait': True})
+            cmd_str = json.dumps(
+                self.make_command(uuid=self.goal_uuid_des.tolist()))
             req = StringGoalStatus.Request(data=cmd_str)
             self.future = self.cmd_req.call_async(req)
             

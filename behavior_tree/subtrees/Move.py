@@ -1,5 +1,6 @@
 import typing
 import json
+import time
 
 import rclpy
 from action_msgs.msg import GoalStatus
@@ -62,6 +63,15 @@ class MOVE(py_trees.behaviour.Behaviour):
         self.goal_channel  = goal_channel
         self.action_goal   = action_goal
         self.claim         = dict(claim) if claim else None
+        # When this motion's request left, and when the motion stopped. Two
+        # facts a chain has to have to say what a run did -- the window the jaw
+        # verdict is taken over runs from the end of the last policy to the
+        # dispatch of the step that releases -- and a motion is the only thing
+        # that knows either. Stamped here rather than at each of the dozen
+        # `sent_goal = True` lines, so a behaviour added later is stamped too.
+        self._sent_goal    = False
+        self.dispatched_at = None
+        self.finished_at   = None
         self.sent_goal     = False
         self.cmd_req       = action_client
         self.future        = None
@@ -154,6 +164,45 @@ class MOVE(py_trees.behaviour.Behaviour):
         # disambiguate) while its command still goes through a mixer slot.
         self.overlappable = bool(self.stream_slots)
 
+    @property
+    def sent_goal(self):
+        """Whether this behaviour's request has gone out."""
+        return self._sent_goal
+
+    @sent_goal.setter
+    def sent_goal(self, value):
+        value = bool(value)
+        if value and not self._sent_goal:
+            self.dispatched_at = self.now()
+        self._sent_goal = value
+
+    def now(self):
+        """The clock every stamp and every trace in this run shares.
+
+        The node's, once there is one. Without a node -- a unit test -- the
+        wall clock, which is the same clock a node without `use_sim_time` reads
+        anyway.
+        """
+        if self._node is None:
+            return time.time()
+        return self._node.get_clock().now().nanoseconds * 1e-9
+
+    def requested_timeout(self):
+        """The `timeout` this request asks for, resolved at DISPATCH.
+
+        A number for every motion whose duration is known when the subtree is
+        built, and a callable for one whose is not: a step planned from the
+        measured arm -- the step after a policy, which ends where it ends --
+        cannot be paced until it is sent, so its duration arrives here as the
+        question rather than the answer. Asked once per request, where the
+        answer is still true.
+
+        The callable is the caller's and must not raise; a pacing number is not
+        worth a tree.
+        """
+        timeout = self.timeout
+        return timeout() if callable(timeout) else timeout
+
     def _make_command(self, action_type, goal, uuid=None, enable_wait=False, **kwargs):
         """
         Build the complex action client command dictionary for blend composition.
@@ -162,7 +211,7 @@ class MOVE(py_trees.behaviour.Behaviour):
         command = {
             "action_type": action_type,
             "goal": goal,
-            "timeout": self.timeout,
+            "timeout": self.requested_timeout(),
             "enable_wait": enable_wait,
         }
         # Omitted when the tree names no channel, which is not the same as
@@ -200,6 +249,9 @@ class MOVE(py_trees.behaviour.Behaviour):
     def initialise(self):
         """ """
         self.logger.debug(f"{self.__class__.__name__}.initialise()")
+        self.dispatched_at = None
+        self.finished_at = None
+        self._sent_goal = False
         self.sent_goal = False
 
 
@@ -392,6 +444,13 @@ class MOVE(py_trees.behaviour.Behaviour):
     def terminate(self, new_status):
         """ """
         self.logger.debug("%s.terminate()" % self.__class__.__name__)
+        # When this motion stopped, whichever way it stopped. The chain's jaw
+        # window opens at the end of the last policy, and nothing else in the
+        # tree records that instant.
+        if self.finished_at is None and new_status in (
+                py_trees.common.Status.SUCCESS,
+                py_trees.common.Status.FAILURE):
+            self.finished_at = self.now()
         if self.current_goal_id() is None:
             self.feedback_message = "goal_id is not available"
             return py_trees.common.Status.SUCCESS

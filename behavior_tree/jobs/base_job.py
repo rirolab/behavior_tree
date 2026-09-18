@@ -1,3 +1,4 @@
+import ast
 import copy, sys
 import py_trees, py_trees_ros
 import rclpy
@@ -209,7 +210,15 @@ class BaseJob(object):
         if value is None:
             return None
         if isinstance(value, str):
-            value = eval(value)
+            # A yaml that writes a list as a string still reads as a list --
+            # `"[0.1, 0.2]"` is how several profiles state a waypoint. Parsed
+            # as a LITERAL, not evaluated: a parameter whose value is a plain
+            # name ("gripper_r_joint1", a joint) is a name, and `eval` raised
+            # `NameError` on it rather than handing it back.
+            try:
+                value = ast.literal_eval(value)
+            except (ValueError, SyntaxError):
+                pass
         return value
 
     @property
