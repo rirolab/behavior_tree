@@ -149,15 +149,51 @@ def _log_once(message):
         sys.stderr.write("skill_registry: " + message + "\n")
 
 
+def skill_init_gripper(skill_id, arm_dof=7):
+    """The gripper value of a skill's ``init_pose``, or None.
+
+    The other half of ``skill_init_config``, and the reason it exists: a policy
+    declares the pose it was trained to start from, the arm prefix of that pose
+    goes to the preceding joint move, and the gripper value used to stop here --
+    so the policy began from whatever the jaws were last left at, which is the
+    difference between starting a grasp holding something and starting it
+    empty. Delivered as a carried column of the approach's own trajectory, so
+    the jaws are there by the time the seam opens.
+
+    Which column: the one beyond the arm's own width, at whatever width the arm
+    is. A skill declaring ``arm_dof`` columns has no gripper intent and gets
+    None, which the caller passes on as an omission (rule i) rather than as a
+    guess. Nothing here assumes eight.
+
+    None as well when the skill is unknown, declares no ``init_pose``, or is
+    wider than one arm plus a gripper -- a dual-arm skill's columns cannot be
+    split without knowing which arm is asking, exactly as in
+    ``skill_init_config``.
+    """
+    skill = skill_facts(skill_id)
+    if not isinstance(skill, dict):
+        return None
+    pose = skill.get("init_pose")
+    joints = skill.get("action_joints") or []
+    if not pose or len(joints) != arm_dof + 1:
+        return None
+    try:
+        return float(pose[joints[arm_dof]])
+    except (KeyError, TypeError, ValueError):
+        # A pose that does not cover the column it declares is not a pose.
+        return None
+
+
 def skill_init_config(skill_id, arm_dof=7):
     """The arm-joint prefix of a skill's ``init_pose``, or None.
 
     ``init_pose`` arrives keyed by joint name, in the skill's own
-    ``action_joints`` order -- which for a single-arm policy is seven arm joints
-    followed by the gripper.  Only the arm prefix is returned: the preceding
-    primitive is a joint-space arm move, and the gripper is commanded on its own
-    channel -- a MOVEJ handed eight values would be commanding a grasp it knows
-    nothing about.
+    ``action_joints`` order -- which for a single-arm policy is the arm's joints
+    followed by the gripper.  Only the arm prefix is returned: a MOVEJ's ``goal``
+    is the chain the planner plans, and a gripper value inside it would be a
+    column the planner does not own. The gripper travels beside the goal instead
+    -- ``skill_init_gripper``, carried through the same trajectory as a
+    passthrough column.
 
     Returns None when the skill is unknown, declares no ``init_pose``, or is
     wider than one arm plus a gripper -- a dual-arm (16-column) skill is not

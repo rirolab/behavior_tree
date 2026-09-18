@@ -17,13 +17,61 @@ class MOVEJ(Move.MOVE):
     command to the robot if it is cancelled or interrupted by a higher
     priority behaviour.
     """
-    def __init__(self, name, action_client, action_goal=None, timeout=2.0, robot_name=None):
+    def __init__(self, name, action_client, action_goal=None, timeout=2.0,
+                 robot_name=None, gripper=None, gripper_ramp_param=None):
+        """
+        Args:
+            gripper: a gripper position to carry through this motion's own
+                trajectory, or None for no gripper intent at all. Not part of
+                ``action_goal``: the goal is the chain the planner plans, and
+                this is a column the planner does not own, so it travels beside
+                it and cac appends it (``_append_passthrough_columns``). None
+                means the column is OMITTED, which is how a motion says it has
+                nothing to say about the jaws (rule i) -- not the same as
+                sending their current position, which two live sources cannot
+                tell from a deliberate "stay open".
+            gripper_ramp_param: the node parameter holding the fraction of this
+                motion by which a carried gripper must have arrived -- this
+                motion's own out-seam. Read live, since the composite that
+                chains this motion reads the same parameter live and the two
+                must not overlap at two numbers.
+        """
         super(MOVEJ, self).__init__(name=name,
                                    action_client=action_client,
                                    action_goal=action_goal,
                                    timeout=timeout,
                                    robot_name=robot_name)
+        self.gripper = gripper
+        self.gripper_ramp_param = gripper_ramp_param
         self.logger.debug("%s.__init__()" % self.__class__.__name__)
+
+    def gripper_ramp_fraction(self):
+        """The fraction of this motion by which a carried gripper must be there.
+
+        This motion's out-seam. A column shaped over the whole motion has
+        delivered only s(threshold) of its target when the seam opens, which is
+        a gripper visibly not yet where the policy about to take over was
+        trained to find it. Stated as a fraction rather than in seconds since
+        the planned duration is trajectory_manager's answer, not the tree's.
+
+        None with no node, no named parameter, or a value that is not a fraction
+        -- and the ramp then defaults to the whole motion, which is what every
+        motion did before the key existed and is the right answer at threshold
+        1.0 anyway.
+        """
+        if self._node is None or self.gripper_ramp_param is None:
+            return None
+        try:
+            value = self._node.get_parameter(self.gripper_ramp_param).value
+        except Exception:
+            return None
+        try:
+            fraction = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not 0.0 < fraction <= 1.0:
+            return None
+        return fraction
 
     def make_command(self, uuid=None, enable_wait=False):
         """
@@ -33,8 +81,15 @@ class MOVEJ(Move.MOVE):
         goal = {}
         for i, ang in enumerate(self.action_goal):
             goal[str(i)] = ang
+        carried = {}
+        if self.gripper is not None:
+            carried["gripper"] = float(self.gripper)
+            fraction = self.gripper_ramp_fraction()
+            if fraction is not None:
+                carried["passthrough_ramp_fraction"] = fraction
         return self._make_command(
             "moveJoint", json.dumps(goal), uuid=uuid, enable_wait=enable_wait,
+            **carried
         )
 
     def update(self):

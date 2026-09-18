@@ -7,7 +7,10 @@ import py_trees, py_trees_ros
 import std_msgs.msg as std_msgs
 
 from . import base_job
-from behavior_tree.utils.skill_registry_utils import skill_init_config
+from behavior_tree.utils.skill_registry_utils import (
+    skill_init_config,
+    skill_init_gripper,
+)
 from behavior_tree.utils.validation_utils import StepValidationResult
 from behavior_tree.subtrees import MoveJoint, MovePose, Gripper, Policy, WorldModel
 from behavior_tree.subtrees.MoveBlend import (
@@ -197,17 +200,32 @@ class Move(base_job.BaseJob):
             )
             if approach_config is None:
                 approach_config = init_config
+            # And the gripper the skill declares, carried through this same
+            # motion so the jaws are AT the policy's start value when the seam
+            # opens. Without it the policy begins from whatever the jaws were
+            # last left at -- the difference between starting a grasp holding
+            # something and starting it empty -- since nothing else sends it.
+            #
+            # None whenever the skill declares no column beyond the arm, or the
+            # registry cannot answer: the command then omits the gripper
+            # entirely, which is how a motion says it has no intent for the
+            # jaws rather than commanding them to stay put.
+            approach_gripper = skill_init_gripper(
+                goal[idx].get("skill_id"), arm_dof=len(init_config)
+            )
             s_init_1 = MoveJoint.MOVEJ(name="Init", action_client=action_client,
                                        action_goal=approach_config,
+                                       gripper=approach_gripper,
+                                       gripper_ramp_param=OVERLAP_THRESHOLD_PARAM,
                                        robot_name=robot_name)
             policy = Policy.create_subtree(action_client, goal[idx], robot_name=robot_name)
             s_init_2 = MoveJoint.MOVEJ(name="Init2", action_client=action_client,
                                        action_goal=init_config, robot_name=robot_name)
             s_place = MoveJoint.MOVEJ(name="Place", action_client=action_client,
                                       action_goal=place_config, robot_name=robot_name)
-            s_open = Gripper.GOTO_VIA_ARM(name="Open", action_client=action_client,
-                                          action_goal=blackboard.gripper_open_pos,
-                                          timeout=2.0, robot_name=robot_name)
+            s_open = Gripper.GOTO(name="Open", action_client=action_client,
+                                  action_goal=blackboard.gripper_open_pos,
+                                  timeout=2.0, robot_name=robot_name)
             s_init_3 = MoveJoint.MOVEJ(name="Init3", action_client=action_client,
                                        action_goal=init_config, robot_name=robot_name)
             s_pre_init_2 = MoveJoint.MOVEJ(name="PreInit2", action_client=action_client,

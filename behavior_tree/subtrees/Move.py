@@ -30,9 +30,12 @@ class MOVE(py_trees.behaviour.Behaviour):
             timeout (:obj:`float`): command timeout in seconds.
             robot_name (:obj:`str`): optional robot namespace.
             goal_channel (:obj:`str`): action status channel, ``arm`` or
-                ``gripper``. The real-robot line had dropped this because its
-                arm_client published one status topic for everything; the merged
-                arm_client splits it per channel, so it is load-bearing again.
+                ``gripper``, or ``None`` when the tree does not name one. The
+                real-robot line had dropped this since its arm_client published
+                one status topic for everything; the merged arm_client splits it
+                per channel, so it is load-bearing again. ``None`` means the
+                route is the client's to decide and the behaviour watches both
+                channels -- see ``status_channels``.
         """
         super(MOVE, self).__init__(name=name)
 
@@ -47,15 +50,32 @@ class MOVE(py_trees.behaviour.Behaviour):
         ## self.goal_id       = None
         ## self.goal_status   = None
         self.timeout       = timeout
+        # The ROS node, once `setup` runs. None until then, and None in a unit
+        # test, so everything that reads it has to work without one.
+        self._node         = None
+
+        # Which status channels can report this goal.
+        #
+        # A behaviour that names a channel gets that one. A behaviour that names
+        # none watches both and claims whichever one carries its own goal id --
+        # which is the only way to stay out of the wiring: whether a gripper
+        # command leaves on the arm controller's stream or on a gripper server
+        # is the client's answer (`ArmClient._gripper_writer`), and the status
+        # appears on the channel the motion actually took. Deciding it here
+        # would mean the tree had learned the deployment.
+        self.status_channels = ((self.goal_channel,) if self.goal_channel
+                                else ("arm", "gripper"))
 
         # Under overlap a motion is streamed and its status arrives on one of
         # the two slot channels (arm/a, arm/b) rather than the single arm
         # channel, because two arm motions are live at once and one channel
         # cannot represent both. The behaviour does not know in advance which
         # slot it will land in, so it watches both and claims whichever one is
-        # carrying its own goal id. Only used on the arm channel; the gripper is
-        # never streamed.
-        self.stream_slots = ("a", "b") if self.goal_channel == "arm" else ()
+        # carrying its own goal id. Slots exist on the arm channel only -- a
+        # gripper server is never streamed -- so a behaviour watching both
+        # channels still has exactly one slot pair to search.
+        self.slot_channel = "arm" if "arm" in self.status_channels else None
+        self.stream_slots = ("a", "b") if self.slot_channel else ()
 
         # Namespacing lets multi-robot trees keep goal state isolated per arm.
         self.blackboard = self.attach_blackboard_client(
@@ -70,24 +90,30 @@ class MOVE(py_trees.behaviour.Behaviour):
         # ("arm_client/{arm,gripper}/goal_status") because the arm and the
         # gripper are cancelled and retired independently under overlap. Flat
         # keys here would have the gripper's status overwrite the arm's.
-        self.goal_id_key = f"{self.goal_channel}/goal_id"
-        self.goal_status_key = f"{self.goal_channel}/goal_status"
-        self.blackboard.register_key(
-            key=self.goal_id_key,
-            access=py_trees.common.Access.READ,
-        )
-        self.blackboard.register_key(
-            key=self.goal_status_key,
-            access=py_trees.common.Access.READ,
-        )
+        self.channel_keys = {}
+        for channel in self.status_channels:
+            keys = {
+                "goal_id": f"{channel}/goal_id",
+                "goal_status": f"{channel}/goal_status",
+            }
+            self.channel_keys[channel] = keys
+            for key in keys.values():
+                self.blackboard.register_key(
+                    key=key, access=py_trees.common.Access.READ)
+        # The first channel's pair, kept under the old names: it is what a
+        # single-channel behaviour reads, and what a two-channel one falls back
+        # to before either channel has reported anything of its own.
+        first = self.status_channels[0]
+        self.goal_id_key = self.channel_keys[first]["goal_id"]
+        self.goal_status_key = self.channel_keys[first]["goal_status"]
 
         # Slot channels: goal_id, goal_status, and progress per slot.
         self.slot_keys = {}
         for slot in self.stream_slots:
             keys = {
-                "goal_id": f"{self.goal_channel}/{slot}/goal_id",
-                "goal_status": f"{self.goal_channel}/{slot}/goal_status",
-                "progress": f"{self.goal_channel}/{slot}/progress",
+                "goal_id": f"{self.slot_channel}/{slot}/goal_id",
+                "goal_status": f"{self.slot_channel}/{slot}/goal_status",
+                "progress": f"{self.slot_channel}/{slot}/progress",
             }
             self.slot_keys[slot] = keys
             for key in keys.values():
@@ -114,8 +140,12 @@ class MOVE(py_trees.behaviour.Behaviour):
             "goal": goal,
             "timeout": self.timeout,
             "enable_wait": enable_wait,
-            "goal_channel": self.goal_channel,
         }
+        # Omitted when the tree names no channel, which is not the same as
+        # naming a wrong one: cac reads an absent `goal_channel` as "you decide"
+        # and answers from the writer it actually has.
+        if self.goal_channel is not None:
+            command["goal_channel"] = self.goal_channel
         if uuid is not None:
             command["uuid"] = uuid
         if self.robot_name is not None:
@@ -125,6 +155,11 @@ class MOVE(py_trees.behaviour.Behaviour):
         
     def setup(self, node):
         """ """
+        # Kept, as `MoveBlend.setup` keeps it: a behaviour that has to agree
+        # with the composite chaining it -- on the threshold the seam opens at,
+        # say -- reads the same live node parameter the composite reads, rather
+        # than being handed a copy that freezes at startup.
+        self._node = node
         self.feedback_message = f"{self.name}: setup"
         ## self.node = node
         ## self.node.create_subscription(GoalStatus, 'arm_client/goal_status',
@@ -169,12 +204,28 @@ class MOVE(py_trees.behaviour.Behaviour):
                 return slot
         return None
 
+    def _owning_channel(self):
+        """The plain status channel carrying this behaviour's goal id, or None.
+
+        The same uuid match as `_owning_slot`, one level out: a behaviour that
+        named no channel is told where its motion went by finding itself there.
+        A behaviour that named one searches a tuple of length one, so this is
+        the identity for every other subclass.
+        """
+        for channel in self.status_channels:
+            if self._uuid_matches(self._read(self.channel_keys[channel]["goal_id"])):
+                return channel
+        return None
+
     def current_goal_id(self):
-        """Goal id for this behaviour: from its slot if streamed, else the arm
-        channel."""
+        """Goal id for this behaviour: from its slot if streamed, else from
+        whichever watched channel reports it, else whatever the first one holds."""
         slot = self._owning_slot()
         if slot is not None:
             return self._read(self.slot_keys[slot]["goal_id"])
+        channel = self._owning_channel()
+        if channel is not None:
+            return self._read(self.channel_keys[channel]["goal_id"])
         return self._read(self.goal_id_key)
 
     def current_goal_status(self):
@@ -182,7 +233,24 @@ class MOVE(py_trees.behaviour.Behaviour):
         slot = self._owning_slot()
         if slot is not None:
             return self._read(self.slot_keys[slot]["goal_status"])
+        channel = self._owning_channel()
+        if channel is not None:
+            return self._read(self.channel_keys[channel]["goal_status"])
         return self._read(self.goal_status_key)
+
+    def cancel_channel(self):
+        """The channel a cancel for this goal must name.
+
+        The one its status came back on, since that is the channel cac is
+        driving it from. A slot is the arm channel's, so a streamed motion
+        cancels the arm. Falls back to the declared channel when nothing carries
+        the goal -- `terminate` only sends a cancel once something does, so the
+        fallback is for callers rather than for the cancel itself.
+        """
+        if self._owning_slot() is not None:
+            return self.slot_channel
+        channel = self._owning_channel()
+        return channel if channel is not None else self.goal_channel
 
     def current_progress(self):
         """Fraction of this motion completed, in [0, 1], or None.
@@ -270,9 +338,11 @@ class MOVE(py_trees.behaviour.Behaviour):
             # The channel matters: cac cancels every channel when it is not
             # told one, and under overlap retiring the outgoing arm motion
             # would take the gripper -- and the incoming motion's hold on it --
-            # down with it.
+            # down with it. The channel is the one this goal's status arrived
+            # on, not a declared one, so a command whose route cac chose is
+            # cancelled where it actually went.
             req.data = json.dumps({'action_type': 'cancel_goal',
-                                   'goal_channel': self.goal_channel,
+                                   'goal_channel': self.cancel_channel(),
                                    'enable_wait': True})
             self.future = self.cmd_req.call_async( req )
         self.logger.debug("%s.terminate()[%s->%s]" % (self.__class__.__name__, self.status, new_status))            

@@ -26,7 +26,8 @@ makes this behave exactly like ``Sequence(memory=True)``: the next child starts
 only when the current one is fully done.
 
 ``dispatch_on_start`` splits that one trigger in two. Dispatching a motion is
-not free -- a tree tick at 2 Hz plus the primitive's IK, measured at 0.2 to
+not free -- a tree tick at 10 Hz (``dynamic_behavior_tree.DEFAULT_TICK_FREQUENCY``,
+and a launch file may say otherwise) plus the primitive's IK, measured at 0.2 to
 0.44 s -- and under the threshold gate all of it is spent *after* the mixer
 already wanted to blend. Measured on the 80 mm square, a requested 0.75 fired
 at an effective 0.908, and 0.60 at 0.976, i.e. no overlap at all. With this on,
