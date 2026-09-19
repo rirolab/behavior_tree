@@ -280,9 +280,19 @@ def build_children(resolved, action_client, policy_action_client,
         if step["kind"] == "policy":
             skill_id = step["skill_id"]
             handover = (facts.get(skill_id) or {}).get("end_handover")
+            goal = {"skill_id": skill_id, "timeout": timeout}
+            # The claim this step states, in the REQUEST. A policy's seam used
+            # to be the container's `claim_progress_threshold` whatever the file
+            # said: the file's number was read, printed by `describe`, and then
+            # dropped on the way to the mixer, so a chain asking for 1.0 -- the
+            # no-overlap baseline -- still opened a 0.98 seam. The claim belongs
+            # to the request because a container serves many chains and a node
+            # parameter mutated around a run belongs to none of them.
+            if step.get("threshold") is not None:
+                goal["claim_progress_threshold"] = float(step["threshold"])
             child = Policy.create_subtree(
                 policy_action_client,
-                {"skill_id": skill_id, "timeout": timeout},
+                goal,
                 robot_name=robot_name,
                 end_handover=handover,
                 early_retreat=bool(step.get("early_retreat")),
@@ -318,9 +328,18 @@ def build_children(resolved, action_client, policy_action_client,
                 # the measured arm now, because a policy's endpoint is not
                 # knowable in advance. Under the delta composition that origin
                 # cancels out of the endpoint (ROUND15 §7).
+                # ... unless THIS step states one. The container's number is
+                # the right answer for a step that asked for nothing, and only
+                # then: a file that names a threshold here has said what it
+                # wants, and `threshold_explicit` is what tells that apart from
+                # a value inherited from `defaults` (they can be the same
+                # number). `plan_from_arm` is about WHERE this motion starts,
+                # not about its claim, so it holds either way.
                 handover = (facts.get(previous["skill_id"]) or {}).get(
                     "end_handover") or {}
                 threshold = handover.get("progress_threshold")
+                if step.get("threshold_explicit") and step.get("threshold") is not None:
+                    threshold = float(step["threshold"])
                 if threshold is not None and step.get("early_retreat", True):
                     claim = dict(claim or {})
                     claim["claim_progress_threshold"] = float(threshold)
