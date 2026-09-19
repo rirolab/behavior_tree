@@ -79,7 +79,29 @@ chain_spec = _import_chain_spec()
 
 
 class ChainJobError(RuntimeError):
-    """A chain this deployment cannot run as written."""
+    """A chain this deployment cannot run as written.
+
+    `task` and `steps` carry what the file said about itself where the refusal
+    happened late enough to know it. A refusal is a run that did nothing, and
+    it is reported as one -- `RESULT task=<task> steps=0/<steps>` -- so the
+    refusal ends the run the way a failure does instead of leaving the driver
+    waiting for a line that is never coming.
+    """
+
+    def __init__(self, message, task=None, steps=0):
+        super(ChainJobError, self).__init__(message)
+        self.task = task
+        self.steps = steps
+
+
+def _task_of(path):
+    """A refused file's task name when the file never parsed far enough to say.
+
+    The basename without its suffix, which is what a chain file is called by
+    everywhere else it is named, so the `RESULT` line of a refusal still points
+    at a file rather than at `None`.
+    """
+    return os.path.splitext(os.path.basename(str(path or "")))[0] or "unknown"
 
 
 # The file's `composition` and `defer` are the harness's knobs: it SETS the
@@ -618,7 +640,21 @@ class Move(base_job.BaseJob):
             pose = skill_init_pose(skill_id, arm_dof=len(limits))
             if pose is not None:
                 init_poses[skill_id] = pose
-        resolved = chain_spec.resolve(spec, init_poses)
+        try:
+            resolved = chain_spec.resolve(spec, init_poses)
+        except chain_spec.ChainSpecError as err:
+            # The file parsed and its steps counted; what failed is resolving
+            # one of them. The error is ANNOTATED and re-raised rather than
+            # wrapped, so the refusal can be reported as `steps=0/<n>` rather
+            # than as `0/0` -- the difference between "this eight-step chain
+            # did nothing" and "there was no chain" -- without changing the
+            # type a caller catches. `chain_spec` raises `ChainSpecError` and
+            # that is what `load_chain` has always raised for a file it could
+            # not resolve; wrapping it in a `ChainJobError` broke the callers
+            # that name the type (`test_fr3_chain.py`, two cases).
+            err.task = spec.get("task")
+            err.steps = len(spec["steps"])
+            raise
         return spec, resolved, facts
 
     def create_root(self, action_client, idx="1", goal=std_msgs.Empty(),
@@ -635,9 +671,11 @@ class Move(base_job.BaseJob):
             # A chain file that does not validate is a typing mistake, and the
             # answer to it is the sentence, not a stack trace or a tree that
             # half-runs.
-            self._node.get_logger().error(
+            self.refuse_chain(
                 "### the chain file cannot be run as written:\n###   {}"
-                .format(err))
+                .format(err),
+                task=getattr(err, "task", None) or _task_of(path),
+                steps=getattr(err, "steps", 0))
             return None
         undescribed = [s["skill_id"] for s in resolved
                        if s["kind"] == "policy" and not facts.get(s["skill_id"])]
@@ -659,7 +697,7 @@ class Move(base_job.BaseJob):
             # (`open_skills`). Without it there is no episode length, no
             # `end_handover` and no init pose, so the step could not be built
             # correctly even if something did answer the goal.
-            self._node.get_logger().error(
+            self.refuse_chain(
                 "### the chain file cannot be run as written:\n"
                 "###   {}: no container describes {} -- this deployment serves "
                 "no such skill. A stack launched with `with_policy:=false` "
@@ -667,7 +705,8 @@ class Move(base_job.BaseJob):
                 "would be sent and never answered, and the step's episode "
                 "length and `end_handover` are unknown. Bring up the policy "
                 "side for this skill, or take the policy step out."
-                .format(path, ", ".join(undescribed) or "its policy step"))
+                .format(path, ", ".join(undescribed) or "its policy step"),
+                task=spec.get("task"), steps=len(resolved))
             return None
 
         # BEFORE the subtree is inserted, and byte-equal to what the driver
@@ -783,6 +822,41 @@ class Move(base_job.BaseJob):
             self._trace.commanded_gripper(), self._trace.measured_gripper(),
             (start, end if end is not None else self._trace.now()))
         return held, gap, released_at
+
+    def refuse_chain(self, message, task=None, steps=0):
+        """Refuse a chain out loud AND end the run: the reason, then `RESULT`.
+
+        Every layer under this one already answers a skill nothing serves. The
+        container describes one checkpoint and refuses any other id by name;
+        `policy_manager` turns that into `found: false` with the container and
+        the id in the reason (`_get_skill_callback`); `skill_facts` returns
+        None; and `chain_spec.resolve` or the guard above says which step of
+        which file cannot be built. What no layer did was END THE RUN: the job
+        returned None, `pre_tick_handler` dropped the goal, and the `RESULT`
+        line -- the one thing every driver of a chain file answers with -- was
+        never printed. Measured on Isaac (TREE2B5 §6c) and reproduced on a stub
+        (`phase1/stub_cube_like_unserved.yaml`): no RESULT, no seam, the arm at
+        park, and the run ending only on the caller's wall clock. On a robot
+        that is a typo parking the arm under a silent tree.
+
+        So a refusal reports itself as what it is -- a run in which none of the
+        file's steps ran -- through the same formatter a finished chain uses,
+        which is why `steps=0/{n}` and not a second kind of line. `held` is
+        `unknown` rather than `n/a`: nothing was driven, so nothing was
+        measured, and a refusal must not be able to look like a deployment
+        without a gripper.
+        """
+        self._node.get_logger().error(message)
+        # `_reported` guards the pair: `post_tick` prints at most one RESULT
+        # per chain and so does this, and a refused chain has no root for
+        # `post_tick` to read anyway.
+        self._reported = True
+        self._root = None
+        line = chain_spec.run_result(task or "unknown", 0, int(steps or 0),
+                                     None, None, None, 0.0)
+        print(line)
+        sys.stdout.flush()
+        return line
 
     def post_tick(self):
         """The `RESULT` line, once, when the chain stops running.
