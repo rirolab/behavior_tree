@@ -55,6 +55,12 @@ class MOVEBYPOLICY(Move.MOVE):
         self.end_handover = dict(end_handover) if end_handover else None
         self.early_retreat = bool(early_retreat)
 
+        # Has THIS episode been seen below its own floor yet? See
+        # `ready_for_successor`. False until a progress of this motion's has
+        # been read, which is what separates a running episode from the
+        # terminal value the previous one left on the slot's keys.
+        self._seen_below_floor = False
+
         # A policy step is a slot motion, and is found the way every other one
         # is: by matching its own goal id against each slot's.
         #
@@ -139,11 +145,16 @@ class MOVEBYPOLICY(Move.MOVE):
         0.70), because dispatching is what costs the plan's 0.2-0.44 s and that
         has to be paid BEFORE the seam may open, not after.
         """
-        if not self.end_handover:
+        # `getattr`: `update` asks every tick now, and a behaviour assembled
+        # without `__init__` -- a test double for the refusal path -- has no
+        # `end_handover` at all. "No declaration" and "not constructed" are the
+        # same answer here, which is None.
+        declared = getattr(self, "end_handover", None)
+        if not declared:
             return None
-        floor = self.end_handover.get("still_from")
+        floor = declared.get("still_from")
         if floor is None:
-            floor = self.end_handover.get("progress_threshold")
+            floor = declared.get("progress_threshold")
         return None if floor is None else float(floor)
 
     def ready_for_successor(self, threshold, dispatch_on_start=False):
@@ -182,12 +193,63 @@ class MOVEBYPOLICY(Move.MOVE):
         floor = self.dispatch_floor()
         if floor is None:
             return False
-        progress = self.current_progress()
-        if progress is None or progress < floor:
+        progress = self._observe_progress(floor)
+        if progress is None:
+            return False
+        if progress < floor:
+            return False
+        if not getattr(self, "_seen_below_floor", False):
+            # Past the floor without ever having been below it: the slot's
+            # progress and handover keys do not belong to this motion.
+            #
+            # A slot is matched by goal id (`Move._owning_slot`), but progress
+            # and handover arrive on two SEPARATE topics that carry no goal id
+            # (`multi_dynamic_behavior_tree` feeds three independent
+            # `ToBlackboard` subscribers per slot), and the container publishes
+            # them only while a motion runs. So between one episode's end and
+            # the next one's first publish, both keys hold the PREVIOUS
+            # episode's terminal values -- progress ~1.0 and handover True --
+            # and the tick where the new goal id lands first reads them as this
+            # episode's. The retreat was then dispatched at the policy's START,
+            # planned from an arm the policy then drove for the rest of its
+            # episode; the mixer held it 25.6 s and started it against a chain
+            # point 1.45 rad away (TREE2B8 6, TREE2B9 2). Measured at 1 of 16
+            # episodes -- a per-tick delivery race, not a fixed window.
+            #
+            # An episode is below its floor for `still_from` of its length
+            # (22.5 s of 28.2 s here), so no tree rate can miss it; a policy
+            # short enough to cross the floor inside one tick would never admit
+            # early, which is the safe direction.
             return False
         # `is True`, not truthiness: None is "the producer publishes no
         # predicate", which must not read as ready.
         return self.handover_ready() is True
+
+    def _observe_progress(self, floor):
+        """This step's progress, latching whether the episode has been seen
+        running -- below its own floor -- since `initialise`.
+
+        Called from `update` as well as from `ready_for_successor`, so the
+        latch follows the TICK rather than whoever happens to poll the
+        predicate: a composite that only asks near the end of a motion would
+        otherwise never see the episode below its floor, and nothing would
+        admit at all.
+        """
+        if floor is None:
+            # Nothing to latch against, and nothing that reads the latch can
+            # admit either (`ready_for_successor` refuses on a floor of None).
+            # Checked BEFORE `current_progress`, which reads the slot feeds a
+            # behaviour assembled without `__init__` does not have.
+            return None
+        progress = self.current_progress()
+        if progress is not None and progress < floor:
+            self._seen_below_floor = True
+        return progress
+
+    def initialise(self):
+        """A fresh episode has not been seen running yet."""
+        super(MOVEBYPOLICY, self).initialise()
+        self._seen_below_floor = False
 
     def update(self):
         """
@@ -197,6 +259,10 @@ class MOVEBYPOLICY(Move.MOVE):
             :class:`~py_trees.common.Status`: behaviour status.
         """
         self.logger.debug("%s.update()" % self.__class__.__name__)
+
+        # Every tick, so the "seen running" latch `ready_for_successor` reads
+        # does not depend on who polls that predicate or how often.
+        self._observe_progress(self.dispatch_floor())
 
         if self.cmd_req is None:
             self.feedback_message = "no action client, did you call setup() on your tree?"
