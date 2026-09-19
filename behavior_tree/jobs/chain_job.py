@@ -639,11 +639,35 @@ class Move(base_job.BaseJob):
                 "### the chain file cannot be run as written:\n###   {}"
                 .format(err))
             return None
-        if any(s["kind"] == "policy" for s in resolved) \
-                and policy_action_client is None:
+        undescribed = [s["skill_id"] for s in resolved
+                       if s["kind"] == "policy" and not facts.get(s["skill_id"])]
+        if undescribed or (any(s["kind"] == "policy" for s in resolved)
+                           and policy_action_client is None):
+            # A policy step nothing describes. `policy_action_client is None`
+            # was the whole guard before, and it could not fire on either tree:
+            # the client passed in is the ARM's own command service
+            # (`multi_dynamic_behavior_tree.py:545`), which cac serves whether
+            # or not a policy exists, and `create_client` returns an object
+            # regardless. MEASURED on the FR3 profile launched with
+            # `with_policy:=false`: the tree built the `MoveByPolicy` subtree
+            # and sent a policy goal into a graph with no policy_manager, where
+            # it waits instead of being refused.
+            #
+            # What decides it is whether a CONTAINER describes the skill --
+            # the same answer the hubs resolve from, and the same one
+            # `merge_chain.py` requires before it will drive a file
+            # (`open_skills`). Without it there is no episode length, no
+            # `end_handover` and no init pose, so the step could not be built
+            # correctly even if something did answer the goal.
             self._node.get_logger().error(
-                "chain_job: {} has policy steps and this tree was built with "
-                "no policy_action_client".format(path))
+                "### the chain file cannot be run as written:\n"
+                "###   {}: no container describes {} -- this deployment serves "
+                "no such skill. A stack launched with `with_policy:=false` "
+                "brings up no policy_manager and no container, so the goal "
+                "would be sent and never answered, and the step's episode "
+                "length and `end_handover` are unknown. Bring up the policy "
+                "side for this skill, or take the policy step out."
+                .format(path, ", ".join(undescribed) or "its policy step"))
             return None
 
         # BEFORE the subtree is inserted, and byte-equal to what the driver

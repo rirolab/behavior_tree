@@ -2,6 +2,7 @@
 import importlib
 import operator
 import sys
+import time
 
 import py_trees
 import py_trees.console as console
@@ -312,6 +313,30 @@ class MultiSplinteredReality(SplinteredReality):
             f"multi_dynamic_behavior_tree: initialized for {', '.join(self.robot_names)}"
         )
 
+    def wait_for_arm_client(self, client, service_name):
+        """Wait up to `arm_client_wait` for one arm client, saying so as it goes.
+
+        In slices rather than one long block, so a stack that is still booting
+        prints progress instead of looking hung: the failure this replaces was
+        silent to anyone watching the launch, since the tree's traceback
+        scrolled past under the controllers' own startup chatter.
+        """
+        deadline = time.time() + self._arm_client_wait
+        said = False
+        while time.time() < deadline:
+            if client.wait_for_service(timeout_sec=2.0):
+                if said:
+                    self.get_logger().info(
+                        f"{service_name} is up; the tree can drive it")
+                return True
+            if not said:
+                self.get_logger().info(
+                    f"waiting for {service_name} (up to "
+                    f"{self._arm_client_wait:.0f} s) -- the robot's own "
+                    f"bringup starts before its clients do")
+                said = True
+        return False
+
     def initComms(self):
         """
         Initialize communications for each robot client and shared TF buffer.
@@ -322,6 +347,14 @@ class MultiSplinteredReality(SplinteredReality):
             depth=10,
         )
 
+        # How long to wait for the arm clients, in seconds. A parameter and not
+        # a constant: a stub comes up in a second and a real bringup takes
+        # tens, and the right answer is the deployment's.
+        if not self.has_parameter("arm_client_wait"):
+            self.declare_parameter("arm_client_wait", 90.0)
+        self._arm_client_wait = float(
+            self.get_parameter("arm_client_wait").value)
+
         # Initialize action client per robot.
         self.action_clients = {}
         for robot_name in self.robot_names:
@@ -331,9 +364,25 @@ class MultiSplinteredReality(SplinteredReality):
                 service_name,
                 qos_profile=qos_profile,
             )
-            if not client.wait_for_service(timeout_sec=3.0):
+            # As long as the ROBOT takes to come up, not 3 seconds. The tree
+            # used to wait 3 s and raise -- with a message that says "waiting
+            # again..." while doing no such thing -- so a tree started in the
+            # SAME launch as its arm clients died whenever the robot's own
+            # bringup was slower than that. On the FR3 in MuJoCo it always is:
+            # `franka_overlap.launch.py bringup:=true with_bt:=true` starts
+            # MuJoCo, ros2_control and two controllers before cac advertises,
+            # about 30 s, and the tree was dead long before. That made
+            # `with_bt:=true` -- the profile's own path -- unusable, and the
+            # only reason it never showed is that every measured run so far
+            # started the tree as a separate process after readiness.
+            waited = self.wait_for_arm_client(client, service_name)
+            if not waited:
                 raise exceptions.TimedOutError(
-                    f"{service_name} service not available, waiting again..."
+                    f"{service_name} did not appear within "
+                    f"{self._arm_client_wait:.0f} s. The arm client for "
+                    f"{robot_name} is not running, or it is in another "
+                    f"namespace -- the tree's `robot` parameter names the "
+                    f"namespaces it expects."
                 )
             self.action_clients[robot_name] = client
 
