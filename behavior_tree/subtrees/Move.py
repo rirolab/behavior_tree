@@ -9,6 +9,8 @@ from riro_srvs.srv import StringGoalStatus
 import py_trees
 from py_trees_ros import exceptions, utilities
 import py_trees.console as console
+
+from behavior_tree.subtrees import Terminals2Blackboard
 ## from rclpy.callback_groups import ReentrantCallbackGroup
 
 class MOVE(py_trees.behaviour.Behaviour):
@@ -154,6 +156,16 @@ class MOVE(py_trees.behaviour.Behaviour):
                 self.blackboard.register_key(
                     key=key, access=py_trees.common.Access.READ)
 
+        # The terminal ledger: {goal id hex: status}, every terminal any
+        # producer on this arm has reported recently
+        # (`Terminals2Blackboard`). One key for the robot, not one per slot,
+        # since a terminal outlives the slot its motion ran in -- which is what
+        # the slot keys above cannot express and what made a retired motion and
+        # its successor fight over one topic.
+        self.terminals_key = "terminals"
+        self.blackboard.register_key(key=self.terminals_key,
+                                     access=py_trees.common.Access.READ)
+
         # May a MoveBlend start the NEXT child before this one finishes?
         #
         # Derived from the slots by default -- a streamed arm motion is blended
@@ -298,9 +310,26 @@ class MOVE(py_trees.behaviour.Behaviour):
                 return channel
         return None
 
+    def terminal_status(self):
+        """This motion's own terminal from the ledger, or None.
+
+        Keyed by THIS behaviour's goal id, so an answer here is this motion's
+        by construction: no other producer writes this uuid, and nothing can
+        overwrite it. That is what makes it authoritative rather than merely
+        first.
+        """
+        ledger = self._read(self.terminals_key)
+        if not ledger:
+            return None
+        key = Terminals2Blackboard.uuid_hex(self.goal_uuid_des)
+        return None if key is None else ledger.get(key)
+
     def current_goal_id(self):
-        """Goal id for this behaviour: from its slot if streamed, else from
-        whichever watched channel reports it, else whatever the first one holds."""
+        """Goal id for this behaviour: its own once the ledger has its
+        terminal, else from its slot if streamed, else from whichever watched
+        channel reports it, else whatever the first one holds."""
+        if self.terminal_status() is not None:
+            return self.goal_uuid_des
         slot = self._owning_slot()
         if slot is not None:
             return self._read(self.slot_keys[slot]["goal_id"])
@@ -310,7 +339,23 @@ class MOVE(py_trees.behaviour.Behaviour):
         return self._read(self.goal_id_key)
 
     def current_goal_status(self):
-        """Goal status for this behaviour, from whichever channel carries it."""
+        """Goal status for this behaviour, the ledger first.
+
+        The ORDER is the correctness argument, not a preference. A slot's topic
+        falls silent when its motion retires and the blackboard keeps the last
+        message it carried, which is that motion's EXECUTING -- so a behaviour
+        that asked the slot first would match its own goal id against a stale
+        EXECUTING and wait for ever on a motion that has finished. The ledger
+        entry is the same motion's result, filed under the same goal id, and it
+        cannot be stale in that way: nothing enters it but a terminal.
+
+        The slot still answers the RUNNING case, which is the case it can
+        answer: a goal id on a slot means that motion is in it now, and the
+        slot is where its progress and handover come from.
+        """
+        terminal = self.terminal_status()
+        if terminal is not None:
+            return terminal
         slot = self._owning_slot()
         if slot is not None:
             return self._read(self.slot_keys[slot]["goal_status"])

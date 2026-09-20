@@ -4,8 +4,10 @@ import rclpy
 
 import py_trees
 from action_msgs.msg import GoalStatus
+import geometry_msgs
 from behavior_tree.utils.goal_conversions import behavior_to_pose_goal
 from . import Move
+from . import MoveJoint
 
 from riro_srvs.srv import StringGoalStatus
 import py_trees.console as console
@@ -113,24 +115,69 @@ class MOVES(Move.MOVE):
     priority behaviour.
     """
 
-    def __init__(self, name, action_client, action_goal=None, timeout=1., check_contact=False, robot_name=None):
+    def __init__(self, name, action_client, action_goal=None, timeout=1.,
+                 check_contact=False, robot_name=None, gripper=None,
+                 gripper_ramp_param=None, claim=None, filter_size=None):
+        """
+        Args:
+            gripper, gripper_ramp_param, claim: exactly as ``MoveJoint.MOVEJ``
+                takes them, and for the same reasons -- a straight move leaves
+                through the same slot, under the same mixer, and a chain file's
+                step states its seam the same way whichever kind it is. None
+                for `gripper` OMITS the column (rule i); `claim` is merged last
+                by ``Move.MOVE._make_command``, so a file's own ramp wins over
+                the node parameter's.
+            filter_size: the width of the moving average trajectory_manager
+                runs over this move's IK samples. None leaves the field out,
+                and the generator then uses its own default of 15 -- which
+                rounds both ENDS of the line. A chain file's straight step
+                sends 1: straightness is the point.
+        """
         super(MOVES, self).__init__(name=name,
                                    action_client=action_client,
                                     action_goal=action_goal,
                                     timeout=timeout,
-                                    robot_name=robot_name)
+                                    robot_name=robot_name,
+                                    claim=claim)
         self.check_contact = check_contact
-        self.blackboard.register_key(key=self.action_goal['pose'], \
-                                     access=py_trees.common.Access.READ)
+        self.gripper = gripper
+        self.gripper_ramp_param = gripper_ramp_param
+        self.filter_size = filter_size
+        # Only a blackboard KEY is registered. `behavior_to_pose_goal` already
+        # accepts an inline `geometry_msgs.msg.Pose` -- a chain file's straight
+        # step is a pose written down, with no producer to read it from -- and
+        # handing that object to `register_key` asks the blackboard for a
+        # variable named by a Pose.
+        if not isinstance(self.action_goal['pose'], geometry_msgs.msg.Pose):
+            self.blackboard.register_key(key=self.action_goal['pose'], \
+                                         access=py_trees.common.Access.READ)
+
+    # The same live read `MOVEJ` makes, and it must be the same one: the
+    # composite that chains this motion reads that parameter live, and two
+    # numbers for one seam is a gripper arriving somewhere nobody stated.
+    gripper_ramp_fraction = MoveJoint.MOVEJ.gripper_ramp_fraction
 
     def make_command(self, uuid=None, enable_wait=False):
         """
         Export this straight pose move as a complex action client command dictionary.
         """
+        # Beside the goal, not inside it: the goal is the line the planner
+        # plans, and the jaw column is one the planner does not own. Identical
+        # to `MOVEJ.make_command` because it is the same column on the same
+        # trajectory -- cac appends it in `_append_passthrough_columns`.
+        carried = {}
+        if self.gripper is not None:
+            carried["gripper"] = float(self.gripper)
+            fraction = self.gripper_ramp_fraction()
+            if fraction is not None:
+                carried["passthrough_ramp_fraction"] = fraction
+        if self.filter_size is not None:
+            carried["filter_size"] = int(self.filter_size)
         # Include contact checking because complex action client forwards it.
         return self._make_command(
-            "movePoseStraight", json.dumps(behavior_to_pose_goal(self)), uuid=uuid, 
+            "movePoseStraight", json.dumps(behavior_to_pose_goal(self)), uuid=uuid,
             enable_wait=enable_wait, check_contact=self.check_contact,
+            **carried
         )
 
     def update(self):

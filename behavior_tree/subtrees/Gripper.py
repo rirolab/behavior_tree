@@ -43,7 +43,9 @@ class GOTO(Move.MOVE):
             claim: this step's own request fields, or None -- see
                 ``Move.MOVE``. A gripper step of a chain file states a
                 threshold like every other step (1.0: the seam nothing may
-                overlap INTO), and on a wiring where the jaws are a column of
+                overlap INTO -- or, on a RELEASE, a fraction of the motion
+                before it, which is also what makes this step overlappable),
+                and on a wiring where the jaws are a column of
                 the arm controller the motion goes out through a slot and is
                 claimed there like any other. Sent with the command rather than
                 derived here: which writer carries it out is the client's
@@ -62,7 +64,8 @@ class GOTO(Move.MOVE):
         self.timeout       = timeout
         self.enable_wait   = bool(enable_wait)
 
-        # A gripper's own motion is its own step, never overlapped *into*.
+        # A gripper's own motion is its own step, never overlapped *into* --
+        # unless this step's own claim says otherwise.
         #
         # Read by MoveBlend of the NEXT child (`MoveBlend.py:375`), so this
         # forbids starting THIS step early -- closing before the arm has
@@ -71,10 +74,22 @@ class GOTO(Move.MOVE):
         # `current_progress()` against the next step's threshold, and held by
         # the mixer until the jaws are still.
         #
+        # False is still the answer for every step that claims the whole of
+        # its predecessor (threshold 1.0, and for a step with no claim at all).
+        # A RELEASE may claim less (`chain_spec` allows a threshold in (0, 1)
+        # there and refuses it on a close), and a claim nothing dispatches is
+        # a number in a file that does nothing: with this False the chain goes
+        # strictly sequential INTO the step and waits for the predecessor to
+        # SUCCEED, so the mixer never has the release armed to open a seam
+        # with. Dispatching it early is the tree's half of GRIPPER_INTO; the
+        # mixer still decides where the seam actually opens, from this same
+        # number.
+        #
         # Explicit, since `Move.py` derives the default from the stream slots
         # and this behaviour has them: on a deployment whose gripper is a
         # passthrough column the motion really does go out through a slot.
-        self.overlappable = False
+        claimed = (self.claim or {}).get('claim_progress_threshold')
+        self.overlappable = claimed is not None and float(claimed) < 1.0
 
     def make_command(self, uuid=None, enable_wait=None):
         """Export this gripper move as a complex action client command.

@@ -43,6 +43,7 @@ import os
 import sys
 import time
 
+import geometry_msgs.msg
 import py_trees
 import std_msgs.msg as std_msgs
 
@@ -50,7 +51,7 @@ from . import base_job
 from behavior_tree.utils.arm_trace import ArmTrace
 from behavior_tree.utils.skill_registry_utils import skill_facts, skill_init_pose
 from behavior_tree.utils.validation_utils import StepValidationResult
-from behavior_tree.subtrees import Gripper, MoveJoint, Policy
+from behavior_tree.subtrees import Gripper, MoveJoint, MovePose, Policy
 from behavior_tree.subtrees.MoveBlend import MoveBlend
 
 
@@ -112,6 +113,22 @@ def _task_of(path):
 # is the same protection without the reach.
 COMPOSITION_PARAM = "mixer_composition"
 
+# The run's dispatch rule, and the run's alone.
+#
+# True (the default, and what every recorded tree run so far did): step N+1 is
+# dispatched the moment step N reaches a slot, so its plan is made and armed
+# while N still moves and the mixer starts it at N's claim. False: step N+1 is
+# dispatched only after step N's TERMINAL, so every seam pays the tick + plan +
+# arm dwell -- which is the sequential baseline the paper defines, "activates
+# the successor after the predecessor completes".
+#
+# A node parameter, like `mixer_composition` and unlike the per-arm pacing: one
+# chain is one composite, and the two dispatch rules are two different runs of
+# the same file, never two arms of one run. A chain FILE may not set it
+# (`load_chain`), for the same reason the mixer's composition is not a file's:
+# a baseline that a task file could switch is a baseline nobody can name.
+DISPATCH_PARAM = "chain_dispatch_on_start"
+
 # The per-arm parameters the pacing is read from, and what each is.
 #
 # A chain file states each step's `speed`; the other three numbers are the
@@ -154,7 +171,68 @@ def _claim_for(step):
             claim["passthrough_ramp"] = float(step["ramp"])
         elif step.get("ramp_fraction") is not None:
             claim["passthrough_ramp_fraction"] = float(step["ramp_fraction"])
+    # The out-seam this step GRANTS the next motion, where the file said one.
+    # `threshold` above is what a step claims of its PREDECESSOR; this is the
+    # other direction, and only a gripper step has it -- the mixer holds the
+    # seam out of a gripper step until the jaws are still (rule iii), and on a
+    # RELEASE that wait is the arm standing still through the whole opening.
+    # `chain_spec` refuses it anywhere else and on anything but a release, so
+    # by the time a step reaches here the value is already the file's answer.
+    if step.get("out_at") is not None:
+        claim["claim_out_at"] = float(step["out_at"])
     return claim or None
+
+
+def _claim_after_policy(claim, step, previous, facts):
+    """`_claim_for`, plus what the step AFTER a policy carries.
+
+    Its seam is not the file's own threshold but the POLICY's:
+    `end_handover.progress_threshold` is where that policy said its next motion
+    may open, and `plan_from_arm` says this motion is meant to start under it
+    -- planned from the measured arm now, because a policy's endpoint is not
+    knowable in advance. Under the delta composition that origin cancels out of
+    the endpoint (ROUND15 §7).
+
+    ... unless THIS step states one. The container's number is the right answer
+    for a step that asked for nothing, and only then: a file that names a
+    threshold here has said what it wants, and `threshold_explicit` is what
+    tells that apart from a value inherited from `defaults` (they can be the
+    same number). `plan_from_arm` is about WHERE this motion starts, not about
+    its claim, so it holds either way.
+
+    Shared by the joint retreat and the straight one rather than written twice:
+    the rule is about the POLICY before the step, and says nothing about how
+    the step that follows moves.
+    """
+    if previous is None or previous["kind"] != "policy":
+        return claim
+    handover = (facts.get(previous["skill_id"]) or {}).get("end_handover") or {}
+    threshold = handover.get("progress_threshold")
+    if step.get("threshold_explicit") and step.get("threshold") is not None:
+        threshold = float(step["threshold"])
+    if threshold is not None and step.get("early_retreat", True):
+        claim = dict(claim or {})
+        claim["claim_progress_threshold"] = float(threshold)
+        claim["plan_from_arm"] = True
+    return claim
+
+
+def _inline_pose(values):
+    """The seven numbers a straight step states -> the `Pose` MOVES carries.
+
+    Inline rather than through the blackboard: a chain file's pose is written
+    down and has no producer to read it from. `behavior_to_pose_goal` already
+    takes a `Pose` object for exactly this case.
+    """
+    pose = geometry_msgs.msg.Pose()
+    pose.position.x = float(values[0])
+    pose.position.y = float(values[1])
+    pose.position.z = float(values[2])
+    pose.orientation.x = float(values[3])
+    pose.orientation.y = float(values[4])
+    pose.orientation.z = float(values[5])
+    pose.orientation.w = float(values[6])
+    return pose
 
 
 def chain_timeouts(resolved, args, scale, origin, gripper_origin, trace=None):
@@ -193,7 +271,21 @@ def chain_timeouts(resolved, args, scale, origin, gripper_origin, trace=None):
         resolved, origin, gripper_origin, args, scale)
     out = []
     for step, (duration, _reason, measured) in zip(resolved, timings):
-        if step["kind"] != "prim":
+        if step["kind"] == "straight":
+            # Not paced from a distance at all: the file states the wall-clock
+            # span of the line, and `chain_spec.pacing` has nothing to measure
+            # -- it measures joint travel, and this step names no joint value.
+            # Times the scale for the same reason a prim's is: `movePoseStraight`
+            # and `moveJoint` share `_timeout_from_command`, which divides by
+            # `timeout_scale` once, so both ask in the same unit.
+            #
+            # The step AFTER a run of these is measured at dispatch, which
+            # falls out of `schedule_with_speeds` treating a non-prim as a step
+            # whose endpoint it cannot know. That is the right answer here too:
+            # where a straight line ends in JOINT space is the planner's IK
+            # answer and is not in the file.
+            out.append(float(step["duration"]) * scale)
+        elif step["kind"] != "prim":
             out.append(None)
         elif measured:
             out.append(_measured_timeout(step, args, scale, trace))
@@ -340,32 +432,28 @@ def build_children(resolved, action_client, policy_action_client,
                 action_goal=step["gripper"], timeout=step_timeout,
                 robot_name=robot_name, claim=_claim_for(step),
                 enable_wait=False)
+        elif step["kind"] == "straight":
+            # A Cartesian line for the tool. Everything around the goal is a
+            # prim's: the same claim, the same carried jaw column, the same
+            # after-a-policy rule, the same slot -- `movePoseStraight` leaves
+            # through `_dispatch_arm_trajectory` exactly as `moveJoint` does,
+            # kind-agnostic, so a straight step rides the mixer with its claim
+            # like any other motion. What differs is the goal and its pacing.
+            child = MovePose.MOVES(
+                name=step["label"], action_client=action_client,
+                action_goal={"pose": _inline_pose(step["pose"])},
+                # The same omission rule: no field at all where the file names
+                # no target, which is what keeps a grip across the step.
+                gripper=step.get("gripper"),
+                # The file's, and a chain file's straight step says 1 -- the
+                # generator's own default of 15 rounds both ends of the line,
+                # which is the thing this kind exists to avoid.
+                filter_size=step.get("filter_size"),
+                timeout=step_timeout, robot_name=robot_name,
+                claim=_claim_after_policy(_claim_for(step), step, previous,
+                                          facts))
         else:
-            claim = _claim_for(step)
-            if previous is not None and previous["kind"] == "policy":
-                # The retreat. Its seam is not the file's own threshold but the
-                # POLICY's: `end_handover.progress_threshold` is where that
-                # policy said its next motion may open, and `plan_from_arm`
-                # says this motion is meant to start under it -- planned from
-                # the measured arm now, because a policy's endpoint is not
-                # knowable in advance. Under the delta composition that origin
-                # cancels out of the endpoint (ROUND15 §7).
-                # ... unless THIS step states one. The container's number is
-                # the right answer for a step that asked for nothing, and only
-                # then: a file that names a threshold here has said what it
-                # wants, and `threshold_explicit` is what tells that apart from
-                # a value inherited from `defaults` (they can be the same
-                # number). `plan_from_arm` is about WHERE this motion starts,
-                # not about its claim, so it holds either way.
-                handover = (facts.get(previous["skill_id"]) or {}).get(
-                    "end_handover") or {}
-                threshold = handover.get("progress_threshold")
-                if step.get("threshold_explicit") and step.get("threshold") is not None:
-                    threshold = float(step["threshold"])
-                if threshold is not None and step.get("early_retreat", True):
-                    claim = dict(claim or {})
-                    claim["claim_progress_threshold"] = float(threshold)
-                    claim["plan_from_arm"] = True
+            claim = _claim_after_policy(_claim_for(step), step, previous, facts)
             child = MoveJoint.MOVEJ(
                 name=step["label"], action_client=action_client,
                 action_goal=list(step["target"]),
@@ -384,15 +472,20 @@ def build_children(resolved, action_client, policy_action_client,
 
 def build_chain_root(resolved, action_client, policy_action_client,
                      robot_name=None, timeout=4.0, facts=None, name="Chain",
-                     timeouts=None):
+                     timeouts=None, dispatch_on_start=True):
     """One `MoveBlend` over the whole file.
 
-    `dispatch_on_start=True`, passed explicitly and not through a node
-    parameter. The harness dispatches step N+1 as soon as N has reached a slot
-    and lets the mixer start it at the claim, so it has no planning dwell; this
-    is that, and a chain run with it off would be a third baseline nobody
-    recorded. The class default stays False -- the old jobs' recorded
-    sequential baseline is threshold 1.0 with the dwell in it.
+    `dispatch_on_start` is the RUN's, read off the node parameter
+    `chain_dispatch_on_start` and passed in here; it is never a chain file's
+    and never a live `dispatch_param`, so a written-down run cannot change
+    rules halfway through. True (the default) is what the harness driver does
+    -- step N+1 dispatched as soon as N has reached a slot, its plan paid while
+    N still moves, the mixer starting it at the claim -- and reproduces every
+    tree run recorded so far. False is the paper's sequential baseline: at
+    threshold 1.0 nothing but step N's terminal admits step N+1
+    (`default_ready_for_successor`), so every seam pays the tick + plan + arm
+    dwell. The class default stays False, which is why this is passed
+    explicitly in both directions.
 
     The composite's own `progress_threshold` is retired to dispatch-only: every
     seam in a chain file is the claim of the motion that opens it. It is left at
@@ -400,7 +493,8 @@ def build_chain_root(resolved, action_client, policy_action_client,
     from the command line.
     """
     root = MoveBlend(name=name, progress_threshold=1.0,
-                     dispatch_on_start=True, robot_name=robot_name)
+                     dispatch_on_start=bool(dispatch_on_start),
+                     robot_name=robot_name)
     root.add_children(build_children(
         resolved, action_client, policy_action_client,
         robot_name=robot_name, timeout=timeout, facts=facts,
@@ -414,6 +508,22 @@ class Move(base_job.BaseJob):
     def __init__(self, node):
         super(Move, self).__init__(node)
         self.init_blackboard_parameters()
+        # The run's dispatch rule exists as a parameter even when no params
+        # file names it, so `ros2 param set /tree chain_dispatch_on_start
+        # false` reaches a stack that was brought up without it -- the reason
+        # the entry points declare `overlap_dispatch_on_start`. The tree node
+        # declares its parameters from its overrides
+        # (`multi_dynamic_behavior_tree.py:211`), so a params file that states
+        # it has already declared it and this is a no-op; nothing here changes
+        # a value.
+        try:
+            if not node.has_parameter(DISPATCH_PARAM):
+                node.declare_parameter(DISPATCH_PARAM, True)
+        except Exception:
+            # A node double with no parameter API, or a declaration that lost
+            # a race with the entry point's. Either way the READ below answers
+            # True when nothing is declared, which is this switch's default.
+            pass
         # What the run needs to answer for itself when it ends. Set at build
         # time, read by `post_tick`.
         self._task = None
@@ -584,6 +694,30 @@ class Move(base_job.BaseJob):
             return None
         return None if value in (None, "") else str(value)
 
+    def dispatch_on_start(self):
+        """The run's dispatch rule, off `chain_dispatch_on_start`. True unset.
+
+        Read the way `mixer_composition` is -- a node parameter, straight off
+        the node -- and not through the blackboard: the per-arm keys are the
+        robot's (limits, joint names, pacing), and this one is the RUN's. A
+        deployment that declares nothing gets True, which is what every tree
+        run recorded so far did.
+
+        A string is accepted because a parameter set from a shell
+        (`-p chain_dispatch_on_start:=false`) can arrive as one, and `bool("0")`
+        is True -- the one spelling that would silently keep the dwell out of a
+        run asked for with the dwell in it.
+        """
+        try:
+            value = self._node.get_parameter(DISPATCH_PARAM).value
+        except Exception:
+            return True
+        if value is None:
+            return True
+        if isinstance(value, str):
+            return value.strip().lower() not in ("0", "false", "no", "off", "")
+        return bool(value)
+
     def check_composition(self, spec):
         """Refuse a file whose `composition` is not what the mixer is running.
 
@@ -625,8 +759,13 @@ class Move(base_job.BaseJob):
         limits, width = self.limits_for(robot_name)
         spec = chain_spec.load(path, side, limits, width)
         if "dispatch_on_start" in (spec.get("defaults") or {}):
-            # One driver, one dispatch rule. A file that could turn the dwell
-            # back on would be a second baseline appearing in a task file.
+            # One RUN, one dispatch rule. The rule itself is the run's, on the
+            # node parameter `chain_dispatch_on_start` (`DISPATCH_PARAM`); what
+            # a file may not do is set it, because a file that could turn the
+            # dwell back on would be a second baseline appearing in a task
+            # file, under a name only that file uses. The sentence below is
+            # left word for word: it is what the refusal has always said, and
+            # what it says of a FILE is still true.
             raise ChainJobError(
                 "chain_job: `defaults.dispatch_on_start` is not a chain file's "
                 "to set. A chain is dispatched early, always -- what the file "
@@ -712,7 +851,28 @@ class Move(base_job.BaseJob):
         # BEFORE the subtree is inserted, and byte-equal to what the driver
         # prints for the same file: the first thing in either log is the same
         # table, so the two runs can be diffed from their first line.
-        print(chain_spec.describe(spec, resolved))
+        #
+        # The dispatch rule is written onto the HEADER line, never onto the
+        # `RESULT` line the compare scripts parse -- and only when it is NOT
+        # the driver's rule. A default run's table stays byte-equal to
+        # `merge_chain.py`'s for the same file (the property `describe` exists
+        # for, pinned by the suite); the run that no longer dispatches the way
+        # the driver does is the one that has something to declare.
+        dispatch_on_start = self.dispatch_on_start()
+        table = chain_spec.describe(spec, resolved)
+        if not dispatch_on_start:
+            head, _, rest = table.partition("\n")
+            table = "{}   dispatch after the terminal (sequential baseline)\n{}" \
+                .format(head, rest)
+            # ONE line, at build time, in the log the run is read from: the
+            # reason a seam window in this run is 0.2-0.44 s wider than the
+            # same file's yesterday is a dispatch rule, not a slower robot.
+            self._node.get_logger().info(
+                "chain_job: dispatch after the terminal "
+                "(chain_dispatch_on_start=false): step N+1 is dispatched only "
+                "after step N's terminal, so every seam pays its planning "
+                "dwell -- the sequential baseline")
+        print(table)
         sys.stdout.flush()
 
         self._task = spec["task"]
@@ -762,7 +922,7 @@ class Move(base_job.BaseJob):
         self._root = build_chain_root(
             resolved, action_client, policy_action_client,
             robot_name=robot_name, facts=facts, name=spec["task"],
-            timeouts=self._timeouts)
+            timeouts=self._timeouts, dispatch_on_start=dispatch_on_start)
         return self._root
 
     # ------------------------------------------------------------------

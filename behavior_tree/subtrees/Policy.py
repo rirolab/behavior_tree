@@ -91,11 +91,12 @@ class MOVEBYPOLICY(Move.MOVE):
     )
 
     def current_goal_status(self):
-        """This policy's status -- from its SLOT, or a refusal from the channel.
+        """This policy's status -- the LEDGER, its SLOT, or a channel refusal.
 
         The inherited reader takes whichever source carries this behaviour's
-        goal id, slot first and the plain channel after it, and for a policy the
-        second half of that is not safe. cac says so itself: a slot-mode policy
+        goal id, ledger first, then slot, then the plain channel, and for a
+        policy the last of those is not safe. cac says so itself: a slot-mode
+        policy
         does not own the arm channel (`_policy_manager_client`
         `_start_policy_controller_mode` writes it only for a policy this node
         publishes itself, and `_finish_policy_request` commits a terminal only
@@ -122,7 +123,17 @@ class MOVEBYPOLICY(Move.MOVE):
         policy step finishing 0.12 s after its goal went out, before the mixer
         had granted the container a slot, every step behind it dispatched at
         once and three motions dropped for want of a free slot.
+
+        The LEDGER is safe in the way the channel is not, and for the reason
+        this docstring gives against the channel: an entry there is filed under
+        THIS goal's id by the producer that ran it, so a SUCCEEDED in it is
+        this policy's own and not a neighbour's. It also answers the case the
+        slot no longer can -- the container releases the slot as it finishes,
+        and the slot's last message is the EXECUTING it was repeating.
         """
+        terminal = self.terminal_status()
+        if terminal is not None:
+            return terminal
         slot = self._owning_slot()
         if slot is not None:
             return self._read(self.slot_keys[slot]["goal_status"])

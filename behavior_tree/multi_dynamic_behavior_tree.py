@@ -29,7 +29,7 @@ from behavior_tree.dynamic_behavior_tree import (
 
 from behavior_tree import decorators
 from behavior_tree.dynamic_behavior_tree import SplinteredReality, get_args, load_topic_list
-from behavior_tree.subtrees import Grnd2Blackboard
+from behavior_tree.subtrees import Grnd2Blackboard, Terminals2Blackboard
 from behavior_tree.subtrees.MoveBlend import (
     OVERLAP_DISPATCH_ON_START_PARAM,
     OVERLAP_THRESHOLD_PARAM,
@@ -109,12 +109,29 @@ def create_root(robot_names):
         # it. MOVEBYPOLICY is now a slot-matching Move.MOVE and finds itself in
         # the slot feeds below, the same way a streamed primitive does.
 
+        # The terminal ledger, one per robot and NOT per slot -- which is the
+        # whole of its point. A slot topic carries one (goal id, status) at a
+        # time and its next occupant overwrites the last one's result, so a
+        # terminal published there is only read if the tree happens to tick
+        # inside the gap. Every producer on this arm -- the arm client for its
+        # own motions, the policy container for a policy's -- sends ITS
+        # terminals here keyed by goal id, and the behaviour below merges them
+        # rather than replacing, since no single array is the whole truth.
+        status_nodes.append(
+            Terminals2Blackboard.ToBlackboard(
+                name=f"{robot_name}_Terminals2BB",
+                topic_name=f"{robot_name}/stream/terminals",
+                blackboard_variable=f"{robot_name}/terminals",
+            )
+        )
+
         # Under overlap, arm motions stream through two mixer slots (a, b), and
-        # each slot reports its own goal id, status, and progress. The MOVE
-        # behaviours find themselves by matching their goal id against a slot.
-        # These mirror the arm channel above, one pair of nodes per slot, plus a
-        # progress feed the overlap composite watches to decide when to start
-        # the next motion.
+        # each slot reports its own goal id, status, and progress. Each carries
+        # only its CURRENT occupant now -- a retired motion's result is in the
+        # ledger above, not here -- so the slot feeds answer "what is running
+        # and how far along", and the ledger answers "did mine finish". The
+        # MOVE behaviours still find themselves by matching their goal id
+        # against a slot, which is what supplies progress and handover.
         for slot in ["a", "b"]:
             prefix = f"{robot_name}/stream/{slot}"
             status_nodes.append(
