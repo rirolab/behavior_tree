@@ -543,6 +543,7 @@ def main(args=None):
             "jobs.g1_jobs.G1WaitJob",
             "jobs.g1_jobs.G1StandCartesianJob",
             "jobs.g1_jobs.G1GripperJob",
+            "jobs.g1_jobs.G1PerceptionJob",
         ],
         rec_topic_list=topic_list,
     )

@@ -2,8 +2,8 @@ from types import SimpleNamespace
 
 import py_trees
 
-from behavior_tree.jobs.g1_jobs import G1GripperJob, G1StandCartesianJob, G1WaitJob
-from behavior_tree.subtrees import G1Wait
+from behavior_tree.jobs.g1_jobs import G1GripperJob, G1PerceptionJob, G1StandCartesianJob, G1WaitJob
+from behavior_tree.subtrees import G1Perception, G1Wait
 from behavior_tree.utils.validation_utils import StepValidationResult
 
 
@@ -25,6 +25,54 @@ def test_wait_goal_without_robot_assignment_is_accepted():
         "duration": 10.0,
     }
     assert _wait_job().validate_step(step) == StepValidationResult.ACCEPT_GOAL
+
+
+def test_ikea_perception_step_has_no_arm_assignment():
+    job = G1PerceptionJob.__new__(G1PerceptionJob)
+    step = {
+        "primitive_action": "g1_perceive_ikea",
+        "client": "perception",
+        "service": "/g1/update_world_model",
+        "timeout": 15.0,
+    }
+    assert job.validate_step(step) == StepValidationResult.ACCEPT_GOAL
+    assert job.validate_step({**step, "robot": ["left_arm"]}) == StepValidationResult.REJECT_GOAL
+    subtree = job.create_root(None, goal={"1": step})
+    assert subtree.service_name == "/g1/update_world_model"
+
+
+def test_ikea_perception_leaf_waits_for_snapshot_and_uses_service_result():
+    class Future:
+        def __init__(self):
+            self.response = None
+
+        def done(self):
+            return self.response is not None
+
+        def result(self):
+            return self.response
+
+    future = Future()
+    client = SimpleNamespace(
+        service_is_ready=lambda: True,
+        call_async=lambda _request: future,
+    )
+    node = SimpleNamespace(create_client=lambda _type, _name: client)
+    leaf = G1Perception.UpdateWorldModel("snapshot", "/g1/update_world_model", 5.0)
+    leaf.setup(node)
+    leaf.initialise()
+    assert leaf.update() == py_trees.common.Status.RUNNING
+    future.response = SimpleNamespace(success=False, message="table was not detected")
+    assert leaf.update() == py_trees.common.Status.RUNNING
+    leaf._deadline = 0.0
+    leaf._retry_after = -float("inf")
+    assert leaf.update() == py_trees.common.Status.RUNNING
+    assert leaf.update() == py_trees.common.Status.FAILURE
+    assert "table" in leaf.feedback_message
+    leaf.initialise()
+    assert leaf.update() == py_trees.common.Status.RUNNING
+    future.response = SimpleNamespace(success=True, message="published world model")
+    assert leaf.update() == py_trees.common.Status.SUCCESS
 
 
 def test_wait_goal_rejects_nonpositive_or_routed_duration():

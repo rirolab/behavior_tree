@@ -1,4 +1,4 @@
-"""Grounding jobs for G1 locomotion, waits, and Cartesian TCP actions."""
+"""Grounding jobs for G1 locomotion, arms, hands, and perception."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import json
 import math
 
 from behavior_tree.jobs import base_job
-from behavior_tree.subtrees import G1Cartesian, G1Gripper, G1Locomotion, G1Wait
+from behavior_tree.subtrees import G1Cartesian, G1Gripper, G1Locomotion, G1Perception, G1Wait
 from behavior_tree.utils.parameter_utils import make_string_list
 from behavior_tree.utils.validation_utils import StepValidationResult
 
@@ -280,4 +280,44 @@ class G1GripperJob(G1BaseJob):
             target_q=float(step["target_q"]),
             timeout=float(step["timeout"]),
             name=f"G1Gripper{idx}",
+        )
+
+
+class G1PerceptionJob(G1BaseJob):
+    """Take one head-camera scene snapshot after the preceding BT step."""
+
+    primitive_action = "g1_perceive_ikea"
+    requires_robot_assignment = False
+
+    def validate_step(self, step):
+        if not self._matches(step):
+            return StepValidationResult.NOT_APPLICABLE
+        try:
+            timeout = float(step.get("timeout", 10.0))
+            service = step.get("service", "/g1/update_world_model")
+            valid = (
+                step.get("client") == "perception"
+                and not make_string_list(step.get("robot"))
+                and isinstance(service, str)
+                and service.startswith("/")
+                and math.isfinite(timeout)
+                and timeout > 0.0
+            )
+        except (TypeError, ValueError):
+            valid = False
+        return (
+            StepValidationResult.ACCEPT_GOAL
+            if valid
+            else StepValidationResult.REJECT_GOAL
+        )
+
+    def create_root(self, action_client, idx="1", goal=None, **kwargs):
+        del action_client, kwargs
+        step = goal[idx]
+        if self.validate_step(step) != StepValidationResult.ACCEPT_GOAL:
+            return None
+        return G1Perception.UpdateWorldModel(
+            name=f"G1Perception{idx}",
+            service_name=step.get("service", "/g1/update_world_model"),
+            timeout=float(step.get("timeout", 10.0)),
         )
