@@ -114,9 +114,11 @@ def create_root(robot_names):
         # time and its next occupant overwrites the last one's result, so a
         # terminal published there is only read if the tree happens to tick
         # inside the gap. Every producer on this arm -- the arm client for its
-        # own motions, the policy container for a policy's -- sends ITS
-        # terminals here keyed by goal id, and the behaviour below merges them
-        # rather than replacing, since no single array is the whole truth.
+        # own motions and for a policy no container accepted, the policy
+        # container for a policy it did -- sends ITS terminals here keyed by
+        # goal id, one per goal, and the behaviour below merges them rather
+        # than replacing, since no single array is the whole truth. First
+        # write wins there, and entries age by when they ARRIVED here.
         status_nodes.append(
             Terminals2Blackboard.ToBlackboard(
                 name=f"{robot_name}_Terminals2BB",
@@ -126,12 +128,17 @@ def create_root(robot_names):
         )
 
         # Under overlap, arm motions stream through two mixer slots (a, b), and
-        # each slot reports its own goal id, status, and progress. Each carries
-        # only its CURRENT occupant now -- a retired motion's result is in the
-        # ledger above, not here -- so the slot feeds answer "what is running
-        # and how far along", and the ledger answers "did mine finish". The
-        # MOVE behaviours still find themselves by matching their goal id
-        # against a slot, which is what supplies progress and handover.
+        # each slot reports its own goal id, status, and progress. A slot says
+        # who is in it NOW and how far along -- ACCEPTED or EXECUTING -- and is
+        # not where a result is read (the terminal contract, cac
+        # `_stream_client`): a motion's result is in the ledger above, which
+        # `Move.current_goal_status` reads first. The one terminal a slot still
+        # carries is a tracking-loss ABORTED, sent once by the arm client on
+        # the tick it gives the motion up, and the ledger has that one too. So
+        # the slot feeds answer "what is running and how far along", and the
+        # ledger answers "did mine finish". The MOVE behaviours still find
+        # themselves by matching their goal id against a slot, which is what
+        # supplies progress and handover.
         for slot in ["a", "b"]:
             prefix = f"{robot_name}/stream/{slot}"
             status_nodes.append(

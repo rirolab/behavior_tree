@@ -13,10 +13,12 @@ whole run rather than random.
 
 So terminals travel on their own channel, `<robot>/stream/terminals`, keyed by
 goal id: an `action_msgs/GoalStatusArray` that every producer on that arm
-publishes ITS terminals to, re-sent while they are inside the TTL.
+publishes ITS terminals to, re-sent while they are inside the producer's TTL.
+One goal id has one terminal, from the producer that ran it (the contract, cac
+`_stream_client`).
 
-Two properties of this behaviour follow from there being MANY publishers, and
-both are the opposite of what `ToBlackboard` does:
+Four properties of this behaviour follow from there being MANY publishers, and
+from each of them re-sending:
 
   * it MERGES rather than overwrites, and never clears. Each producer sends its
     own subset, so the last array to arrive is not the whole truth -- taking it
@@ -25,10 +27,24 @@ both are the opposite of what `ToBlackboard` does:
   * it merges in the CALLBACK, not in `update`. Two publishers' arrays landing
     between two ticks of a 2 Hz tree is the normal case, not the corner, and
     keeping only `self.msg` would discard the first of them.
-
-Pruning is by the stamp the PRODUCER put in `goal_info.stamp` -- when the
-motion ended -- so a re-send does not refresh its own entry's age.
+  * FIRST WRITE WINS. A second terminal for a goal id already held -- another
+    status, or the same status from a second producer (a different stamp) --
+    is a contract violation. It is kept out and said once per goal id. Taking
+    the newest instead made a violation an oscillation: both producers re-send
+    every tick, so the value would flip at each callback and the step's answer
+    would depend on the phase of the tree's tick.
+  * entries age by when they ARRIVED HERE, on this node's clock, and are
+    judged against the PREVIOUS tick. The producer's `goal_info.stamp` is
+    another node's clock: with `use_sim_time` set differently on the two ends,
+    pruning by it dropped an entry in the first `update` before any behaviour
+    read it, or never dropped it at all. And against `now`, a tree stalled
+    longer than the TTL would discard in its first tick back everything that
+    arrived while it was stalled. Against the previous tick, every entry is on
+    the blackboard for at least one tick. A producer's own TTL bounds its
+    re-sends, so a re-send never refreshes an entry's age here.
 """
+
+import time
 
 import py_trees
 import rclpy.qos
@@ -38,10 +54,10 @@ from action_msgs.msg import GoalStatusArray
 from py_trees_ros import subscribers
 
 
-#: Seconds an entry survives after the stamp its producer gave it. Matches the
-#: producers' `terminal_ledger_ttl` default. Longer than a producer's is safe
-#: (a terminal this old belongs to a step that finished long ago); shorter only
-#: means an entry is dropped and then re-merged from the next re-send.
+#: Seconds an entry stays after it first ARRIVED, counted up to the previous
+#: tick. Matches the producers' `terminal_ledger_ttl` default. The producers'
+#: TTL is what bounds their re-sends; this one only bounds how long the
+#: blackboard keeps a result nobody has asked for.
 DEFAULT_TTL = 30.0
 
 #: How many messages the subscription may hold between two ticks.
@@ -59,6 +75,9 @@ DEFAULT_TTL = 30.0
 #:
 #: 20 is two producers' re-sends with room for a tick the executor is late to.
 QUEUE_DEPTH = 20
+
+_STATUS_NAMES = {0: 'UNKNOWN', 1: 'ACCEPTED', 2: 'EXECUTING', 3: 'CANCELING',
+                 4: 'SUCCEEDED', 5: 'CANCELED', 6: 'ABORTED'}
 
 
 def uuid_hex(goal_uuid):
@@ -107,29 +126,89 @@ class ToBlackboard(subscribers.Handler):
         )
         self.blackboard_variable = blackboard_variable
         self.ttl = float(ttl)
-        # {uuid hex: (status, stamp)}. Written from the subscription callback
-        # and read in `update`, both under the handler's own `data_guard`.
+        # {uuid hex: (status, producer stamp as (sec, nanosec), arrival)}.
+        # Written from the subscription callback and read in `update`, both
+        # under the handler's own `data_guard`. The stamp is kept only to tell
+        # a re-send (same status, same stamp) from a second terminal.
         self.terminals = {}
+        # {uuid hex: when it was pruned}. A producer whose TTL outlasts ours --
+        # its clock runs slower than this node's, say -- is still re-sending an
+        # entry we have dropped, and must not merge it back in as if new. Kept
+        # for one TTL after the prune.
+        self.pruned = {}
+        # Goal ids a second terminal has already been reported for.
+        self.conflicts = set()
+        # When `update` last ran, on `_now`'s clock; None before the first.
+        self.last_tick = None
         self.blackboard = self.attach_blackboard_client(name=self.name)
         self.blackboard.register_key(key=blackboard_variable,
                                      access=py_trees.common.Access.WRITE)
         self.blackboard.set(blackboard_variable, {})
 
+    def _now(self):
+        """This node's clock, in seconds -- the one clock arrivals and ticks share.
+
+        The node's, not the producer's: under `use_sim_time` it is the same
+        `/clock` the tree's own tick timer runs on. The monotonic clock when
+        there is no node yet, which only a test without one ever sees.
+        """
+        node = self.node
+        if node is not None:
+            return node.get_clock().now().nanoseconds * 1e-9
+        return time.monotonic()
+
     def _callback(self, msg):
-        """Merge one producer's array in. Never replaces the dict."""
+        """Merge one producer's array in. First write wins; never replaces."""
+        now = self._now()
+        conflicts = []
         with self.data_guard:
             self.msg = msg
             for item in msg.status_list:
                 key = uuid_hex(item.goal_info.goal_id.uuid)
                 if key is None:
                     continue
-                stamp = item.goal_info.stamp
-                self.terminals[key] = (
-                    int(item.status),
-                    float(stamp.sec) + float(stamp.nanosec) * 1e-9)
+                stamp = (int(item.goal_info.stamp.sec),
+                         int(item.goal_info.stamp.nanosec))
+                status = int(item.status)
+                held = self.terminals.get(key)
+                if held is None:
+                    if key in self.pruned:
+                        # A re-send outliving our TTL, of an entry already
+                        # dropped: not news, and not to be merged back in.
+                        continue
+                    self.terminals[key] = (status, stamp, now)
+                    continue
+                if (status, stamp) == held[:2]:
+                    # The same producer re-sending the same entry: the normal
+                    # case, many times a second.
+                    continue
+                if key not in self.conflicts:
+                    self.conflicts.add(key)
+                    conflicts.append((key, held, status, stamp))
+        for key, held, status, stamp in conflicts:
+            self._say_conflict(key, held, status, stamp)
+
+    def _say_conflict(self, key, held, status, stamp):
+        """One error line for a goal id that got a second terminal."""
+        message = (
+            '{}: a second terminal for goal {} -- {} (producer stamp {}.{:09d}) '
+            'after {} (stamp {}.{:09d}); the first stands. One goal id has one '
+            'terminal, from the producer that ran it, so one of the two '
+            'producers broke the contract'.format(
+                self.name, key[:16],
+                _STATUS_NAMES.get(status, status), stamp[0], stamp[1],
+                _STATUS_NAMES.get(held[0], held[0]), held[1][0], held[1][1]))
+        node = self.node
+        if node is not None:
+            try:
+                node.get_logger().error(message)
+                return
+            except Exception:
+                pass
+        self.logger.error(message)
 
     def update(self):
-        """Prune by stamp, then publish the dict. Always SUCCESS.
+        """Prune by arrival against the previous tick, then publish. Always SUCCESS.
 
         SUCCESS whether or not anything has arrived: this runs under the root
         parallel beside the other blackboard writers, and a ledger that is
@@ -137,18 +216,22 @@ class ToBlackboard(subscribers.Handler):
         first step, not a failure of the tree.
         """
         self.logger.debug("%s.update()" % self.__class__.__name__)
-        now = (self.node.get_clock().now().nanoseconds * 1e-9
-               if self.node is not None else None)
+        now = self._now()
         with self.data_guard:
-            if now is not None and self.ttl > 0.0:
+            previous, self.last_tick = self.last_tick, now
+            if previous is not None and self.ttl > 0.0:
                 for key in [key for key, entry in self.terminals.items()
-                            if now - entry[1] > self.ttl]:
+                            if previous - entry[2] > self.ttl]:
                     del self.terminals[key]
+                    self.conflicts.discard(key)
+                    self.pruned[key] = now
+                for key in [key for key, when in self.pruned.items()
+                            if now - when > self.ttl]:
+                    del self.pruned[key]
             # A copy, so a callback merging while a behaviour reads cannot
             # mutate the dict underneath it. Terminals are few -- one per motion
             # in the last TTL -- so the copy is cheap at any tick rate.
-            snapshot = {key: status for key, (status, _) in
-                        self.terminals.items()}
+            snapshot = {key: entry[0] for key, entry in self.terminals.items()}
         self.blackboard.set(self.blackboard_variable, snapshot)
         self.feedback_message = '{} terminal(s)'.format(len(snapshot))
         return py_trees.common.Status.SUCCESS

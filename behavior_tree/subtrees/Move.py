@@ -13,6 +13,35 @@ import py_trees.console as console
 from behavior_tree.subtrees import Terminals2Blackboard
 ## from rclpy.callback_groups import ReentrantCallbackGroup
 
+#: The tree node parameter that bounds how long a dispatched goal may wait for
+#: its terminal status, in seconds. <= 0 turns the bound off. Two waits, two
+#: anchors (ROUND26 Q4):
+#:
+#:   * BEFORE anything carrying the goal's id has reached the tree, the bound
+#:     runs from the request: this plus twice the timeout the request stated.
+#:     Only the dispatch can anchor that wait -- run 220105 (2026-09-20 22:01)
+#:     sat on "Sending a policy goal" for 4499 ticks, no status with its goal
+#:     id ever arriving, while the policy it had sent ran 4.6 s and finished,
+#:     until an operator pressed Ctrl-C; and the stop that followed was what
+#:     left the mixer's held command stale for the next run (SAFETY_22_26,
+#:     items 23 and 26).
+#:   * ONCE it has, the bound is SILENCE: this long with no change in what the
+#:     tree hears of the arm -- this goal's status or progress, or the slots'
+#:     (`_activity`). Not age: a 2 s primitive prefetched behind a 40 s policy
+#:     is ARMED, legitimately, for most of those 40 s, and an age bound failed
+#:     it at 34 s and cancelled it. The policy ahead of it moves; a dead
+#:     producer, a mixer that stopped, or a terminal that never arrives does
+#:     not.
+#:
+#: A hang is turned into a FAILURE, one cancel and the chain's RESULT line.
+#: Every wait in the stack below is bounded and ends in a terminal -- a queue
+#: (`stream_queue_timeout`, 30 s), an unanswered arming, a refused policy -- so
+#: what this catches is a terminal that never REACHES the tree. 30 s is
+#: generous on purpose: nothing is lost by failing late, only by not failing.
+STATUS_TIMEOUT_PARAM = "status_timeout"
+STATUS_TIMEOUT_DEFAULT = 30.0
+
+
 class MOVE(py_trees.behaviour.Behaviour):
     """
     Note that this behaviour will return with
@@ -186,6 +215,25 @@ class MOVE(py_trees.behaviour.Behaviour):
         value = bool(value)
         if value and not self._sent_goal:
             self.dispatched_at = self.now()
+            # What the request said its own timeout was, for the terminal
+            # watchdog (`status_overdue`): the value `requested_timeout()`
+            # resolved when this request's command was built -- a paced step's
+            # callable included, which reads the arm and must not be asked
+            # again (ROUND26 Q4: this was 0 for every callable). A behaviour
+            # that builds its command without it states a number.
+            resolved = getattr(self, "_requested_timeout", None)
+            if resolved is None and not callable(self.timeout):
+                resolved = self.timeout
+            try:
+                self._timeout_at_dispatch = max(float(resolved), 0.0)
+            except (TypeError, ValueError):
+                self._timeout_at_dispatch = 0.0
+            self._overdue_said = False
+            # The silence clock (`_heard_at`) starts when something carrying
+            # this goal's id first reaches the tree.
+            self._matched = False
+            self._heard = None
+            self._heard_at = None
         self._sent_goal = value
 
     def now(self):
@@ -213,7 +261,11 @@ class MOVE(py_trees.behaviour.Behaviour):
         worth a tree.
         """
         timeout = self.timeout
-        return timeout() if callable(timeout) else timeout
+        value = timeout() if callable(timeout) else timeout
+        # Kept: the watchdog's budget is this request's own answer, not a
+        # second question (`sent_goal`).
+        self._requested_timeout = value
+        return value
 
     def _make_command(self, action_type, goal, uuid=None, enable_wait=False, **kwargs):
         """
@@ -250,6 +302,15 @@ class MOVE(py_trees.behaviour.Behaviour):
         # say -- reads the same live node parameter the composite reads, rather
         # than being handed a copy that freezes at startup.
         self._node = node
+        # The terminal watchdog's bound, declared by whichever motion is set up
+        # first; a params file may set it. `has_parameter` rather than a
+        # blind declare, since every motion of the tree comes through here.
+        try:
+            if not node.has_parameter(STATUS_TIMEOUT_PARAM):
+                node.declare_parameter(STATUS_TIMEOUT_PARAM,
+                                       STATUS_TIMEOUT_DEFAULT)
+        except Exception:
+            pass
         self.feedback_message = f"{self.name}: setup"
         ## self.node = node
         ## self.node.create_subscription(GoalStatus, 'arm_client/goal_status',
@@ -263,6 +324,7 @@ class MOVE(py_trees.behaviour.Behaviour):
         self.logger.debug(f"{self.__class__.__name__}.initialise()")
         self.dispatched_at = None
         self.finished_at = None
+        self._requested_timeout = None
         self._sent_goal = False
         self.sent_goal = False
 
@@ -278,6 +340,124 @@ class MOVE(py_trees.behaviour.Behaviour):
             return self.blackboard.get(key)
         except KeyError:
             return None
+
+    # ------------------------------------------------------------------
+    # The terminal watchdog (SAFETY_22_26, item 23)
+
+    def status_timeout(self):
+        """`status_timeout` off the tree node, read live; the default without one."""
+        # `getattr`: a test double assembled with `__new__` runs no
+        # `__init__`, and has neither a node nor a dispatch stamp; both read
+        # as "no bound yet".
+        node = getattr(self, "_node", None)
+        if node is None:
+            return STATUS_TIMEOUT_DEFAULT
+        try:
+            return float(node.get_parameter(STATUS_TIMEOUT_PARAM).value)
+        except Exception:
+            return STATUS_TIMEOUT_DEFAULT
+
+    def status_overdue(self):
+        """Why this goal has waited too long for its terminal, or None.
+
+        Two anchors (ROUND26 Q4, `STATUS_TIMEOUT_PARAM`):
+
+          * nothing carrying this goal's id has reached the tree yet: the
+            budget runs from the request, `status_timeout` plus twice the
+            timeout the request stated -- the deaf case, run 220105;
+          * it has: `status_timeout` of SILENCE, no change in what the tree
+            hears of this arm (`_activity`) -- a dead producer mid-motion, a
+            terminal lost for good. An ARMED step behind a long policy hears
+            that policy's progress the whole time and is not silent.
+
+        Called every tick a dispatched step waits (`still_waiting`), which is
+        what keeps the silence clock current.
+        """
+        dispatched_at = getattr(self, "dispatched_at", None)
+        if not self.sent_goal or dispatched_at is None:
+            return None
+        limit = self.status_timeout()
+        if limit <= 0.0:
+            return None
+        now = self.now()
+        if not getattr(self, "_matched", False) and self.goal_matches_blackboard():
+            self._matched = True
+        if getattr(self, "_matched", False):
+            heard = self._activity()
+            if getattr(self, "_heard_at", None) is None or \
+                    heard != getattr(self, "_heard", None):
+                self._heard, self._heard_at = heard, now
+            silent = now - self._heard_at
+            if silent <= limit:
+                return None
+            return ("no status or progress change for {:.1f} s since this goal "
+                    "was last heard (status_timeout {:.1f} s); its last status "
+                    "was {}".format(silent, limit, self.current_goal_status()))
+        stated = getattr(self, "_timeout_at_dispatch", 0.0)
+        waited = now - dispatched_at
+        if waited <= limit + 2.0 * stated:
+            return None
+        return ("no terminal status {:.1f} s after the request "
+                "(status_timeout {:.1f} s + 2 x its timeout {:.2f} s); no "
+                "status carrying its goal id ever reached the tree"
+                .format(waited, limit, stated))
+
+    def _activity(self):
+        """What the tree hears of this arm now, as one comparable value.
+
+        This goal's status and progress, and every watched slot's and
+        channel's (goal id, status[, progress]): the goal ahead of an ARMED
+        step moves on another slot, and that is what its wait is waiting on.
+        """
+        def key(value):
+            if value is None:
+                return None
+            try:
+                return tuple(int(b) for b in value)
+            except TypeError:
+                return value
+        slots = tuple(
+            (key(self._read(keys["goal_id"])), self._read(keys["goal_status"]),
+             self._read(keys["progress"]))
+            for _slot, keys in sorted(self.slot_keys.items()))
+        channels = tuple(
+            (key(self._read(keys["goal_id"])), self._read(keys["goal_status"]))
+            for _channel, keys in sorted(self.channel_keys.items()))
+        return (self.current_goal_status(), self.current_progress(), slots,
+                channels)
+
+    def still_waiting(self):
+        """RUNNING -- or, once `status_overdue` says so, FAILURE and a cancel.
+
+        Every place a dispatched motion used to answer RUNNING while it waited
+        for its status answers this instead. The cancel is sent once, on the
+        channel the goal went to (or the arm's): the tree is giving up on the
+        motion, and a motion nobody is waiting on must not go on moving the
+        arm. With the goal unmatched -- the deaf case -- `terminate` would send
+        nothing, which is why it is sent here.
+        """
+        reason = self.status_overdue()
+        if reason is None:
+            return py_trees.common.Status.RUNNING
+        if not getattr(self, "_overdue_said", False):
+            self._overdue_said = True
+            message = "{}: {}".format(self.name, reason)
+            self.logger.error(message)
+            node = getattr(self, "_node", None)
+            if node is not None:
+                try:
+                    node.get_logger().error(message)
+                except Exception:
+                    pass
+            if self.cmd_req is not None:
+                req = StringGoalStatus.Request()
+                req.data = json.dumps({
+                    "action_type": "cancel_goal",
+                    "goal_channel": self.cancel_channel() or "arm",
+                    "enable_wait": True})
+                self.future = self.cmd_req.call_async(req)
+        self.feedback_message = "FAILURE: " + reason
+        return py_trees.common.Status.FAILURE
 
     def _uuid_matches(self, goal_id):
         if goal_id is None or self.goal_uuid_des is None:
@@ -502,7 +682,10 @@ class MOVE(py_trees.behaviour.Behaviour):
         
         status = self.current_goal_status()
         self.logger.debug(f"self.goal_status")
+        # Not twice: a step the watchdog gave up on has sent its cancel
+        # already (`still_waiting`, ROUND26 Q4).
         if self.goal_matches_blackboard() and \
+          not getattr(self, "_overdue_said", False) and \
           status in [
               GoalStatus.STATUS_ACCEPTED,
               GoalStatus.STATUS_EXECUTING,

@@ -176,7 +176,7 @@ class GOTO(Move.MOVE):
             return command_status
 
         if self.current_goal_id() is None:
-            return py_trees.common.Status.RUNNING
+            return self.still_waiting()
             
         if self.goal_matches_blackboard() and \
            self.current_goal_status() in [
@@ -203,4 +203,4 @@ class GOTO(Move.MOVE):
                                   self.feedback_message))
             return py_trees.common.Status.SUCCESS
         else:
-            return py_trees.common.Status.RUNNING
+            return self.still_waiting()

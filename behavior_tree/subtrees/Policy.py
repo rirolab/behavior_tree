@@ -297,11 +297,13 @@ class MOVEBYPOLICY(Move.MOVE):
             self.feedback_message = "Sending a policy goal"
             return py_trees.common.Status.RUNNING
 
+        # Waiting on a status is bounded (`Move.MOVE.still_waiting`): run
+        # 220105 waited here for ever on a policy that had long finished.
         if self.current_goal_id() is None:
-            return py_trees.common.Status.RUNNING
+            return self.still_waiting()
 
         if not self.goal_matches_blackboard():
-            return py_trees.common.Status.RUNNING
+            return self.still_waiting()
 
         status = self.current_goal_status()
         if status == GoalStatus.STATUS_SUCCEEDED:
@@ -327,7 +329,7 @@ class MOVEBYPOLICY(Move.MOVE):
             return py_trees.common.Status.FAILURE
 
         self.feedback_message = "running"
-        return py_trees.common.Status.RUNNING
+        return self.still_waiting()
 
     def make_command(self, uuid=None, enable_wait=False):
         """
