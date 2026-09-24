@@ -540,7 +540,8 @@ def main(args=None):
             "jobs.policy_job.Move",
             "jobs.dual_move_job.Move",
             "jobs.g1_jobs.G1WalkJob",
-            "jobs.g1_jobs.G1StandZeroJob",
+            "jobs.g1_jobs.G1WaitJob",
+            "jobs.g1_jobs.G1StandCartesianJob",
         ],
         rec_topic_list=topic_list,
     )
