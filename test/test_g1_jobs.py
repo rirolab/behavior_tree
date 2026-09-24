@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import py_trees
 
-from behavior_tree.jobs.g1_jobs import G1StandCartesianJob, G1WaitJob
+from behavior_tree.jobs.g1_jobs import G1GripperJob, G1StandCartesianJob, G1WaitJob
 from behavior_tree.subtrees import G1Wait
 from behavior_tree.utils.validation_utils import StepValidationResult
 
@@ -82,3 +82,35 @@ def test_joint_or_mismatched_cartesian_goal_is_rejected():
         "timeout": 5.0,
     }
     assert _job().validate_step(step) == StepValidationResult.REJECT_GOAL
+
+
+def test_dual_dex1_goal_routes_to_gripper_status_channels():
+    job = G1GripperJob.__new__(G1GripperJob)
+    step = {
+        "primitive_action": "g1_gripper",
+        "client": "gripper",
+        "robot": ["left_arm", "right_arm"],
+        "target_q": 5.4,
+        "timeout": 8.0,
+    }
+    assert job.validate_step(step) == StepValidationResult.ACCEPT_GOAL
+    root = job.create_root(
+        {"left_arm": object(), "right_arm": object()},
+        goal={"1": step},
+        robot_names=step["robot"],
+    )
+    assert len(root.children) == 2
+    assert {child.goal_channel for child in root.children} == {"gripper"}
+    assert {child.robot_name for child in root.children} == set(step["robot"])
+
+
+def test_dex1_goal_rejects_out_of_range_target():
+    job = G1GripperJob.__new__(G1GripperJob)
+    step = {
+        "primitive_action": "g1_gripper",
+        "client": "gripper",
+        "robot": ["left_arm", "right_arm"],
+        "target_q": -5.3,
+        "timeout": 8.0,
+    }
+    assert job.validate_step(step) == StepValidationResult.REJECT_GOAL

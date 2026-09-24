@@ -6,7 +6,7 @@ import json
 import math
 
 from behavior_tree.jobs import base_job
-from behavior_tree.subtrees import G1Cartesian, G1Locomotion, G1Wait
+from behavior_tree.subtrees import G1Cartesian, G1Gripper, G1Locomotion, G1Wait
 from behavior_tree.utils.parameter_utils import make_string_list
 from behavior_tree.utils.validation_utils import StepValidationResult
 
@@ -227,4 +227,57 @@ class G1StandCartesianJob(G1BaseJob):
             locomotion_status_topic=status_topic,
             timeout=float(step.get("timeout", 10.0)),
             name=f"G1StandCartesian{idx}",
+        )
+
+
+class G1GripperJob(G1BaseJob):
+    """Command selected Dex1 hands through their G1 complex action clients."""
+
+    primitive_action = "g1_gripper"
+
+    def validate_step(self, step):
+        if not self._matches(step):
+            return StepValidationResult.NOT_APPLICABLE
+        try:
+            robot_names = make_string_list(step.get("robot"))
+            target_q = float(step["target_q"])
+            duration = float(step["timeout"])
+            valid = (
+                step.get("client") == "gripper"
+                and 1 <= len(robot_names) <= 2
+                and len(set(robot_names)) == len(robot_names)
+                and set(robot_names).issubset({"left_arm", "right_arm"})
+                and math.isfinite(target_q)
+                and 0.0 <= target_q <= 5.4
+                and math.isfinite(duration)
+                and duration > 0.0
+            )
+        except (KeyError, TypeError, ValueError):
+            valid = False
+        return (
+            StepValidationResult.ACCEPT_GOAL
+            if valid
+            else StepValidationResult.REJECT_GOAL
+        )
+
+    def create_root(
+        self, action_client, idx="1", goal=None, robot_names=None, **kwargs
+    ):
+        step = goal[idx]
+        if self.validate_step(step) != StepValidationResult.ACCEPT_GOAL:
+            return None
+        selected_robots = make_string_list(robot_names)
+        if not selected_robots:
+            selected_robots = make_string_list(kwargs.get("robot_name"))
+        action_clients = (
+            action_client
+            if isinstance(action_client, dict)
+            else {selected_robots[0]: action_client}
+        )
+        return G1Gripper.create_subtree(
+            action_clients=action_clients,
+            robot_names=selected_robots,
+            target_q=float(step["target_q"]),
+            timeout=float(step["timeout"]),
+            name=f"G1Gripper{idx}",
         )

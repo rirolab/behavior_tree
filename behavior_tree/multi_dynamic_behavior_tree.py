@@ -542,6 +542,7 @@ def main(args=None):
             "jobs.g1_jobs.G1WalkJob",
             "jobs.g1_jobs.G1WaitJob",
             "jobs.g1_jobs.G1StandCartesianJob",
+            "jobs.g1_jobs.G1GripperJob",
         ],
         rec_topic_list=topic_list,
     )
