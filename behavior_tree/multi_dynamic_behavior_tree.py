@@ -512,7 +512,9 @@ class MultiSplinteredReality(SplinteredReality):
             else "FAILED"
         )
         console.loginfo(f"{job.name}: post_tick_handler finished [{job.status}]")
-        self._publish_task_status(self._active_task_id, status, str(job.status))
+        tip = job.tip() if status == "FAILED" else None
+        detail = getattr(tip, "feedback_message", "") or str(job.status)
+        self._publish_task_status(self._active_task_id, status, detail)
         tree.prune_subtree(job.id)
         self.current_job = None
         self._active_task_id = None
@@ -542,6 +544,7 @@ def main(args=None):
             "jobs.g1_jobs.G1WalkJob",
             "jobs.g1_jobs.G1WaitJob",
             "jobs.g1_jobs.G1StandCartesianJob",
+            "jobs.g1_jobs.G1MoveToWorldObjectJob",
             "jobs.g1_jobs.G1GripperJob",
             "jobs.g1_jobs.G1PerceptionJob",
         ],

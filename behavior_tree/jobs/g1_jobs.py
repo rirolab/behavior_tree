@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 
 from behavior_tree.jobs import base_job
 from behavior_tree.subtrees import G1Cartesian, G1Gripper, G1Locomotion, G1Perception, G1Wait
@@ -227,6 +228,71 @@ class G1StandCartesianJob(G1BaseJob):
             locomotion_status_topic=status_topic,
             timeout=float(step.get("timeout", 10.0)),
             name=f"G1StandCartesian{idx}",
+        )
+
+
+class G1MoveToWorldObjectJob(G1BaseJob):
+    """Resolve a freshly perceived object TF before moving one G1 arm."""
+
+    primitive_action = "g1_move_to_world_object"
+
+    def validate_step(self, step):
+        if not self._matches(step):
+            return StepValidationResult.NOT_APPLICABLE
+        try:
+            robot_names = make_string_list(step.get("robot"))
+            object_id = step.get("object_id")
+            fallback_ids = step.get("fallback_object_ids", [])
+            duration = float(step.get("timeout"))
+            perception_timeout = float(step.get("perception_timeout", 15.0))
+            valid = (
+                step.get("client") == "cartesian"
+                and self._has_locomotion_client(step)
+                and len(robot_names) == 1
+                and robot_names[0] in ("left_arm", "right_arm")
+                and isinstance(object_id, str)
+                and re.fullmatch(r"[a-z][a-z0-9_]*", object_id) is not None
+                and isinstance(fallback_ids, list)
+                and len(fallback_ids) <= 3
+                and all(isinstance(item, str)
+                        and re.fullmatch(r"[a-z][a-z0-9_]*", item) is not None
+                        for item in fallback_ids)
+                and len(set([object_id, *fallback_ids])) == 1 + len(fallback_ids)
+                and _finite_vector(step.get("offset_world"), 3)
+                and math.isfinite(duration)
+                and duration > 0.0
+                and math.isfinite(perception_timeout)
+                and perception_timeout > 0.0
+            )
+        except (TypeError, ValueError):
+            valid = False
+        return (
+            StepValidationResult.ACCEPT_GOAL
+            if valid else StepValidationResult.REJECT_GOAL
+        )
+
+    def create_root(self, action_client, idx="1", goal=None, **kwargs):
+        step = goal[idx]
+        if self.validate_step(step) != StepValidationResult.ACCEPT_GOAL:
+            return None
+        client, status_topic = self._locomotion_endpoint(
+            step,
+            kwargs.get("locomotion_clients", {}),
+            kwargs.get("locomotion_status_topics", {}),
+        )
+        if client is None or status_topic is None:
+            return None
+        return G1Cartesian.create_world_object_subtree(
+            action_client=action_client,
+            robot_name=make_string_list(step["robot"])[0],
+            object_id=step["object_id"],
+            fallback_object_ids=step.get("fallback_object_ids", []),
+            offset_world=[float(value) for value in step["offset_world"]],
+            locomotion_client=client,
+            locomotion_status_topic=status_topic,
+            timeout=float(step["timeout"]),
+            perception_timeout=float(step.get("perception_timeout", 15.0)),
+            name=f"G1MoveToWorldObject{idx}",
         )
 
 
