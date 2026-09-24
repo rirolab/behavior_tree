@@ -47,7 +47,10 @@ Multi-arm BT (paired with N `arm_client` nodes, one per robot namespace listed i
 ros2 launch behavior_tree multi_dynamic_bt.launch.py params_file:=/path/to/your.yaml
 ```
 
-The `params_file` LaunchArg accepts any YAML defining `robot:` plus per-robot params (see `params/multi_default.yaml`).
+The `params_file` LaunchArg accepts a legacy flat `robot:` list plus per-robot
+params (see `params/multi_default.yaml`). It also accepts grouped
+`robot.arm`/`robot.locomotion` parameters when a tree coordinates arm CACs and
+a whole-robot locomotion client.
 
 ## Visualize
 

@@ -73,13 +73,13 @@ def validate_goal(goal, jobs, robot_names):
         if not grounding_robot_names and len(robot_names) == 1:
             grounding_robot_names = [robot_names[0]]
 
-        # Reject missing or unavailable robot assignments only for named robot trees.
-        if robot_names:
-            if (
-                not grounding_robot_names
-                or not set(grounding_robot_names).issubset(available_robot_names)
-            ):
-                return False, f"{step_idx}: validate_goal rejected goal due to invalid assignment"
+        # # Reject missing or unavailable robot assignments only for named robot trees.
+        # if robot_names:
+        #     if (
+        #         not grounding_robot_names
+        #         or not set(grounding_robot_names).issubset(available_robot_names)
+        #     ):
+        #         return False, f"{step_idx}: validate_goal rejected goal due to invalid assignment"
 
         # Reject the goal if any job marks this step malformed.
         job_validation_result = []
@@ -107,6 +107,23 @@ def validate_goal(goal, jobs, robot_names):
                 f"{step_idx}: validate_goal rejected goal because the step is accepted by "
                 f"{accept_count} jobs, but should be accepted by exactly one job",
             )
+
+        # Global jobs, such as locomotion, deliberately have no arm assignment.
+        accepting_job = next(
+            job
+            for job, result in zip(jobs, job_validation_result)
+            if result == StepValidationResult.ACCEPT_GOAL
+        )
+        missing_robot_is_valid = (
+            not grounding_robot_names
+            and not getattr(accepting_job, "requires_robot_assignment", True)
+        )
+        if robot_names and not missing_robot_is_valid:
+            if (
+                not grounding_robot_names
+                or not set(grounding_robot_names).issubset(available_robot_names)
+            ):
+                return False, f"{step_idx}: validate_goal rejected goal due to invalid assignment"
 
     return True, ""
 

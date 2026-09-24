@@ -29,6 +29,8 @@ class BaseJob(object):
     a behaviour tree.
     """
 
+    requires_robot_assignment = True
+
     def __init__(self, node):
         """
         Tune into a channel for incoming goal requests. This is a simple

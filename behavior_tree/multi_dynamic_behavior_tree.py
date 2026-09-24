@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 import importlib
+import json
 import operator
 import sys
+import time
 
 import py_trees
 import py_trees.console as console
@@ -10,11 +12,15 @@ import rclpy
 from action_msgs.msg import GoalStatus
 from std_msgs.msg import String
 from rclpy.node import Node
-from rclpy.qos import QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
+from rclpy.qos import (
+    QoSDurabilityPolicy,
+    QoSHistoryPolicy,
+    QoSProfile,
+    QoSReliabilityPolicy,
+)
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 
-from py_trees_ros import exceptions
 from py_trees_ros.subscribers import ToBlackboard
 from riro_srvs.srv import StringGoalStatus
 
@@ -115,6 +121,9 @@ class MultiSplinteredReality(SplinteredReality):
         )
 
         # Set up ros parameters
+        grouped_robot_parameters = self.has_parameter("robot.arm") or self.has_parameter(
+            "robot.locomotion"
+        )
         defaults = {
             "robot": ["left_arm", "right_arm"],
             "pose_srv_channel": "/get_object_pose",
@@ -126,13 +135,46 @@ class MultiSplinteredReality(SplinteredReality):
             "frequency": 10.0,
         }
         for name, value in defaults.items():
+            if name == "robot" and grouped_robot_parameters:
+                continue
             if not self.has_parameter(name):
                 self.declare_parameter(name, value)
 
-        # Store robot names and validate them. 
-        # Raise an exception if any are invalid.
-        self.robot_names = make_string_list(self.get_parameter("robot").value)
-        validate_robot_names(self.robot_names, self.get_parameters_by_prefix("").keys())
+        # Grouped parameters distinguish arm CACs from whole-robot clients.
+        # Keep the legacy flat robot list working for the other demos.
+        if grouped_robot_parameters:
+            self.arm_names = make_string_list(
+                self.get_parameter("robot.arm").value
+                if self.has_parameter("robot.arm")
+                else []
+            )
+            self.locomotion_names = make_string_list(
+                self.get_parameter("robot.locomotion").value
+                if self.has_parameter("robot.locomotion")
+                else []
+            )
+        else:
+            self.arm_names = make_string_list(self.get_parameter("robot").value)
+            self.locomotion_names = []
+
+        # Existing jobs and validation utilities use robot_names for arm routing.
+        self.robot_names = self.arm_names
+        parameter_names = [
+            name
+            for name in self.get_parameters_by_prefix("").keys()
+            if not name.startswith("robot.")
+        ]
+        validate_robot_names(self.arm_names, parameter_names)
+        if any(not name.strip() for name in self.locomotion_names):
+            raise RuntimeError(
+                "Invalid multi_dynamic_behavior_tree robot.locomotion parameter: "
+                "client names must not be empty"
+            )
+        if len(set(self.locomotion_names)) != len(self.locomotion_names):
+            raise RuntimeError(
+                "Invalid multi_dynamic_behavior_tree robot.locomotion parameter: "
+                f"duplicate client names {self.locomotion_names}"
+            )
 
         self.rec_topic_list = rec_topic_list
         self.n_loop = n_loop
@@ -146,7 +188,7 @@ class MultiSplinteredReality(SplinteredReality):
         self.blackboard.stop_cmd = False
 
         self.tree = py_trees_ros.trees.BehaviourTree(
-            root=create_root(self.robot_names),
+            root=create_root(self.arm_names),
             unicode_tree_debug=True,
         )
         self.tree.add_pre_tick_handler(self.pre_tick_handler)
@@ -170,6 +212,7 @@ class MultiSplinteredReality(SplinteredReality):
                 )(self)
             )
         self.current_job = None
+        self._active_task_id = None
         console.loginfo(
             f"multi_dynamic_behavior_tree: initialized for {', '.join(self.robot_names)}"
         )
@@ -183,21 +226,68 @@ class MultiSplinteredReality(SplinteredReality):
             history=QoSHistoryPolicy.KEEP_LAST,
             depth=10,
         )
+        task_status_qos = QoSProfile(
+            reliability=QoSReliabilityPolicy.RELIABLE,
+            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+            history=QoSHistoryPolicy.KEEP_LAST,
+            depth=1,
+        )
+        self._task_status_publisher = self.create_publisher(
+            String, "/behavior_tree/task_status", task_status_qos
+        )
 
         # Initialize action client per robot.
         self.action_clients = {}
-        for robot_name in self.robot_names:
+        for robot_name in self.arm_names:
             service_name = f"{robot_name}/arm_client/command"
             client = self.create_client(
                 StringGoalStatus,
                 service_name,
                 qos_profile=qos_profile,
             )
-            if not client.wait_for_service(timeout_sec=3.0):
-                raise exceptions.TimedOutError(
-                    f"{service_name} service not available, waiting again..."
+            self.get_logger().info(f"Waiting for CAC service {service_name}")
+            wait_attempts = 0
+            while rclpy.ok() and not client.wait_for_service(timeout_sec=1.0):
+                wait_attempts += 1
+                if wait_attempts % 5 == 0:
+                    self.get_logger().info(
+                        f"Still waiting for CAC service {service_name}"
+                    )
+            if not rclpy.ok():
+                raise RuntimeError(
+                    f"ROS shutdown while waiting for CAC service {service_name}"
                 )
             self.action_clients[robot_name] = client
+            self.get_logger().info(f"CAC service ready: {service_name}")
+
+        # Initialize whole-robot locomotion clients separately from arm CACs.
+        self.locomotion_clients = {}
+        self.locomotion_status_topics = {}
+        for locomotion_name in self.locomotion_names:
+            service_name = f"/{locomotion_name}/locomotion_client/command"
+            status_topic = f"/{locomotion_name}/locomotion_client/goal_status"
+            client = self.create_client(
+                StringGoalStatus,
+                service_name,
+                qos_profile=qos_profile,
+            )
+            self.get_logger().info(
+                f"Waiting for locomotion client service {service_name}"
+            )
+            wait_attempts = 0
+            while rclpy.ok() and not client.wait_for_service(timeout_sec=1.0):
+                wait_attempts += 1
+                if wait_attempts % 5 == 0:
+                    self.get_logger().info(
+                        f"Still waiting for locomotion client service {service_name}"
+                    )
+            if not rclpy.ok():
+                raise RuntimeError(
+                    f"ROS shutdown while waiting for locomotion client service {service_name}"
+                )
+            self.locomotion_clients[locomotion_name] = client
+            self.locomotion_status_topics[locomotion_name] = status_topic
+            self.get_logger().info(f"Locomotion client service ready: {service_name}")
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(
@@ -206,6 +296,25 @@ class MultiSplinteredReality(SplinteredReality):
             spin_thread=True,
             qos=qos_profile,
         )
+
+    def _task_id_for_goal(self, goal):
+        for job in self.jobs:
+            if job.goal == goal and getattr(job, "task_id", None):
+                return str(job.task_id)
+        return ""
+
+    def _publish_task_status(self, task_id, status, detail=""):
+        message = String()
+        message.data = json.dumps(
+            {
+                "task_id": str(task_id or ""),
+                "status": str(status),
+                "detail": str(detail),
+                "published_at": time.monotonic(),
+            },
+            separators=(",", ":"),
+        )
+        self._task_status_publisher.publish(message)
 
     def pre_tick_handler(self, tree):
         """
@@ -223,6 +332,7 @@ class MultiSplinteredReality(SplinteredReality):
 
         # Only build a new task subtree when the tree is idle and a goal is waiting.
         if not self.busy() and goal is not None:
+            task_id = self._task_id_for_goal(goal)
 
             # Reject the entire goal early if any step has invalid robot assignments.
             is_goal_valid, goal_reject_reason = validate_goal(
@@ -232,6 +342,7 @@ class MultiSplinteredReality(SplinteredReality):
             )
             if not is_goal_valid:
                 console.logwarn(goal_reject_reason)
+                self._publish_task_status(task_id, "FAILED", goal_reject_reason)
                 for job in self.jobs:
                     job.goal = None
                 return
@@ -266,8 +377,20 @@ class MultiSplinteredReality(SplinteredReality):
                     if job.goal is None:
                         continue
 
+                    # Case: a global step, such as locomotion, owns no arm client.
+                    if not requested_robot_names:
+                        job_root = job.create_root(
+                            None,
+                            step_idx,
+                            goal=job.goal,
+                            tf_buffer=self.tf_buffer,
+                            rec_topic_list=self.rec_topic_list,
+                            locomotion_clients=self.locomotion_clients,
+                            locomotion_status_topics=self.locomotion_status_topics,
+                        )
+
                     # Case: single-robot step -> assign the one robot
-                    if len(requested_robot_names) == 1:
+                    elif len(requested_robot_names) == 1:
                         job_root = job.create_root(
                             self.action_clients[requested_robot_names[0]],
                             step_idx,
@@ -275,6 +398,8 @@ class MultiSplinteredReality(SplinteredReality):
                             tf_buffer=self.tf_buffer,
                             rec_topic_list=self.rec_topic_list,
                             robot_name=requested_robot_names[0],
+                            locomotion_clients=self.locomotion_clients,
+                            locomotion_status_topics=self.locomotion_status_topics,
                         )
 
                     # Case: multi-robot step -> pass a mapping of robot_name to client.
@@ -289,6 +414,8 @@ class MultiSplinteredReality(SplinteredReality):
                             tf_buffer=self.tf_buffer,
                             rec_topic_list=self.rec_topic_list,
                             robot_names=requested_robot_names,
+                            locomotion_clients=self.locomotion_clients,
+                            locomotion_status_topics=self.locomotion_status_topics,
                         )
 
                     # Case: this job cannot handle the step -> try the next job.
@@ -322,9 +449,11 @@ class MultiSplinteredReality(SplinteredReality):
 
                 # Reject the entire goal if no job can actually build the step subtree.
                 if job_root is None:
-                    console.logwarn(
+                    reason = (
                         f"{step_idx}: pre_tick_handler rejected goal because no job built a subtree"
                     )
+                    console.logwarn(reason)
+                    self._publish_task_status(task_id, "FAILED", reason)
                     for job in self.jobs:
                         job.goal = None
                     return
@@ -358,11 +487,35 @@ class MultiSplinteredReality(SplinteredReality):
             root = run_or_cancel
             tree.insert_subtree(root, self.priorities.id, 0)
             console.loginfo(f"{root.name}: pre_tick_handler inserted job subtree")
+            self._active_task_id = task_id
+            self._publish_task_status(task_id, "RUNNING")
 
             # Clear consumed goals.
             for job in self.jobs:
                 job.goal = None
             return
+
+    def post_tick_handler(self, tree):
+        """Publish the complete BT task result before pruning its subtree."""
+        if not self.busy():
+            return
+        job = self.priorities.children[-2]
+        if job.status not in (
+            py_trees.common.Status.SUCCESS,
+            py_trees.common.Status.FAILURE,
+            py_trees.common.Status.INVALID,
+        ):
+            return
+        status = (
+            "SUCCEEDED"
+            if job.status == py_trees.common.Status.SUCCESS
+            else "FAILED"
+        )
+        console.loginfo(f"{job.name}: post_tick_handler finished [{job.status}]")
+        self._publish_task_status(self._active_task_id, status, str(job.status))
+        tree.prune_subtree(job.id)
+        self.current_job = None
+        self._active_task_id = None
 
 def main(args=None):
     """
@@ -386,6 +539,8 @@ def main(args=None):
             "jobs.gripper_job.Move",
             "jobs.policy_job.Move",
             "jobs.dual_move_job.Move",
+            "jobs.g1_jobs.G1WalkJob",
+            "jobs.g1_jobs.G1StandZeroJob",
         ],
         rec_topic_list=topic_list,
     )
