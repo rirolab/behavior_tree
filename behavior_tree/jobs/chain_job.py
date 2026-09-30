@@ -130,6 +130,13 @@ COMPOSITION_PARAM = "mixer_composition"
 DISPATCH_PARAM = "chain_dispatch_on_start"
 FULL_EARLY_PARAM = "chain_full_early_switch"
 
+# Refuse a chain file whose step after an early-retreating policy states no
+# threshold (REAL_RUN_FOLLOWUPS #5, `chain_spec.load(require_retreat_threshold)`).
+# An arm config key read like the pacing ones, never declared: unset is off,
+# and a deployment that names nothing runs exactly as before -- with the
+# warning line `describe` prints and the one `create_root` logs.
+REQUIRE_RETREAT_PARAM = "chain_require_retreat_threshold"
+
 # The per-arm parameters the pacing is read from, and what each is.
 #
 # A chain file states each step's `speed`; the other three numbers are the
@@ -537,6 +544,9 @@ class Move(base_job.BaseJob):
         self._started_at = None
         self._reported = False
         self._gripper_in_file = False
+        # The file's OPEN value (`defaults.gripper_open`), or None where it
+        # declares none: what the verdict's release is opening toward.
+        self._gripper_open = None
         self._root = None
         self._resolved = []
         self._timeouts = None
@@ -724,6 +734,20 @@ class Move(base_job.BaseJob):
             return value.strip().lower() not in ("0", "false", "no", "off", "")
         return bool(value)
 
+    def require_retreat_threshold(self, robot_name):
+        """Whether this arm refuses a retreat that names no threshold. False
+        unless its config says so (`REQUIRE_RETREAT_PARAM`).
+
+        A string is read the way `dispatch_on_start` reads one, since a value
+        set from a shell can arrive as one and `bool("false")` is True.
+        """
+        value = self._read_optional_config(robot_name, REQUIRE_RETREAT_PARAM)
+        if value is None:
+            return False
+        if isinstance(value, str):
+            return value.strip().lower() in ("1", "true", "yes", "on")
+        return bool(value)
+
     def full_arm_early(self):
         try:
             value = self._node.get_parameter(FULL_EARLY_PARAM).value
@@ -774,7 +798,10 @@ class Move(base_job.BaseJob):
         pose written in a yaml beside a container that loaded something else.
         """
         limits, width = self.limits_for(robot_name)
-        spec = chain_spec.load(path, side, limits, width)
+        spec = chain_spec.load(
+            path, side, limits, width,
+            require_retreat_threshold=self.require_retreat_threshold(
+                robot_name))
         if "dispatch_on_start" in (spec.get("defaults") or {}):
             # One RUN, one dispatch rule. The rule itself is the run's, on the
             # node parameter `chain_dispatch_on_start` (`DISPATCH_PARAM`); what
@@ -897,6 +924,28 @@ class Move(base_job.BaseJob):
                 "dwell -- the sequential baseline")
         print(table)
         sys.stdout.flush()
+        # The table's warning line cannot name the number -- `chain_spec` has
+        # no container -- and the number is the whole question: it is the
+        # policy progress this retreat will wait for, however early the tree
+        # dispatches it. So it is said once here, where `facts` is in hand.
+        for index, step in enumerate(resolved):
+            previous = resolved[index - 1] if index else None
+            if (previous is None or previous["kind"] != "policy"
+                    or not previous.get("early_retreat")
+                    or step.get("threshold_explicit")):
+                continue
+            handover = (facts.get(previous["skill_id"]) or {}).get(
+                "end_handover") or {}
+            if handover.get("progress_threshold") is None:
+                continue
+            self._node.get_logger().warning(
+                "chain_job: '{}' follows the early-retreating policy '{}' and "
+                "states no threshold of its own; its seam opens at {:.2f} of "
+                "'{}' (the container's end_handover.progress_threshold), "
+                "however early it is dispatched. Write `threshold:` on the "
+                "step to choose it.".format(
+                    step["label"], previous["label"],
+                    float(handover["progress_threshold"]), previous["label"]))
 
         self._task = spec["task"]
         self._steps = len(resolved)
@@ -904,6 +953,9 @@ class Move(base_job.BaseJob):
         self._reported = False
         self._gripper_in_file = any(s.get("gripper") is not None
                                     for s in resolved)
+        gripper_open = (spec.get("defaults") or {}).get("gripper_open")
+        self._gripper_open = (None if gripper_open is None
+                              else float(gripper_open))
 
         # ONE pacing. The other driver plans each step from how far it travels
         # and how fast the file asks it to go; a job that timed its steps its
@@ -954,16 +1006,37 @@ class Move(base_job.BaseJob):
     def jaw_window(self, root):
         """`(start, end, released_at)` -- the TRANSPORT, or `(None, None, None)`.
 
-        The stretch over which the jaws are asked for nothing: from the end of
-        the LAST policy in the file to the dispatch of the first step after it
-        that commands the gripper. A measured gripper that will not reach its
-        command in there is holding something; outside it a gap is a jaw on its
-        way somewhere, which is not the question.
+        The stretch over which the jaws are asked to HOLD: from the end of the
+        LAST policy in the file to the instant the commanded jaw starts opening
+        for the release (`chain_spec.release_start`). A measured gripper that
+        will not reach its command in there is holding something; outside it a
+        gap is a jaw on its way somewhere, which is not the question.
 
-        The same window the other driver takes (`merge_chain.run_result`), off
-        the same two events -- when the policy's motion ended, and when the
-        releasing step's request went out -- which the motions themselves stamp
-        (`Move.MOVE.dispatched_at` / `finished_at`).
+        The end used to be the release step's DISPATCH, and that stopped meaning
+        "the jaws are about to open" once a release could arm into the descent
+        (GRIPPER_INTO) and a prefetching chain could dispatch a step in the same
+        10 Hz tick the policy ended in: the window collapsed to under a
+        millisecond, no 100 Hz sample landed in it, and 04:01 printed
+        `held=unknown` for jaws that carried the cup (REAL_RUN_FOLLOWUPS #31,
+        JAW_VERDICT_REPORT). The command is what says when the jaws were told to
+        let go; the dispatch stays as the fallback for a trace that never shows
+        them opening.
+
+        `released_at` names the step that lets go (`chain_spec.releasing_step`):
+        the first later step whose gripper is at least half-way from the grip to
+        the open value. Not the first step that commands the jaws at all -- since
+        GRASP_EVENT that is often the retreat TIGHTENING the grip on what the
+        policy caught, and 05:23 printed `released_at=cu_above` for it. Where the
+        grip or the open value is unknown, the old rule stands: the first later
+        step that commands the jaws, dispatched after the policy ended.
+
+        The open value is the file's `gripper_open`; a file that declares none is
+        read at the command the policy STARTED from, when the jaws were open.
+
+        The same window the other driver takes (`merge_chain.verdict`), through
+        the same `chain_spec` functions over the same two stamps -- when the
+        policy's motion ended (`Move.MOVE.finished_at`), and the commanded jaw.
+        Reporting only: `post_tick` prints it and nothing reads it back.
         """
         last = next((i for i in range(len(self._resolved) - 1, -1, -1)
                      if self._resolved[i]["kind"] == "policy"), None)
@@ -975,14 +1048,38 @@ class Move(base_job.BaseJob):
             or _first_stamp(policy, "dispatched_at")
         if start is None:
             return None, None, None
-        for index in range(last + 1, len(self._resolved)):
-            step = self._resolved[index]
-            if step.get("gripper") is None:
+        commanded = ([] if self._trace is None
+                     else self._trace.commanded_gripper())
+        open_value = self._gripper_open
+        if open_value is None:
+            began = _first_stamp(policy, "dispatched_at")
+            if began is not None:
+                open_value = chain_spec.command_at(commanded, began)
+        later = list(range(last + 1, len(self._resolved)))
+        which = chain_spec.releasing_step(
+            [self._resolved[i].get("gripper") for i in later],
+            chain_spec.command_at(commanded, start), open_value)
+        end = chain_spec.release_start(commanded, start, open_value)
+        released_at = None
+        if which is not None:
+            release = later[which]
+            sent = _first_stamp(root.children[release], "dispatched_at")
+            if sent is not None:
+                # Dispatched, so it is what let go -- whenever it was sent.
+                released_at = self._resolved[release]["label"]
+                if end is None and sent > start:
+                    end = sent
+            return start, end, released_at
+        for index in later:
+            if self._resolved[index].get("gripper") is None:
                 continue
-            end = _first_stamp(root.children[index], "dispatched_at")
-            if end is not None and end > start:
-                return start, end, step["label"]
-        return start, None, None
+            sent = _first_stamp(root.children[index], "dispatched_at")
+            if sent is not None and sent > start:
+                released_at = self._resolved[index]["label"]
+                if end is None:
+                    end = sent
+                break
+        return start, end, released_at
 
     def jaw_verdict(self, root):
         """`(held, jaw_gap, released_at)` for this run's `RESULT` line.
