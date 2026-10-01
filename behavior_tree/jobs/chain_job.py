@@ -158,6 +158,24 @@ PACING_PARAMS = (("chain_timeout", 4.0),
 TIMEOUT_SCALE_PARAM = "timeout_scale"
 DEFAULT_TIMEOUT_SCALE = 0.5
 
+# [SEAM27] Hybrid pacing (`docs/overlap/seam27/DESIGN.md` §3, ROUND33). A file
+# that says `defaults.pacing: hybrid` paces its arm steps on the hand at plan
+# time; these per-arm keys are the robot's half of that rule -- the
+# deployment's hand speed, joint cap and floor (`chain_spec.HybridProfile`) --
+# read like the pacing keys above, never declared. `chain_pacing_allowed` is
+# the deployment's switch (DESIGN §3.4): unset is `[joint]`, and a hybrid file
+# is refused by name until a deployment that passed the gates says
+# `[joint, hybrid]`.
+HYBRID_PARAMS = (("chain_hand_speed", 0.20),
+                 ("chain_joint_speed_cap", 0.8),
+                 ("chain_min_duration", 1.0))
+PACING_ALLOWED_PARAM = "chain_pacing_allowed"
+DEFAULT_PACING_ALLOWED = ("joint",)
+# Where the arm client says whether its planner can pace a hybrid file
+# (`complex_action_client._trajectory_manager_client.PACING_SERVICE_NAME`).
+PACING_SERVICE = "arm_client/pacing"
+PACING_SERVICE_TIMEOUT = 3.0
+
 
 def _claim_for(step):
     """The request fields one resolved step carries, or None.
@@ -371,6 +389,95 @@ def chain_timeouts(resolved, args, scale, origin, gripper_origin, trace=None):
     return out
 
 
+def chain_hybrid(resolved, profile, scale, origin, gripper_origin,
+                 trace=None, fixed=4.0):
+    """[SEAM27] `(timeouts, paces)` for a hybrid file, in the file's order.
+
+    The same bookkeeping as `chain_timeouts` -- the origin of each step, the
+    unit of each kind -- through `chain_spec.schedule_hybrid`. What differs is
+    what the request says:
+
+      * an ARM step's `timeout` is the FALLBACK, `chain_spec.hybrid_fallback`:
+        the joint-cap term from this driver's origin, which an old
+        trajectory_manager that ignores the pace fields runs (ROUND33 §1-2).
+        Times the scale, like any arm request;
+      * its pace fields (`chain_spec.pace_fields`) are the rule itself, which
+        trajectory_manager applies from ITS origin at plan time;
+      * a step after a policy (or a line) is measured at dispatch, as today:
+        the timeout AND the jaw term are callables reading the arm then --
+        the `_measured_timeout` pair ROUND33 §1-6 keeps;
+      * a gripper-only step keeps today's rule and unit (seconds, unscaled),
+        and a line whose `duration` the file states is paced by it as today.
+        Neither carries pace fields.
+
+    `paces[i]` is the dict of request fields for step i, or None.
+    """
+    timings = chain_spec.schedule_hybrid(
+        resolved, origin, gripper_origin, profile, scale)
+    timeouts, paces = [], []
+    for step, (duration, _reason, measured, pace) in zip(resolved, timings):
+        if step["kind"] == "policy":
+            timeouts.append(None)
+            paces.append(None)
+        elif pace is None and step["kind"] == "straight":
+            timeouts.append(float(step["duration"]) * scale)
+            paces.append(None)
+        elif pace is None:
+            # Gripper-only: seconds, not scaled (see `chain_timeouts`).
+            timeouts.append(duration)
+            paces.append(None)
+        elif measured:
+            timeout, grip = _measured_hybrid(step, pace, scale, trace, fixed)
+            timeouts.append(timeout)
+            fields = chain_spec.pace_fields(pace, 0.0)
+            fields["pace_grip_duration"] = grip
+            paces.append(fields)
+        else:
+            timeouts.append(duration * scale)
+            paces.append(chain_spec.pace_fields(pace, pace["grip_duration"]))
+    return timeouts, paces
+
+
+def _measured_hybrid(step, pace, scale, trace, fixed):
+    """[SEAM27] The dispatch-time pair of a hybrid step whose origin is
+    measured: `(timeout callable, jaw-term callable)`.
+
+    The timeout is `chain_spec.hybrid_fallback` from the arm as it is when the
+    request is built; the jaw term is the measured jaw's travel to this step's
+    target -- the one number of the rule trajectory_manager cannot know, since
+    a policy ends holding where it holds (ROUND33 §1-6). Neither raises inside
+    a tick: no trace, or a pose of the wrong width, is the fixed timeout and no
+    jaw term, which is what this step had before it was paced at all.
+    """
+    target = step.get("target")
+
+    def jaw():
+        grip = None if trace is None else trace.current_gripper()
+        if step.get("gripper") is None or grip is None:
+            return None
+        return abs(step["gripper"] - grip)
+
+    def timeout():
+        try:
+            here = None if trace is None else trace.current_config()
+            if target is not None and (here is None
+                                       or len(here) != len(target)):
+                return float(fixed)
+            value, _why = chain_spec.hybrid_fallback(
+                here if target is not None else None, target, jaw(), pace)
+            return value * scale
+        except Exception:
+            return float(fixed)
+
+    def grip_duration():
+        try:
+            return chain_spec.gripper_duration(jaw(), pace["gripper_speed"])
+        except Exception:
+            return 0.0
+
+    return timeout, grip_duration
+
+
 def _stamps(child, attribute):
     """Every `attribute` a behaviour or its descendants carries, non-None.
 
@@ -446,7 +553,8 @@ def _measured_timeout(step, args, scale, trace):
 
 
 def build_children(resolved, action_client, policy_action_client,
-                   robot_name=None, timeout=4.0, facts=None, timeouts=None):
+                   robot_name=None, timeout=4.0, facts=None, timeouts=None,
+                   paces=None):
     """The behaviours for one resolved chain, in the file's order.
 
     `facts` maps skill id -> the container's §4 entry, so the step AFTER a
@@ -457,6 +565,11 @@ def build_children(resolved, action_client, policy_action_client,
     `timeouts` is `chain_timeouts` for this chain, one entry per step: the
     file's pacing. None leaves every step at the job's fixed `timeout`, which
     is what a caller with no deployment to read from gets.
+
+    [SEAM27] `paces` (a hybrid file, `chain_hybrid`): per step the pace fields
+    an arm step's request carries, merged into its claim -- the claim is
+    already where a motion's own request fields ride (`Move._make_command`),
+    callables included. None for a joint file, whose requests are unchanged.
     """
     facts = facts or {}
     children = []
@@ -467,6 +580,7 @@ def build_children(resolved, action_client, policy_action_client,
         # it. A policy's timeout is its episode's and is not paced here.
         paced = None if timeouts is None else timeouts[index]
         step_timeout = timeout if paced is None else paced
+        pace = None if paces is None else paces[index]
         if step["kind"] == "policy":
             skill_id = step["skill_id"]
             entry = facts.get(skill_id)
@@ -539,11 +653,12 @@ def build_children(resolved, action_client, policy_action_client,
                 # which is the thing this kind exists to avoid.
                 filter_size=step.get("filter_size"),
                 timeout=step_timeout, robot_name=robot_name,
-                claim=_claim_after_policy(_claim_for(step), step, previous,
-                                          facts, policy=policy))
+                claim=_with_pace(_claim_after_policy(
+                    _claim_for(step), step, previous, facts, policy=policy),
+                    pace))
         else:
-            claim = _claim_after_policy(_claim_for(step), step, previous, facts,
-                                        policy=policy)
+            claim = _with_pace(_claim_after_policy(
+                _claim_for(step), step, previous, facts, policy=policy), pace)
             child = MoveJoint.MOVEJ(
                 name=step["label"], action_client=action_client,
                 action_goal=list(step["target"]),
@@ -560,9 +675,65 @@ def build_children(resolved, action_client, policy_action_client,
     return children
 
 
+_PACING_CLIENT = {}
+
+
+def _ask_pacing(robot_name, timeout=PACING_SERVICE_TIMEOUT):
+    """[SEAM27] `(yes, sentence)`: does this arm's client confirm hybrid
+    pacing with its trajectory_manager? (`arm_client/pacing`, a Trigger.)
+
+    On a node of its own with its own executor, the way
+    `skill_registry_utils._client_lookup` asks policy_manager: this runs while
+    the tree builds a chain, inside the tree's own executor, and spinning that
+    from its own callback would deadlock. Made only when a hybrid file is
+    loaded, so a deployment that never runs one has no such node.
+    """
+    import rclpy
+    from rclpy.executors import SingleThreadedExecutor
+    from std_srvs.srv import Trigger
+
+    if not rclpy.ok():
+        return False, "rclpy is not initialised"
+    service = ("/{}/{}".format(robot_name, PACING_SERVICE) if robot_name
+               else PACING_SERVICE)
+    node = _PACING_CLIENT.get("node")
+    if node is None:
+        node = rclpy.create_node("chain_pacing_client")
+        _PACING_CLIENT["node"] = node
+    clients = _PACING_CLIENT.setdefault("clients", {})
+    client = clients.get(service)
+    if client is None:
+        client = node.create_client(Trigger, service)
+        clients[service] = client
+    if not client.wait_for_service(timeout_sec=timeout):
+        return False, "no {} -- an arm client from before hybrid " \
+            "pacing".format(service)
+    future = client.call_async(Trigger.Request())
+    executor = SingleThreadedExecutor()
+    executor.add_node(node)
+    try:
+        executor.spin_until_future_complete(future, timeout_sec=timeout)
+    finally:
+        executor.remove_node(node)
+    if not future.done() or future.result() is None:
+        return False, "{} did not answer in {:.0f} s".format(service, timeout)
+    answer = future.result()
+    return bool(answer.success), str(answer.message)
+
+
+def _with_pace(claim, pace):
+    """[SEAM27] A claim with an arm step's pace fields added, or the claim
+    as it was when there are none (a joint file: the same object)."""
+    if not pace:
+        return claim
+    merged = dict(claim or {})
+    merged.update(pace)
+    return merged
+
+
 def build_chain_root(resolved, action_client, policy_action_client,
                      robot_name=None, timeout=4.0, facts=None, name="Chain",
-                     timeouts=None, dispatch_on_start=True):
+                     timeouts=None, dispatch_on_start=True, paces=None):
     """One `MoveBlend` over the whole file.
 
     `dispatch_on_start` is the RUN's, read off the node parameter
@@ -588,7 +759,7 @@ def build_chain_root(resolved, action_client, policy_action_client,
     root.add_children(build_children(
         resolved, action_client, policy_action_client,
         robot_name=robot_name, timeout=timeout, facts=facts,
-        timeouts=timeouts))
+        timeouts=timeouts, paces=paces))
     return root
 
 
@@ -635,6 +806,7 @@ class Move(base_job.BaseJob):
         self._root = None
         self._resolved = []
         self._timeouts = None
+        self._pacing = None
         self._trace = None
         # One trace per arm, subscribed NOW rather than at goal time: the first
         # thing a chain needs from it is where the arm is, and a subscription
@@ -803,6 +975,74 @@ class Move(base_job.BaseJob):
                 "be positive.".format(TIMEOUT_SCALE_PARAM, scale))
         return args, scale
 
+    def hybrid_for(self, robot_name, args):
+        """[SEAM27] This arm's `chain_spec.HybridProfile`: the hand speed,
+        joint cap and floor from its config (`HYBRID_PARAMS`), the jaw speed and
+        the jaw step's floor from the same keys today's pacing reads."""
+        values = {}
+        for key, fallback in HYBRID_PARAMS:
+            value = self._read_optional_config(robot_name, key)
+            values[key] = fallback if value is None else value
+        cap = values["chain_joint_speed_cap"]
+        cap = ([float(c) for c in cap] if isinstance(cap, (list, tuple))
+               else float(cap))
+        try:
+            return chain_spec.HybridProfile(
+                hand_speed=float(values["chain_hand_speed"]), joint_cap=cap,
+                min_duration=float(values["chain_min_duration"]),
+                gripper_speed=args.gripper_speed, min_step=args.min_step)
+        except ValueError as err:
+            raise ChainJobError("chain_job: {}: {}".format(
+                robot_name or "the tree", err))
+
+    def pacing_allowed(self, robot_name):
+        """[SEAM27] The pacing rules this deployment lets a chain file ask
+        for (`chain_pacing_allowed`); `[joint]` unless it says otherwise."""
+        value = self._read_optional_config(robot_name, PACING_ALLOWED_PARAM)
+        if value is None:
+            return list(DEFAULT_PACING_ALLOWED)
+        if isinstance(value, str):
+            value = [part.strip() for part in value.split(",")]
+        return [str(v) for v in value if str(v)]
+
+    # The arm client's answer, swappable: a unit test states it, a run asks.
+    _pacing_answer = staticmethod(_ask_pacing)
+
+    def check_pacing(self, spec, robot_name):
+        """[SEAM27] Refuse a hybrid file this deployment may not run.
+
+        Two gates, both before anything is built (ROUND33 §1-2, DESIGN §3.4):
+        the deployment's switch (`chain_pacing_allowed`), and the arm client's
+        own word that its trajectory_manager plans hybrid requests
+        (`arm_client/pacing`) -- a bt.yaml list alone would let a newer tree
+        drive an older planner, which would run the fallback timeout. A joint
+        file is not asked about at all.
+        """
+        mode = chain_spec.pacing_of(spec)
+        if mode == chain_spec.PACING_JOINT:
+            return
+        allowed = self.pacing_allowed(robot_name)
+        if mode not in allowed:
+            raise ChainJobError(
+                "chain_job: the file asks for `pacing: {}` and this "
+                "deployment allows {} ({} of {}). A hybrid file runs only "
+                "where the gates passed; that deployment says so in its "
+                "config.".format(mode, allowed, PACING_ALLOWED_PARAM,
+                                 robot_name or "the tree"),
+                task=spec.get("task"), steps=len(spec["steps"]))
+        yes, said = self._pacing_answer(robot_name)
+        if not yes:
+            raise ChainJobError(
+                "chain_job: the file asks for `pacing: {}` and {}'s arm "
+                "client does not confirm it with its trajectory_manager: {}. "
+                "An older planner would plan every arm step at the "
+                "request's fallback timeout instead.".format(
+                    mode, robot_name or "the tree", said),
+                task=spec.get("task"), steps=len(spec["steps"]))
+        self._node.get_logger().info(
+            "chain_job: pacing {} confirmed by the arm client: {}".format(
+                mode, said))
+
     def joints_for(self, robot_name):
         """`(chain joints, gripper joint or None)` for this arm, or `(None, None)`.
 
@@ -945,6 +1185,7 @@ class Move(base_job.BaseJob):
                 "to set. A chain is dispatched early, always -- what the file "
                 "decides is each step's threshold, which is the seam.")
         self.check_composition(spec)
+        self.check_pacing(spec, robot_name)
 
         facts, init_poses = {}, {}
         for skill_id in chain_spec.skill_ids(spec):
@@ -1091,7 +1332,23 @@ class Move(base_job.BaseJob):
         # for, pinned by the suite); the run that no longer dispatches the way
         # the driver does is the one that has something to declare.
         dispatch_on_start = self.dispatch_on_start()
-        table = chain_spec.describe(spec, resolved)
+        # [SEAM27] A hybrid file's table carries the rule and this arm's
+        # numbers; a joint file's is the call it always was, in the order it
+        # always was (its pacing is read below, after the table).
+        self._pacing = chain_spec.pacing_of(spec)
+        profile = None
+        if self._pacing == chain_spec.PACING_HYBRID:
+            args, scale = self.pacing_for(robot_name)
+            try:
+                profile = self.hybrid_for(robot_name, args)
+            except ChainJobError as err:
+                self.refuse_chain(
+                    "### the chain file cannot be run as written:\n###   {}"
+                    .format(err), task=spec.get("task"), steps=len(resolved))
+                return None
+            table = chain_spec.describe(spec, resolved, profile)
+        else:
+            table = chain_spec.describe(spec, resolved)
         if not dispatch_on_start:
             head, _, rest = table.partition("\n")
             table = "{}   dispatch after the terminal (sequential baseline)\n{}" \
@@ -1145,7 +1402,8 @@ class Move(base_job.BaseJob):
         # own way would plan a different T, and every claim would describe a
         # different closure for the same file.
         trace = self._traces.get(robot_name)
-        args, scale = self.pacing_for(robot_name)
+        if profile is None:
+            args, scale = self.pacing_for(robot_name)
         origin = None if trace is None else trace.current_config()
         # A pose of the wrong width is not a pose: `zip` would truncate it
         # against the step's target and measure a distance over whichever
@@ -1171,16 +1429,34 @@ class Move(base_job.BaseJob):
                 "chain_job: nothing has reported this arm's joints yet, so "
                 "the first step is paced from its own target. Every later "
                 "step chains off the one before it and is unaffected.")
-        self._timeouts = chain_timeouts(
-            resolved, args, scale, origin,
-            None if trace is None else trace.current_gripper(), trace=trace)
+        paces = None
+        if profile is not None:
+            # [SEAM27] The request's timeout is the fallback; the rule rides
+            # in the pace fields and trajectory_manager sets T at plan time.
+            try:
+                self._timeouts, paces = chain_hybrid(
+                    resolved, profile, scale, origin,
+                    None if trace is None else trace.current_gripper(),
+                    trace=trace, fixed=args.timeout)
+            except ValueError as err:
+                # A step that asks for more cap than the profile's.
+                self.refuse_chain(
+                    "### the chain file cannot be run as written:\n###   {}"
+                    .format(err), task=spec.get("task"), steps=len(resolved))
+                return None
+        else:
+            self._timeouts = chain_timeouts(
+                resolved, args, scale, origin,
+                None if trace is None else trace.current_gripper(),
+                trace=trace)
         self._trace = trace
         self._resolved = resolved
 
         self._root = build_chain_root(
             resolved, action_client, policy_action_client,
             robot_name=robot_name, facts=facts, name=spec["task"],
-            timeouts=self._timeouts, dispatch_on_start=dispatch_on_start)
+            timeouts=self._timeouts, dispatch_on_start=dispatch_on_start,
+            paces=paces)
         return self._root
 
     # ------------------------------------------------------------------
@@ -1351,7 +1627,8 @@ class Move(base_job.BaseJob):
         line = chain_spec.run_result(
             self._task, done, self._steps, held, gap, released_at,
             time.time() - (self._started_at or time.time()),
-            switch_s=switch_s, switch_at=switch_at)
+            switch_s=switch_s, switch_at=switch_at,
+            pacing=getattr(self, "_pacing", None))
         print(line)
         sys.stdout.flush()
         return line
