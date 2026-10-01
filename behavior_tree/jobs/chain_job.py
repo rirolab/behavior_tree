@@ -224,8 +224,21 @@ class PlanFromPolicy(object):
 def _v2_switch(entry, step):
     """[C3] A v2 policy step's switch: the manifest's, or the chain's
     `switch_at_s` on that step (`Manifest.switch` checks it is inside the
-    episode)."""
-    return entry["manifest"].switch(at_s=step.get("switch_at_s"))
+    episode).
+
+    [C3c] Only from the manifest itself (`manifest_facts`, the tree's
+    `policy_registry`). Facts policy_manager's `get_skill` served for a v2
+    skill are not one -- a tree started without the registry -- and used to
+    fail here as `'str' object has no attribute 'switch'` (ROUND36 Opus
+    deviation 1); refused now, saying what to set."""
+    manifest = entry.get("manifest")
+    if not hasattr(manifest, "switch"):
+        raise ValueError(
+            "[{}] is a v2 skill and the tree has no manifest for it: its facts "
+            "came from policy_manager's get_skill, which a v2 switch cannot be "
+            "built from. Give the tree the stack's policy registry "
+            "(`policy_registry`)".format(entry.get("id")))
+    return manifest.switch(at_s=step.get("switch_at_s"))
 
 
 def _claim_after_policy(claim, step, previous, facts, policy=None):
