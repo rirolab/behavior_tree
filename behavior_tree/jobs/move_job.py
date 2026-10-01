@@ -7,7 +7,9 @@ import py_trees, py_trees_ros
 import std_msgs.msg as std_msgs
 
 from . import base_job
+from behavior_tree.utils import skill_registry_utils
 from behavior_tree.utils.skill_registry_utils import (
+    skill_facts,
     skill_init_config,
     skill_init_gripper,
 )
@@ -167,6 +169,9 @@ class Move(base_job.BaseJob):
             # Sandwich: pre_init -> init -> policy -> init -> place -> open -> init -> pre_init -> home
             # The policy deposits the object, then the arm places/retreats home.
             init_config = blackboard.init_config
+            # [C3] A v2 skill is read from its manifest (the tree's
+            # `policy_registry`), a v1 one from get_skill, as before.
+            skill_registry_utils.configure_from_node(self._node)
             pre_init_config = self._read_optional_config(robot_name, "pre_init_config")
             if pre_init_config is None:
                 pre_init_config = init_config
@@ -218,7 +223,19 @@ class Move(base_job.BaseJob):
                                        gripper=approach_gripper,
                                        gripper_ramp_param=OVERLAP_THRESHOLD_PARAM,
                                        robot_name=robot_name)
-            policy = Policy.create_subtree(action_client, goal[idx], robot_name=robot_name)
+            policy_goal = goal[idx]
+            facts = skill_facts(goal[idx].get("skill_id"))
+            if isinstance(facts, dict) and facts.get("kind") == "v2":
+                # [C3] The manifest edition this tree read: the runner refuses
+                # another. This sequence dispatches by its overlap threshold,
+                # not by the manifest's switch, so no switch is passed.
+                if facts.get("error"):
+                    raise RuntimeError("move_job: [{}] is a v2 skill whose "
+                                       "manifest does not load: {}".format(
+                                           goal[idx].get("skill_id"),
+                                           facts["error"]))
+                policy_goal = dict(goal[idx], manifest=facts.get("digest"))
+            policy = Policy.create_subtree(action_client, policy_goal, robot_name=robot_name)
             s_init_2 = MoveJoint.MOVEJ(name="Init2", action_client=action_client,
                                        action_goal=init_config, robot_name=robot_name)
             s_place = MoveJoint.MOVEJ(name="Place", action_client=action_client,

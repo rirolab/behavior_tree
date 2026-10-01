@@ -291,7 +291,16 @@ class MOVE(py_trees.behaviour.Behaviour):
         # computed for it -- a step whose chain file names its ramp is not
         # overridden by the tree's `gripper_ramp` node parameter.
         if self.claim:
-            command.update(self.claim)
+            # [C3] A value may be late-bound -- a callable read now, when the
+            # request is built: `plan_from_policy` names the policy goal this
+            # motion follows, whose id exists only once that goal was sent.
+            # One that answers None is left out.
+            for key, value in self.claim.items():
+                if callable(value):
+                    value = value()
+                    if value is None:
+                        continue
+                command[key] = value
         return command
         
     def setup(self, node):

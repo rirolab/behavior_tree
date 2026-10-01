@@ -21,9 +21,19 @@ unknown, or its container has not described itself yet, these return None and
 the caller keeps its previous behaviour (the arm's own ``init_config``).  A tree
 that cannot reach the service should still run the task, one blocking pre-move
 slower.
+
+[C3] (container redesign) A v2 skill -- a manifest in the policy registry the
+tree is given (`policy_registry`, `set_registry`) -- is read from its MANIFEST,
+here, by `policy_runtime.registry`: the same parser the runner and
+policy_manager use, so the tree's init pose, switch and digest are the file's.
+The facts carry ``kind: 'v2'``, the manifest's ``digest`` and ``hash8``, its
+``switch`` and ``episode_s``; a v2 skill whose manifest does not load is
+``{'kind': 'v2', 'error': ...}``, never a fallback to the service. Every other
+skill is asked of ``get_skill``, as before.
 """
 
 import json
+import os
 
 _CACHE = {}
 
@@ -44,6 +54,94 @@ def set_service_name(name):
 def service_name():
     """The service this loader calls."""
     return _CACHE.get("service") or _DEFAULT_SERVICE
+
+
+def set_registry(path):
+    """[C3] The policy registry (v2) to read manifests from; '' or None: none.
+    Keeps the service and the lookup seam; forgets the cached answers."""
+    _CACHE.pop("facts", None)
+    _CACHE["registry"] = str(path or "")
+
+
+def registry_path():
+    """The policy registry this loader reads, or ''."""
+    return _CACHE.get("registry") or ""
+
+
+def configure_from_node(node):
+    """[C3] `set_registry` from the tree node's `policy_registry` parameter,
+    when it has one and it differs from what is set. Returns the path."""
+    try:
+        path = str(node.get_parameter("policy_registry").value or "")
+    except Exception:
+        return registry_path()
+    if path != registry_path():
+        set_registry(path)
+    return path
+
+
+def _policy_runtime_registry():
+    """`policy_runtime.registry`: installed, else the workspace source."""
+    try:
+        from policy_runtime import registry
+    except ImportError:
+        here = os.path.dirname(os.path.abspath(__file__))
+        src = os.path.abspath(os.path.join(here, *([os.pardir] * 4)))
+        import sys
+        pkg = os.path.join(src, "utils", "policy_runtime")
+        if pkg not in sys.path:
+            sys.path.insert(0, pkg)
+        from policy_runtime import registry
+    return registry
+
+
+def v2_skill_ids():
+    """[C3] Every v2 skill id of the policy registry (set), or an empty set."""
+    path = registry_path()
+    if not path:
+        return set()
+    try:
+        loaded = _policy_runtime_registry().Registry.load(path, allow_v1=True)
+    except Exception as exc:
+        _log_once("the policy registry {} cannot be read: {}".format(path, exc))
+        return set()
+    return {sid for sid, e in loaded.entries.items() if e.kind == "v2"}
+
+
+def manifest_facts(skill_id):
+    """[C3] A v2 skill's facts from its manifest, or None (not a v2 skill).
+
+    Read fresh from the files on every call: the tree reads a manifest when it
+    builds a step, and a manifest edited between two chains is the next
+    chain's (the runner checks the digest at dispatch).
+    """
+    path = registry_path()
+    if not path or not skill_id:
+        return None
+    registry = _policy_runtime_registry()
+    try:
+        loaded = registry.Registry.load(path, allow_v1=True)
+    except Exception as exc:
+        _log_once("the policy registry {} cannot be read: {}".format(path, exc))
+        return None
+    entry = loaded.entries.get(str(skill_id))
+    if entry is None or entry.kind != "v2":
+        return None
+    if entry.manifest is None:
+        return {"id": str(skill_id), "kind": "v2", "error": entry.error,
+                "manifest_path": entry.manifest_path}
+    m = entry.manifest
+    joints = list(m.doc["action"]["joints"])
+    facts = {"id": m.skill_id, "kind": "v2", "action_joints": joints,
+             "rate_hz": m.rate_hz,
+             "nominal_steps": int(m.doc["timing"]["episode_steps"]),
+             "episode_s": m.episode_s, "digest": m.digest, "hash8": m.hash8,
+             "manifest_path": m.source, "switch": m.switch(),
+             "arm": m.arm, "manifest": m}
+    pose = m.doc.get("init_pose")
+    if pose is not None:
+        facts["init_pose"] = dict(zip(joints, [float(v) for v in pose]))
+    return facts
 
 
 def set_lookup(function):
@@ -113,6 +211,9 @@ def skill_facts(skill_id):
     if not skill_id:
         return None
     skill_id = str(skill_id)
+    v2 = manifest_facts(skill_id)                               # [C3]
+    if v2 is not None:
+        return v2
     facts = _CACHE.setdefault("facts", {})
     if skill_id in facts:
         return facts[skill_id]

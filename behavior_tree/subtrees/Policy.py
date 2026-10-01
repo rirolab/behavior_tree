@@ -14,13 +14,19 @@ from .MoveBlend import (
 )
 
 
+# [C3] The least progress the "seen running" latch accepts, for a v2 floor of 0
+# (a switch declared within its lead of the policy's start).
+LATCH_FLOOR = 1e-3
+
+
 class MOVEBYPOLICY(Move.MOVE):
     """
     Execute policy through complex_action_client.
     """
 
     def __init__(self, name, action_client, action_goal=None, timeout=5.0,
-                 robot_name=None, end_handover=None, early_retreat=False):
+                 robot_name=None, end_handover=None, early_retreat=False,
+                 switch=None):
         """
         Initialise a policy execution behaviour.
 
@@ -43,6 +49,12 @@ class MOVEBYPOLICY(Move.MOVE):
                 all. False keeps the sequential behaviour whatever the
                 container declares -- it is the chain file's per-step switch,
                 not a property of the skill.
+            switch (:obj:`dict`): [C3] a v2 skill's switch, from its manifest
+                (`Manifest.switch`, the chain's `switch_at_s` applied):
+                ``at_s``, ``dispatch_progress`` = (at_s - lead) / episode_s.
+                The successor is dispatched when this policy's progress
+                reaches ``dispatch_progress`` -- time, not a container's
+                handover flag (container PLAN §5). None for a v1 skill.
         """
         super(MOVEBYPOLICY, self).__init__(
             name=name,
@@ -54,6 +66,7 @@ class MOVEBYPOLICY(Move.MOVE):
 
         self.end_handover = dict(end_handover) if end_handover else None
         self.early_retreat = bool(early_retreat)
+        self.switch = dict(switch) if switch else None
 
         # Has THIS episode been seen below its own floor yet? See
         # `ready_for_successor`. False until a progress of this motion's has
@@ -160,6 +173,11 @@ class MOVEBYPOLICY(Move.MOVE):
         # without `__init__` -- a test double for the refusal path -- has no
         # `end_handover` at all. "No declaration" and "not constructed" are the
         # same answer here, which is None.
+        switch = getattr(self, "switch", None)
+        if switch:
+            # [C3] A v2 skill: the time its manifest (or the chain) declared,
+            # less the lead, as a fraction of its episode.
+            return float(switch["dispatch_progress"])
         declared = getattr(self, "end_handover", None)
         if not declared:
             return None
@@ -210,6 +228,9 @@ class MOVEBYPOLICY(Move.MOVE):
         if progress < floor:
             return False
         if not getattr(self, "_seen_below_floor", False):
+            # [C3] A v2 floor of 0 (at_s <= lead) latches on any progress
+            # below LATCH_FLOOR instead, which only this episode's first
+            # windows can show.
             # Past the floor without ever having been below it: the slot's
             # progress and handover keys do not belong to this motion.
             #
@@ -232,6 +253,10 @@ class MOVEBYPOLICY(Move.MOVE):
             # short enough to cross the floor inside one tick would never admit
             # early, which is the safe direction.
             return False
+        if getattr(self, "switch", None):
+            # [C3] Time is the whole rule: no handover flag to wait on (a v2
+            # runner publishes none).
+            return True
         # `is True`, not truthiness: None is "the producer publishes no
         # predicate", which must not read as ready.
         return self.handover_ready() is True
@@ -253,7 +278,9 @@ class MOVEBYPOLICY(Move.MOVE):
             # behaviour assembled without `__init__` does not have.
             return None
         progress = self.current_progress()
-        if progress is not None and progress < floor:
+        latch = (max(floor, LATCH_FLOOR) if getattr(self, "switch", None)
+                 else floor)
+        if progress is not None and progress < latch:
             self._seen_below_floor = True
         return progress
 
@@ -383,6 +410,7 @@ def create_subtree(action_client, step_goal, **kwargs):
         # which is what every policy job did before the hook existed.
         end_handover=kwargs.get("end_handover"),
         early_retreat=kwargs.get("early_retreat", False),
+        switch=kwargs.get("switch"),
     )
     root.add_child(run_policy)
     return root

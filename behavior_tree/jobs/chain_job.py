@@ -49,6 +49,7 @@ import std_msgs.msg as std_msgs
 
 from . import base_job
 from behavior_tree.utils.arm_trace import ArmTrace
+from behavior_tree.utils import skill_registry_utils
 from behavior_tree.utils.skill_registry_utils import skill_facts, skill_init_pose
 from behavior_tree.utils.validation_utils import StepValidationResult
 from behavior_tree.subtrees import Gripper, MoveJoint, MovePose, Policy
@@ -128,6 +129,7 @@ COMPOSITION_PARAM = "mixer_composition"
 # (`load_chain`), for the same reason the mixer's composition is not a file's:
 # a baseline that a task file could switch is a baseline nobody can name.
 DISPATCH_PARAM = "chain_dispatch_on_start"
+POLICY_REGISTRY_PARAM = "policy_registry"                 # [C3]
 
 # Refuse a chain file whose step after an early-retreating policy states no
 # threshold (REAL_RUN_FOLLOWUPS #5, `chain_spec.load(require_retreat_threshold)`).
@@ -190,7 +192,43 @@ def _claim_for(step):
     return claim or None
 
 
-def _claim_after_policy(claim, step, previous, facts):
+def _is_v2(entry):
+    """[C3] Is this skill-facts entry a v2 manifest (`kind: 'v2'`)?"""
+    return isinstance(entry, dict) and entry.get("kind") == "v2"
+
+
+class PlanFromPolicy(object):
+    """[C3] The late-bound `plan_from_policy` of the step after a v2 policy.
+
+    Read when that step's request is BUILT (`Move._make_command`): the policy
+    goal's id exists only once the policy was sent, and the successor is
+    dispatched while it runs, so the id is there by then. None (left out of
+    the request) if the policy has not been sent -- the successor then plans
+    as it would after any motion.
+    """
+
+    def __init__(self, policy, at_s, skill_id, digest):
+        self.policy = policy
+        self.at_s = float(at_s)
+        self.skill_id = skill_id
+        self.digest = digest
+
+    def __call__(self):
+        goal = getattr(self.policy, "goal_uuid_des", None)
+        if goal is None:
+            return None
+        return {"goal": [int(b) for b in list(goal)], "at_s": self.at_s,
+                "skill": self.skill_id, "manifest": self.digest}
+
+
+def _v2_switch(entry, step):
+    """[C3] A v2 policy step's switch: the manifest's, or the chain's
+    `switch_at_s` on that step (`Manifest.switch` checks it is inside the
+    episode)."""
+    return entry["manifest"].switch(at_s=step.get("switch_at_s"))
+
+
+def _claim_after_policy(claim, step, previous, facts, policy=None):
     """`_claim_for`, plus what the step AFTER a policy carries.
 
     Its seam is not the file's own threshold but the POLICY's:
@@ -213,7 +251,24 @@ def _claim_after_policy(claim, step, previous, facts):
     """
     if previous is None or previous["kind"] != "policy":
         return claim
-    handover = (facts.get(previous["skill_id"]) or {}).get("end_handover") or {}
+    entry = facts.get(previous["skill_id"])
+    if _is_v2(entry):
+        # [C3] Time-based switching (container PLAN §5). The seam opens at the
+        # manifest's `at_s` (or the chain's `switch_at_s`) as a fraction of
+        # the policy's episode; a threshold the file writes here is not read
+        # (warned at build, refused from C5). The plan starts where the
+        # policy's window will be then (`plan_from_policy`), not at the arm.
+        if not previous.get("early_retreat") or not step.get(
+                "early_retreat", True):
+            return claim
+        switch = _v2_switch(entry, previous)
+        claim = dict(claim or {})
+        claim["claim_progress_threshold"] = float(switch["progress"])
+        claim.pop("plan_from_arm", None)
+        claim["plan_from_policy"] = PlanFromPolicy(
+            policy, switch["at_s"], previous["skill_id"], entry.get("digest"))
+        return claim
+    handover = (entry or {}).get("end_handover") or {}
     threshold = handover.get("progress_threshold")
     if step.get("threshold_explicit") and step.get("threshold") is not None:
         threshold = float(step["threshold"])
@@ -393,6 +448,7 @@ def build_children(resolved, action_client, policy_action_client,
     facts = facts or {}
     children = []
     previous = None
+    policy = None          # [C3] the MOVEBYPOLICY of the last policy step
     for index, step in enumerate(resolved):
         # The step's own paced timeout, or the fixed one where nothing paced
         # it. A policy's timeout is its episode's and is not paced here.
@@ -400,8 +456,19 @@ def build_children(resolved, action_client, policy_action_client,
         step_timeout = timeout if paced is None else paced
         if step["kind"] == "policy":
             skill_id = step["skill_id"]
-            handover = (facts.get(skill_id) or {}).get("end_handover")
+            entry = facts.get(skill_id)
+            handover = (entry or {}).get("end_handover")
             goal = {"skill_id": skill_id, "timeout": timeout}
+            switch = None
+            if _is_v2(entry):
+                # [C3] The manifest edition the tree built with (the runner
+                # refuses another), the chain's switch override, and the
+                # switch the dispatch rule reads.
+                goal["manifest"] = entry.get("digest")
+                if step.get("switch_at_s") is not None:
+                    goal["switch_at_s"] = float(step["switch_at_s"])
+                switch = _v2_switch(entry, step)
+                handover = None
             # The claim this step states, in the REQUEST. A policy's seam used
             # to be the container's `claim_progress_threshold` whatever the file
             # said: the file's number was read, printed by `describe`, and then
@@ -417,8 +484,10 @@ def build_children(resolved, action_client, policy_action_client,
                 robot_name=robot_name,
                 end_handover=handover,
                 early_retreat=bool(step.get("early_retreat")),
+                switch=switch,
             )
             child.name = step["label"]
+            policy = child.children[0] if child.children else None
         elif step["gripper_only"]:
             # The jaws' own step: their own client, their own barrier. Never
             # overlapped INTO -- `Gripper.GOTO` says so itself -- and the seam
@@ -458,9 +527,10 @@ def build_children(resolved, action_client, policy_action_client,
                 filter_size=step.get("filter_size"),
                 timeout=step_timeout, robot_name=robot_name,
                 claim=_claim_after_policy(_claim_for(step), step, previous,
-                                          facts))
+                                          facts, policy=policy))
         else:
-            claim = _claim_after_policy(_claim_for(step), step, previous, facts)
+            claim = _claim_after_policy(_claim_for(step), step, previous, facts,
+                                        policy=policy)
             child = MoveJoint.MOVEJ(
                 name=step["label"], action_client=action_client,
                 action_goal=list(step["target"]),
@@ -531,6 +601,14 @@ class Move(base_job.BaseJob):
             # a race with the entry point's. Either way the READ below answers
             # True when nothing is declared, which is this switch's default.
             pass
+        # [C3] The v2 policy registry the tree reads manifests from
+        # (`skill_registry_utils.configure_from_node`); '' is none. Declared
+        # here so a stack that names none still answers for it.
+        try:
+            if not node.has_parameter(POLICY_REGISTRY_PARAM):
+                node.declare_parameter(POLICY_REGISTRY_PARAM, "")
+        except Exception:
+            pass
         # What the run needs to answer for itself when it ends. Set at build
         # time, read by `post_tick`.
         self._task = None
@@ -553,6 +631,59 @@ class Move(base_job.BaseJob):
             trace = self.build_trace(robot_name)
             if trace is not None:
                 self._traces[robot_name] = trace
+        # [C3] Each arm's v2 runner says, per goal that ran, when its
+        # successor actually started (`~/switch`, latched): the RESULT line's
+        # `switch_at`. goal hex -> that JSON.
+        self._switches = {}
+        self._switch_subs = []
+        for robot_name in (getattr(node, "robot_names", None) or []):
+            self._subscribe_switch(robot_name)
+
+    def _subscribe_switch(self, robot_name):
+        try:
+            from rclpy.qos import (QoSDurabilityPolicy, QoSProfile,
+                                   QoSReliabilityPolicy)
+            from std_msgs.msg import String
+            topic = "/{}/policy_runner/switch".format(robot_name)
+            self._switch_subs.append(self._node.create_subscription(
+                String, topic, self._on_switch,
+                QoSProfile(depth=10, reliability=QoSReliabilityPolicy.RELIABLE,
+                           durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)))
+        except Exception:
+            # A node double without subscriptions: no switch is ever heard,
+            # and `switch_at` says none.
+            pass
+
+    def _on_switch(self, msg):
+        try:
+            info = json.loads(msg.data)
+            self._switches[str(info["goal"])] = info
+        except Exception:
+            pass
+
+    def switch_fields(self, root):
+        """`(switch_s, switch_at)` lists for the RESULT line, or `(None,
+        None)` when no early-retreating v2 policy is in the chain."""
+        if root is None:
+            return None, None
+        declared, actual = [], []
+        for index, step in enumerate(self._resolved):
+            if step["kind"] != "policy" or not step.get("early_retreat"):
+                continue
+            child = root.children[index] if index < len(root.children) else None
+            behaviour = (child.children[0] if child is not None
+                         and getattr(child, "children", None) else None)
+            switch = getattr(behaviour, "switch", None)
+            if not switch:
+                continue
+            declared.append(switch["at_s"])
+            goal = getattr(behaviour, "goal_uuid_des", None)
+            info = None if goal is None else self._switches.get(
+                "".join("{:02x}".format(int(b) & 0xff) for b in list(goal)))
+            actual.append(None if info is None else info.get("actual_s"))
+        if not declared:
+            return None, None
+        return declared, actual
 
     # ------------------------------------------------------------------
     # Goal handling
@@ -781,10 +912,13 @@ class Move(base_job.BaseJob):
         pose written in a yaml beside a container that loaded something else.
         """
         limits, width = self.limits_for(robot_name)
+        # [C3] The policy registry this tree reads v2 manifests from.
+        skill_registry_utils.configure_from_node(self._node)
         spec = chain_spec.load(
             path, side, limits, width,
             require_retreat_threshold=self.require_retreat_threshold(
-                robot_name))
+                robot_name),
+            v2_skills=skill_registry_utils.v2_skill_ids())
         if "dispatch_on_start" in (spec.get("defaults") or {}):
             # One RUN, one dispatch rule. The rule itself is the run's, on the
             # node parameter `chain_dispatch_on_start` (`DISPATCH_PARAM`); what
@@ -803,9 +937,15 @@ class Move(base_job.BaseJob):
         for skill_id in chain_spec.skill_ids(spec):
             entry = skill_facts(skill_id)
             facts[skill_id] = entry if isinstance(entry, dict) else None
+            if _is_v2(entry) and entry.get("error"):
+                raise ChainJobError(
+                    "chain_job: [{}] is a v2 skill whose manifest does not "
+                    "load: {}".format(skill_id, entry["error"]),
+                    task=spec.get("task"), steps=len(spec["steps"]))
             pose = skill_init_pose(skill_id, arm_dof=len(limits))
             if pose is not None:
                 init_poses[skill_id] = pose
+        self.check_v2_steps(spec, facts)
         try:
             resolved = chain_spec.resolve(spec, init_poses)
         except chain_spec.ChainSpecError as err:
@@ -822,6 +962,58 @@ class Move(base_job.BaseJob):
             err.steps = len(spec["steps"])
             raise
         return spec, resolved, facts
+
+    def check_v2_steps(self, spec, facts):
+        """[C3] The rules of a chain over v2 skills (container PLAN §5.5).
+
+        Refused: a policy step with `early_retreat: true` on a skill whose
+        manifest says `switch.early_retreat: false` (its switch is declared,
+        not measured); a `switch_at_s` outside the episode. Warned (refused
+        from C5): an explicit `threshold` on the step after an early-retreating
+        v2 policy -- the seam is the manifest's `at_s`, and that threshold is
+        not read. A `switch_at_s` on a v1 skill is refused: there is no
+        manifest to override.
+        """
+        steps = spec["steps"]
+        for index, step in enumerate(steps):
+            if step["type"] != "policy":
+                continue
+            entry = facts.get(step["skill_id"])
+            if not _is_v2(entry):
+                if step.get("switch_at_s") is not None:
+                    raise ChainJobError(
+                        "chain_job: step '{}' sets switch_at_s, and [{}] is a "
+                        "v1 skill with no manifest to override".format(
+                            step["name"], step["skill_id"]),
+                        task=spec.get("task"), steps=len(steps))
+                continue
+            try:
+                switch = _v2_switch(entry, step)
+            except Exception as err:
+                raise ChainJobError(
+                    "chain_job: step '{}': {}".format(step["name"], err),
+                    task=spec.get("task"), steps=len(steps))
+            if step.get("early_retreat") and not switch["early_retreat"]:
+                raise ChainJobError(
+                    "chain_job: step '{}' runs [{}] with early_retreat: true, and "
+                    "its manifest says switch.early_retreat: false -- its "
+                    "switch at {:.2f} s is declared, not measured. Run it with "
+                    "early_retreat: false until it is.".format(
+                        step["name"], step["skill_id"], switch["at_s"]),
+                    task=spec.get("task"), steps=len(steps))
+            following = steps[index + 1] if index + 1 < len(steps) else None
+            if (step.get("early_retreat") and following is not None
+                    and following.get("threshold_explicit")):
+                self._node.get_logger().warning(
+                    "chain_job: step '{}' follows the early-retreating v2 policy "
+                    "'{}' and writes threshold: {}. The switch is the manifest's "
+                    "at_s ({:.2f} s = {:.3f} of the episode{}); drop threshold: "
+                    "{} (chain-migrate). Not read now, refused from C5.".format(
+                        following["name"], step["name"],
+                        following.get("threshold"), switch["at_s"],
+                        switch["progress"],
+                        ", the chain's switch_at_s" if switch["source"] == "chain"
+                        else "", following.get("threshold")))
 
     def create_root(self, action_client, idx="1", goal=std_msgs.Empty(),
                     robot_name=None, **kwargs):
@@ -909,7 +1101,8 @@ class Move(base_job.BaseJob):
             previous = resolved[index - 1] if index else None
             if (previous is None or previous["kind"] != "policy"
                     or not previous.get("early_retreat")
-                    or step.get("threshold_explicit")):
+                    or step.get("threshold_explicit")
+                    or _is_v2(facts.get(previous["skill_id"]))):
                 continue
             handover = (facts.get(previous["skill_id"]) or {}).get(
                 "end_handover") or {}
@@ -1141,9 +1334,11 @@ class Move(base_job.BaseJob):
             self._node.get_logger().warning(
                 "chain_job: the jaw verdict could not be taken [{}]".format(exc))
             held, gap, released_at = None, None, None
+        switch_s, switch_at = self.switch_fields(root)
         line = chain_spec.run_result(
             self._task, done, self._steps, held, gap, released_at,
-            time.time() - (self._started_at or time.time()))
+            time.time() - (self._started_at or time.time()),
+            switch_s=switch_s, switch_at=switch_at)
         print(line)
         sys.stdout.flush()
         return line
