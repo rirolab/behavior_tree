@@ -128,7 +128,6 @@ COMPOSITION_PARAM = "mixer_composition"
 # (`load_chain`), for the same reason the mixer's composition is not a file's:
 # a baseline that a task file could switch is a baseline nobody can name.
 DISPATCH_PARAM = "chain_dispatch_on_start"
-FULL_EARLY_PARAM = "chain_full_early_switch"
 
 # Refuse a chain file whose step after an early-retreating policy states no
 # threshold (REAL_RUN_FOLLOWUPS #5, `chain_spec.load(require_retreat_threshold)`).
@@ -532,11 +531,6 @@ class Move(base_job.BaseJob):
             # a race with the entry point's. Either way the READ below answers
             # True when nothing is declared, which is this switch's default.
             pass
-        try:
-            if not node.has_parameter(FULL_EARLY_PARAM):
-                node.declare_parameter(FULL_EARLY_PARAM, False)
-        except Exception:
-            pass
         # What the run needs to answer for itself when it ends. Set at build
         # time, read by `post_tick`.
         self._task = None
@@ -748,17 +742,6 @@ class Move(base_job.BaseJob):
             return value.strip().lower() in ("1", "true", "yes", "on")
         return bool(value)
 
-    def full_arm_early(self):
-        try:
-            value = self._node.get_parameter(FULL_EARLY_PARAM).value
-        except Exception:
-            return False
-        if isinstance(value, str):
-            if value.strip().lower() not in ('true', 'false'):
-                raise ChainJobError('chain_full_early_switch must be true or false')
-            return value.strip().lower() == 'true'
-        return bool(value)
-
     def check_composition(self, spec):
         """Refuse a file whose `composition` is not what the mixer is running.
 
@@ -903,12 +886,6 @@ class Move(base_job.BaseJob):
         # for, pinned by the suite); the run that no longer dispatches the way
         # the driver does is the one that has something to declare.
         dispatch_on_start = self.dispatch_on_start()
-        # Full Early is the mixer's switch (`full_arm_early_switch`). The tree
-        # builds the same subtree as Blend -- original successor, Blend
-        # prefetch -- so the builders take no Full Early input, and the run's
-        # parameter is only said here, once, in the log the run is read from.
-        if self.full_arm_early():
-            self._node.get_logger().info('chain_job: full-arm Early; original successor references and Blend prefetch; mixer switches at incoming threshold; policy readiness unchanged')
         table = chain_spec.describe(spec, resolved)
         if not dispatch_on_start:
             head, _, rest = table.partition("\n")

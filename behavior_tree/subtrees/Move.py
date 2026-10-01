@@ -70,8 +70,7 @@ class MOVE(py_trees.behaviour.Behaviour):
                 channels -- see ``status_channels``.
             claim: this motion's own request fields, or None -- the seam it
                 asks the mixer for (``claim_progress_threshold``,
-                ``claim_closure``, ``claim_smoothing``,
-                ``claim_passthrough_only``, popped by
+                ``claim_closure``, ``claim_passthrough_only``, popped by
                 ``_stream_client.CLAIM_KWARGS``), how it is planned
                 (``plan_from_arm``), and the span a carried gripper column
                 moves over (``passthrough_ramp`` /
