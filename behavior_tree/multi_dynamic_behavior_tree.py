@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import importlib
+import json
 import operator
 import sys
 import time
@@ -333,9 +334,68 @@ class MultiSplinteredReality(SplinteredReality):
                 )(self)
             )
         self.current_job = None
+        # Route identified requests once, then acknowledge their admission to the BT.
+        self._grounding_requests = {}
+        self._grounding_stop_requested = False
+        self._grounding_ack = self.create_publisher(String, "symbol_grounding/ack", 10)
+        self._grounding_sub = self.create_subscription(
+            String, "symbol_grounding", self.receive_grounding_request, 10)
         console.loginfo(
             f"multi_dynamic_behavior_tree: initialized for {', '.join(self.robot_names)}"
         )
+
+    def receive_grounding_request(self, msg):
+        # Unidentified messages are handled by the existing job subscriptions.
+        try:
+            payload = json.loads(msg.data)
+        except json.JSONDecodeError as error:
+            self.get_logger().error(f"Invalid grounding JSON: {error}")
+            return
+        if not isinstance(payload, dict):
+            self.get_logger().error("Grounding payload must be an object")
+            return
+        request_id = payload.get("request_id")
+        if request_id is None:
+            return
+
+        # Remember IDs for this BT process so a lost ACK cannot repeat a task.
+        if not isinstance(request_id, str) or not request_id:
+            self.get_logger().error("Grounding request_id must be a nonempty string")
+            return
+        previous = self._grounding_requests.get(request_id)
+        if previous is not None:
+            status = "accepted" if previous == payload else "rejected"
+            reason = "" if status == "accepted" else "request_id reused with different payload"
+        else:
+            # Validate the complete plan before putting it in the job inboxes.
+            goal = payload.get("params")
+            valid = isinstance(goal, dict) and bool(goal) and payload.get("param_num") == len(goal)
+            is_stop = valid and goal == {"1": {"primitive_action": "stop"}}
+            reason = "Invalid grounding payload"
+            if valid and not is_stop:
+                try:
+                    valid, reason = validate_goal(goal, self.jobs, self.robot_names)
+                except (KeyError, TypeError, ValueError, AttributeError) as error:
+                    valid, reason = False, str(error)
+            status = "rejected"
+            if valid:
+                # Stop bypasses the busy gate; ordinary requests wait for an idle tree.
+                status = "busy"
+                if is_stop or (not self.busy() and all(job.goal is None for job in self.jobs)):
+                    if is_stop:
+                        self._grounding_stop_requested = True
+                        for job in self.jobs:
+                            job.goal = None
+                    else:
+                        for job in self.jobs:
+                            job.goal = goal
+                    self._grounding_requests[request_id] = payload
+                    status = "accepted"
+                reason = "" if status == "accepted" else "BT is busy"
+
+        # ACK confirms admission, not successful execution or physical task completion.
+        self._grounding_ack.publish(String(data=json.dumps(
+            {"request_id": request_id, "status": status, "reason": reason})))
 
     def wait_for_arm_client(self, client, service_name):
         """Wait up to `arm_client_wait` for one arm client, saying so as it goes.
@@ -701,6 +761,10 @@ def main(args=None):
             # `docs/overlap/harness/merge_chain.py` drives it.
             "jobs.chain_job.Move",
             "jobs.gripper_job.Move",
+            # Dispatch articulated-object tasks through the same CAC command clients.
+            "jobs.appliance_open_job.Move",
+            "jobs.appliance_place_job.Move",
+            "jobs.appliance_close_job.Move",
             "jobs.policy_job.Move",
             "jobs.dual_move_job.Move",
             "jobs.dual_policy_job.Move",

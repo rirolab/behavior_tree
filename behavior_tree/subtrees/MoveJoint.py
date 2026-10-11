@@ -19,7 +19,7 @@ class MOVEJ(Move.MOVE):
     """
     def __init__(self, name, action_client, action_goal=None, timeout=2.0,
                  robot_name=None, gripper=None, gripper_ramp_param=None,
-                 claim=None):
+                 claim=None, wait_until_done=False):
         """
         Args:
             gripper: a gripper position to carry through this motion's own
@@ -48,7 +48,7 @@ class MOVEJ(Move.MOVE):
                                    action_goal=action_goal,
                                    timeout=timeout,
                                    robot_name=robot_name,
-                                   claim=claim)
+                                   claim=claim, wait_until_done=wait_until_done)
         self.gripper = gripper
         self.gripper_ramp_param = gripper_ramp_param
         self.logger.debug("%s.__init__()" % self.__class__.__name__)

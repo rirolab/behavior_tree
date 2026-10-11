@@ -40,7 +40,7 @@ class BaseJob(object):
 
         self._subscriber = self._node.create_subscription(std_msgs.String, \
                                                           self._grounding_channel,
-                                                          self.incoming, 10)
+                                                          self.receive_grounding, 10)
         self._goal = None
         self._lock = threading.Lock()
 
@@ -239,6 +239,11 @@ class BaseJob(object):
         """
         with self._lock:
             self._goal = value
+
+    def receive_grounding(self, msg):
+        # Filter before dispatch so job-specific incoming overrides cannot replay retries.
+        if "request_id" not in json.loads(msg.data):
+            self.incoming(msg)
 
     def incoming(self, msg):
         """

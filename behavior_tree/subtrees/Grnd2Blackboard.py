@@ -34,13 +34,22 @@ class ToBlackboard(subscribers.ToBlackboard):
         self.logger.debug("%s.update()" % self.__class__.__name__)
         status = super(ToBlackboard, self).update()
         self.blackboard.stop_cmd = False
-        
+
+        # Consume an acknowledged stop once, even when its topic message is retried.
+        if getattr(self.node, "_grounding_stop_requested", False):
+            self.node._grounding_stop_requested = False
+            self.blackboard.stop_cmd = True
+            return py_trees.common.Status.SUCCESS
+
         if status != py_trees.common.Status.RUNNING:
 
             # we got something
             if self.blackboard.grnd_msg.data is None:
                 self.node.get_logger().warning("%s: No grounding on the blackboard!" % self.name)
             grounding = json.loads(self.blackboard.grnd_msg.data)
+            # Identified requests and stop commands are handled by the tree inbox.
+            if "request_id" in grounding:
+                return status
             
             for param_id in range(grounding['param_num']):
                 primitive_action = grounding['params'][str(param_id+1)]['primitive_action']

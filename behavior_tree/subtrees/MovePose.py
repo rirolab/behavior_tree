@@ -117,7 +117,7 @@ class MOVES(Move.MOVE):
 
     def __init__(self, name, action_client, action_goal=None, timeout=1.,
                  check_contact=False, robot_name=None, gripper=None,
-                 gripper_ramp_param=None, claim=None, filter_size=None):
+                 gripper_ramp_param=None, claim=None, filter_size=None, wait_until_done=False):
         """
         Args:
             gripper, gripper_ramp_param, claim: exactly as ``MoveJoint.MOVEJ``
@@ -138,7 +138,7 @@ class MOVES(Move.MOVE):
                                     action_goal=action_goal,
                                     timeout=timeout,
                                     robot_name=robot_name,
-                                    claim=claim)
+                                    claim=claim, wait_until_done=wait_until_done)
         self.check_contact = check_contact
         self.gripper = gripper
         self.gripper_ramp_param = gripper_ramp_param
@@ -233,6 +233,29 @@ class MOVES(Move.MOVE):
             return py_trees.common.Status.SUCCESS
         else:
             return self.still_waiting()
+
+
+class MOVEPT(MOVES):
+    """Send a blackboard pose list through the standard CAC motion lifecycle."""
+
+    def __init__(self, name, action_client, action_goal=None, timeout=1.0,
+                 robot_name=None, filter_size=15, use_moving_average=True, wait_until_done=False):
+        # Pass smoothing preferences to the shared pose-trajectory planner.
+        super().__init__(name, action_client, action_goal, timeout=timeout,
+                         robot_name=robot_name, filter_size=filter_size, wait_until_done=wait_until_done)
+        self.use_moving_average = use_moving_average
+
+    def make_command(self, uuid=None, enable_wait=False):
+        # Reuse MOVES dispatch, status monitoring, and cancellation for a complete path.
+        poses = self.blackboard.get(self.action_goal['pose'])
+        if not poses:
+            raise ValueError("MOVEPT requires at least one pose")
+        goal = [{"x": pose.position.x, "y": pose.position.y, "z": pose.position.z,
+                 "qx": pose.orientation.x, "qy": pose.orientation.y,
+                 "qz": pose.orientation.z, "qw": pose.orientation.w} for pose in poses]
+        return self._make_command("movePoseTrajectory", json.dumps(goal), uuid=uuid,
+                                  enable_wait=enable_wait, filter_size=self.filter_size,
+                                  use_moving_average=self.use_moving_average)
 
 
 class MOVEPR(Move.MOVE):

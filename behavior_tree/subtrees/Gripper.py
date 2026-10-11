@@ -26,7 +26,7 @@ class GOTO(Move.MOVE):
     priority behaviour.
     """
     def __init__(self, name, action_client, action_goal=None, force=1., check_contact=False, timeout=5, robot_name=None,
-                 claim=None, enable_wait=True):
+                 claim=None, enable_wait=True, wait_until_done=False):
         """
         Args:
             enable_wait: whether cac's service call returns only once the jaws
@@ -57,7 +57,7 @@ class GOTO(Move.MOVE):
                                    action_goal=action_goal,
                                    robot_name=robot_name,
                                    goal_channel=None,
-                                   claim=claim)
+                                   claim=claim, wait_until_done=wait_until_done)
 
         self.force         = force
         self.check_contact = check_contact

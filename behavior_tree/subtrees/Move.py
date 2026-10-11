@@ -51,7 +51,7 @@ class MOVE(py_trees.behaviour.Behaviour):
     """
 
     def __init__(self, name, action_client, action_goal=None, timeout=1,
-                 robot_name=None, goal_channel="arm", claim=None):
+                 robot_name=None, goal_channel="arm", claim=None, wait_until_done=False):
         """
         Initialise a robot action command behaviour.
 
@@ -109,6 +109,8 @@ class MOVE(py_trees.behaviour.Behaviour):
         ## self.goal_id       = None
         ## self.goal_status   = None
         self.timeout       = timeout
+        # Optionally await a terminal result without the subtree's elapsed-time watchdog.
+        self.wait_until_done = wait_until_done
         # The ROS node, once `setup` runs. None until then, and None in a unit
         # test, so everything that reads it has to work without one.
         self._node         = None
@@ -381,6 +383,9 @@ class MOVE(py_trees.behaviour.Behaviour):
         Called every tick a dispatched step waits (`still_waiting`), which is
         what keeps the silence clock current.
         """
+        # Failure, cancellation, and external guards still use their normal status paths.
+        if getattr(self, "wait_until_done", False):
+            return None
         dispatched_at = getattr(self, "dispatched_at", None)
         if not self.sent_goal or dispatched_at is None:
             return None
